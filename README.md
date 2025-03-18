@@ -14,7 +14,7 @@
 
 ## Key Features
 
-Cosmos-Reason1, is a suite of models, ontologies, and benchmarks that we develop with the goal of enabling multimodal LLMs to generate physically grounded responses. We release two multimodal LLMs: Cosmos-Reason1-8B and Cosmos-Reason1-56B which are trained in four stages: vision pre-training, general SFT, Physical AI SFT, and Physical AI reinforcement learning. We define ontologies for physical common sense and embodied reasoning, and also build benchmarks to evaluate Physical AI reasoning capabilities of multimodal LLMs.
+Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop with the goal of enabling multimodal LLMs to generate physically grounded responses. We release two multimodal LLMs: Cosmos-Reason1-8B and Cosmos-Reason1-56B which are trained in four stages: vision pre-training, general SFT, Physical AI SFT, and Physical AI reinforcement learning. We define ontologies for physical common sense and embodied reasoning, and also build benchmarks to evaluate Physical AI reasoning capabilities of multimodal LLMs.
 
 ## Model Family
 
