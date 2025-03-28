@@ -2,7 +2,7 @@
     <img src="assets/nvidia-cosmos-header.png" alt="NVIDIA Cosmos Header">
 </p>
 
-### [Website](https://www.nvidia.com/en-us/ai/cosmos/) | [Paper](https://research.nvidia.com/publication/2025-03_cosmos-reason-1-physical-ai-common-sense-embodied-decisions) | [Paper Website](https://research.nvidia.com/labs/dir/cosmos-reason1/)
+### [Website](https://www.nvidia.com/en-us/ai/cosmos/) | [Paper](https://arxiv.org/abs/2503.15558) | [Paper Website](https://research.nvidia.com/labs/dir/cosmos-reason1/)
 
 
 [NVIDIA Cosmos](https://www.nvidia.com/cosmos/) is a developer-first world foundation model platform designed to help Physical AI developers build their Physical AI systems better and faster. Cosmos contains
