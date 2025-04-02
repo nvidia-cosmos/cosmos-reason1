@@ -2,13 +2,19 @@
     <img src="assets/nvidia-cosmos-header.png" alt="NVIDIA Cosmos Header">
 </p>
 
-### [Main Repo](https://github.com/NVIDIA/Cosmos) | [Product Website](https://www.nvidia.com/en-us/ai/cosmos/) | [Paper](https://arxiv.org/abs/2503.15558) | [Paper Website](https://research.nvidia.com/labs/dir/cosmos-reason1/)
+### [Product Website](https://www.nvidia.com/en-us/ai/cosmos/) | [Paper](https://arxiv.org/abs/2503.15558) | [Paper Website](https://research.nvidia.com/labs/dir/cosmos-reason1/)
 
 Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop with the goal of enabling multimodal LLMs to generate physically grounded responses. We release two multimodal LLMs: Cosmos-Reason1-8B and Cosmos-Reason1-56B which are trained in four stages: vision pre-training, general SFT, Physical AI SFT, and Physical AI reinforcement learning. We define ontologies for physical common sense and embodied reasoning, and also build benchmarks to evaluate Physical AI reasoning capabilities of multimodal LLMs.
 
 ## Model Family
 
 * Coming Soon!
+
+### Example Model Behavior
+
+<video src="https://github.com/user-attachments/assets/bccdb462-bb92-42ed-a85c-1bc5bc473395">
+  Your browser does not support the video tag.
+</video>
 
 ## License and Contact
 
