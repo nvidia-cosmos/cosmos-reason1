@@ -75,6 +75,21 @@ if [ -z "$COSMOS_CONTROLLER_HOST" ]; then
   exit 1
 fi
 
-torchrun --nproc-per-node="$NGPU" \
-  --role rank --tee 3 --rdzv_backend c10d --rdzv_endpoint="$RDZV_ENDPOINT" \
-  -m "$MODULE" --log-rank "$LOG_RANKS"
+TORCHRUN_CMD=(
+  torchrun
+  --nproc-per-node="$NGPU"
+  --role rank
+  --tee 3
+  --rdzv_backend c10d
+  --rdzv_endpoint="$RDZV_ENDPOINT"
+)
+
+if [ -n "$LOG_RANKS" ]; then
+  TORCHRUN_CMD+=(--local-ranks-filter "$LOG_RANKS")
+fi
+
+TORCHRUN_CMD+=(
+  -m "$MODULE"
+)
+
+"${TORCHRUN_CMD[@]}"
