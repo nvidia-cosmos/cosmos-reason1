@@ -18,7 +18,11 @@ from cosmos_reason1.utils.parallelism import (
     ParallelDims,
     create_context_parallel_ctx,
 )
-from cosmos_reason1.policy.config import Config as CosmosConfig, SFTDataConfig
+from cosmos_reason1.policy.config import (
+    Config as CosmosConfig,
+    SFTDataConfig,
+    config_hash,
+)
 from cosmos_reason1.utils.util import compute_mfu
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
@@ -28,6 +32,7 @@ from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, DistributedSampler
 import cosmos_reason1.utils.util as util
 import cosmos_reason1.utils.distributed as dist_util
+import cosmos_reason1.utils.cache as cache
 from transformers import AutoTokenizer, AutoConfig, AutoProcessor
 from datasets import concatenate_datasets
 from qwen_vl_utils import process_vision_info
@@ -215,6 +220,27 @@ class SFTDataset(Dataset):
         self.column_name = config.conversation_column_name
         self.dataset = dataset
         self.max_length = max_length
+
+        self.cache = None
+        if self.config.enable_dataset_cache:
+            if self.enable_dataset_preprocess:
+                logger.warning(
+                    "it is no need to cache the preprocessed dataset, please set enable_dataset_cache = False"
+                )
+            else:
+                # TODO(zjx): can we reuse the cachebetween different training jobs?
+                # It's not stable yet, we only checked if the config is the same
+                # If there are any problems, it is recommended that the user clears the cache folder
+                cache_folder = os.path.join(
+                    os.environ.get(
+                        "COSMOS_CACHE",
+                        os.path.join(os.path.expanduser("~"), ".cache/cosmos/"),
+                    ),
+                    "datasets_cache",
+                    f"{self.config.dataset_name}-{config_hash(config)}",
+                )
+                logger.info(f"SFTDataset Cache folder: {cache_folder}")
+                self.cache = cache.DiskCache(cache_folder)
         self.vision_enabled = (
             self.config.vision_asset_column_name is not None
             and len(self.config.vision_asset_column_name) > 0
@@ -474,9 +500,20 @@ class SFTDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.config.enable_dataset_preprocess:
-            return self._get_item_preprocessed_(idx)
+            item = self._get_item_preprocessed_(idx)
         else:
-            return self._get_item_on_the_fly_(idx)
+            # we only cache on_the_fly result
+            if self.cache is not None:
+                cache_obj = self.cache.get(idx)
+                if cache_obj is not None:
+                    return cache_obj
+
+            item = self._get_item_on_the_fly_(idx)
+
+            if self.cache is not None:
+                # try cache obj
+                self.cache.set(idx, item)
+        return item
 
 
 class SFTTrainer(Trainer):
@@ -531,6 +568,8 @@ class SFTTrainer(Trainer):
         self.train_data_loader = DataLoader(
             train_dataset,
             batch_size=config.train.train_batch_per_replica,
+            num_workers=config.train.train_policy.dataloader_num_workers,
+            prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
             sampler=train_sampler,
             collate_fn=functools.partial(
                 collate_fn,
@@ -546,6 +585,8 @@ class SFTTrainer(Trainer):
         self.val_data_loader = DataLoader(
             val_dataset,
             batch_size=config.train.train_policy.validation_batch_per_replica,  # Use the same batch size as training
+            num_workers=config.train.train_policy.dataloader_num_workers,
+            prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
             sampler=val_sampler,
             collate_fn=functools.partial(
                 collate_fn,

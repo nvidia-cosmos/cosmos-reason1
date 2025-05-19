@@ -13,10 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field, MISSING
+from dataclasses import dataclass, field, is_dataclass, asdict, MISSING
 from datetime import datetime
 from typing import Any, Union, Optional, List
 import os
+import json
+import hashlib
 import torch
 from cosmos_reason1.utils.util import update_dataclass_with_dict
 
@@ -30,6 +32,16 @@ def skip_ui_field(*, default=MISSING, default_factory=MISSING, **kwargs):
         return field(default=default, metadata=metadata, **kwargs)
     else:
         raise ValueError("Must provide either default or default_factory.")
+
+
+def config_hash(config) -> str:
+    """
+    Compute the hash of a config object
+    """
+    if is_dataclass(config):
+        return hashlib.md5(json.dumps(asdict(config)).encode()).hexdigest()
+    else:
+        return "unhashable"
 
 
 @dataclass
@@ -67,6 +79,21 @@ class SFTDataConfig:
         default=False,
         metadata={
             "help": "Enable dataset preprocess, such as image/video preprocessing",
+        },
+    )
+    enable_dataset_cache: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dataset cache process results, maybe accelerate the dataset loading",
+        },
+    )
+    dataloader_num_workers: int = field(
+        default=0, metadata={"help": "Number of subprocess to use for data loading"}
+    )
+    dataloader_prefetch_factor: int = field(
+        default=2,
+        metadata={
+            "help": "Number of batches loaded in advance by each worker.",
         },
     )
     enable_validation: bool = field(
@@ -170,6 +197,21 @@ class GrpoConfig:
         default=False,
         metadata={
             "help": "Enable dataset preprocess, such as image/video preprocessing",
+        },
+    )
+    enable_dataset_cache: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable dataset cache process results, maybe accelerate the dataset loading",
+        },
+    )
+    dataloader_num_workers: int = field(
+        default=0, metadata={"help": "Number of subprocess to use for data loading"}
+    )
+    dataloader_prefetch_factor: int = field(
+        default=2,
+        metadata={
+            "help": "Number of batches loaded in advance by each worker.",
         },
     )
     prompt_column_name: str = field(

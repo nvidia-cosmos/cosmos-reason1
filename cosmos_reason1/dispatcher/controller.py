@@ -127,7 +127,11 @@ class Controller:
                 dataset = CosmosDataset(config=config)
                 self.dataset = dataset
                 self.train_dataloader = DataLoader(
-                    self.dataset.train_set, batch_size=1, shuffle=True
+                    self.dataset.train_set,
+                    batch_size=1,
+                    shuffle=True,
+                    num_workers=config.train.train_policy.dataloader_num_workers,
+                    prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
                 )
                 self.total_step = len(self.dataset.train_set) * self.config.train.epoch
                 self.pbar = tqdm(total=self.total_step, desc="[Controller] Step")
