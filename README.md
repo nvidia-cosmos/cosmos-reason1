@@ -100,10 +100,10 @@ Cosmos-Reason1 provides toolchain to enable large scale SFT and RL training work
 3. **Fully asynchronous (replicas specialization)**
     - Policy (Consumer): Replicas of training instances
     - Rollout (Producer): Replicas of generation engines
-    - Low-precision training (FP8) and rollout (FP8 & FP4) spport
+    - Low-precision training (FP8) and rollout (FP8 & FP4) support
 4. **Single-Controller Architecture**
-    - Efficient messaging system (e.g. `weight-sync`, `rollout`, `evaluate`) to coordinate policy and rollout replicas
-    - Dynamic NCCL Process Groups for on the fly replicas registration/un-registration to enable fault-tolerant and elastic large scale RL training
+    - Efficient messaging system (e.g., `weight-sync`, `rollout`, `evaluate`) to coordinate policy and rollout replicas
+    - Dynamic NCCL Process Groups for on-the-fly replicas registration/un-registration to enable fault-tolerant and elastic large-scale RL training
     - Dynamic hyper-parameters adjustment
 
 ![Policy-Rollout-Controller Decoupled Architecture](./assets/arch.png)

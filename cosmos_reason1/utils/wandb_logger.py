@@ -37,7 +37,7 @@ def is_wandb_available() -> bool:
     try:
         import wandb  # noqa: F401
 
-        return True
+        return wandb.api.api_key is not None
     except ImportError:
         return False
 

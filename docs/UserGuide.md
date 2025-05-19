@@ -5,16 +5,16 @@ This document provides usage instructions for scripts related to training and ev
 
 
 ## Job recipes
-Overall cosmos_reason1 can support SFT/RL training with broad range of models and parallelisms, users can configure these with a config file. For convenience we have provided several pre-defined configs in the `configs` folder. e.g:
+Overall, cosmos_reason1 can support SFT/RL training with a broad range of models and parallelisms, users can configure these with a config file. For convenience, we have provided several pre-defined configs in the `configs` folder. e.g:
 
 | Config File                                         | Policy TP | Policy FSDP | Policy PP | Rollout TP | Rollout PP | Num GPUs                     | Purpose |
 | --------------------------------------------------- | --------- | ----------- | --------- | ---------- | ---------- | ---------------------------- | ------- |
 | `cosmos-reason1-7b-tp2-sft.toml`                    | 2         | 1           | 1         | -          | -          | 2                            | SFT     |
 | `cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml` | 2         | 1           | 1         | 2          | 1          | 2 for policy,  2 for rollout | GRPO    |
 
-SFT training requires using minimum 2 GPUs, and RL training requires at least 4 GPUs. Depending on the size of the model you are going to train, for 7B (or larger size) models, GPUs with 80GB of memory are required. For 3B (or smaller size) models, GPUs with >=32GB memory are required.
+SFT training requires using a minimum of 2 GPUs, and RL training requires at least 4 GPUs. Depending on the size of the model you are going to train, for 7B (or larger size) models, GPUs with 80GB of memory are required. For 3B (or smaller size) models, GPUs with >=32GB memory are required.
 
-You can customize your own training config based on above recipes. For example, you can change the `epoch` and `train_batch_per_replica` to adjust the epochs number and batch size, and `save_freq` to adjust the checkpoint saving interval.
+You can customize your own training config based on the above recipes. For example, you can change the `epoch` and `train_batch_per_replica` to adjust the epochs number and batch size, and `save_freq` to adjust the checkpoint saving interval.
 
 For the evaluation or inference, single GPU with at least 24GB memory is sufficient to run the `nvidia/Cosmos-Reason1-7B` model.
 
@@ -39,7 +39,7 @@ pip install -e .
 
 ### 📈 Monitor
 
-We recommend you to use wandb for training monitoring
+We recommend that you to use wandb for training monitoring
 
 1. Install wandb
 ```bash
@@ -52,13 +52,13 @@ pip install wandb
 wandb login # Then enter your WANDB_API_KEY 
 ```
 
-or you can add WANDB_API_KEY to your environment variables by adding the line to your shell config (e.g. `~/.bashrc`):
+or you can add WANDB_API_KEY to your environment variables by adding the line to your shell config (e.g., `~/.bashrc`):
 ```bash
 export WANDB_API_KEY=${WANDB_API_KEY}
 ```
 
 
-3. Launch training by the following Training Scripts, you will see the wandb link in logging:
+3. Launch training with the following Training Scripts, you will see the wandb link in the logging:
 ```bash
 wandb: Currently logged in as: ${WANDB_USER_NAME} to https://api.wandb.ai. Use `wandb login --relogin` to force relogin                                  
 wandb: Tracking run with wandb version 0.19.11                                                                                                                           
@@ -68,34 +68,34 @@ wandb: Syncing run ./outputs/qwen2-5-3b-tp2-dpn-sft/20250515101157
 wandb: ⭐️ View project at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}
 wandb: 🚀 View run at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}/runs/20250515101157
 ```
-Then you can view online visual training metrics, or check these data in local wandb folder.
+Then you can view online visual training metrics, or check these data in the local wandb folder.
 
 ### 🔩 Huggingface Access
 
-To get access to Cosmos-SFT/RL datasets, you can add your HF_TOKEN to the environment variables by adding the line to your shell config (e.g. `~/.bashrc`):
+To get access to Cosmos-SFT/RL datasets, you can add your HF_TOKEN to the environment variables by adding the line to your shell config (e.g., `~/.bashrc`):
 ```bash
 export HF_TOKEN=${HF_TOKEN}
 ```
 
 ## 📘 Training Scripts
 
-> **_NOTE:_**  Following the below training steps will trigger downloading around 50GB of model and dateset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
+> **_NOTE:_**  Following the below training steps will trigger downloading around 50GB of model and dataset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
 
 
 ### 🧠 Supervised Fine-Tuning (SFT)
 
-The SFT training can improve the model's capability on certain task with similar distribution of the training dataset. E.g. training with `robovqa` dataset can improve the model's perfomance on the robotics-focused visual question answering scenarios.
+The SFT training can improve the model's capability on certain tasks with a similar distribution of the training dataset. E.g., training with `robovqa` dataset can improve the model's performance on the robotics-focused visual question answering scenarios.
 
 
 > **_NOTE:_**  We set the `nvidia/Cosmos-Reason1-7B` as the default base model of SFT, which is already SFT trained on the `nvidia/Cosmos-Reason1-SFT-Dataset`. We recommend you use your own dataset for SFT exploration.
 
-In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPU:
+In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
 
 ```shell
 python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml
 ```
 
-After training finished, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
+After training finishes, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
 
 ```
 [rank1]:[cosmos] 2025-05-16 06:28:46,019 - cosmos - INFO - [Policy] Step: 95/95, [Policy] Loss: 0.87890625
@@ -138,21 +138,21 @@ To evaluate the improved performance of this sft model, please refer to the Eval
 
 ### 🔁 Reinforcement Learning (RL)
 
-The RL training can improve the model's reasoning capability on certain task with the reasoning training dataset.
+The RL training can improve the model's reasoning capability on certain tasks with the reasoning training dataset.
 
 In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
 python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml
 ```
-After training is done, the huggingface checkpoint get saved to the directory `$output_dir`, which is similar to SFT case. To evaluate the improved reasoning performance of this RL trained model, please refer to the Evaluation section.
+After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 
 ## 🚀 Inference
 You may refer to the `inference.py` code snippet adopted from the [Qwen2.5-VL repo](https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md#inference-locally) to run inference with the Cosmos-Reason1 model.
 
 ```shell
 python tools/eval/inference.py
-``` 
+```
 
 ## ✅ Evaluation Guide: `evaluate.py`
 
