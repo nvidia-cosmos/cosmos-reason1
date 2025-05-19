@@ -1,0 +1,83 @@
+redis = "12800"
+
+[train]
+resume = "False"
+epoch = 150
+output_dir = "./outputs/cosmos-reason1-7b-p-fsdp2-tp2-r-tp4-pp1-grpo"
+epsilon = 1e-6
+optm_name = "AdamW"
+optm_lr = 2e-6
+optm_impl = "fused"
+optm_weight_decay = 0.0
+optm_betas = [ 0.9, 0.95,]
+optm_warmup_steps = 20
+optm_grad_norm_clip = 1.0
+async_tp_enabled = false
+compile = false
+param_dtype = "bfloat16"
+fsdp_reduce_dtype = "float32"
+fsdp_offload = false
+fsdp_reshard_after_forward = "default"
+train_batch_per_replica = 64
+sync_weight_interval = 1
+
+[rollout]
+gpu_memory_utilization = 0.8
+enable_chunked_prefill = false
+max_response_length = 6144
+n_generation = 8
+batch_size = 4
+quantization = "none"
+seed = 42
+
+[rollout.sampling_config]
+temperature = 0.6
+top_p = 0.95
+top_k = 50
+repetition_penalty = 1.05
+
+[policy]
+model_name_or_path = "nvidia/Cosmos-Reason1-7B"
+model_max_length = 10240
+model_gradient_checkpointing = true
+
+[logging]
+enable_logging = true
+project_name = "cosmos_reason1"
+experiment_name = "cosmos-reason1-rl"
+
+[train.train_policy]
+type = "grpo"
+dataset_name = "nvidia/Cosmos-Reason1-RL-Dataset"
+dataset_subset = "robovqa"
+dataset_train_split = "rl"
+prompt_column_name = "qa_pairs"
+vision_asset_column_name = "video"
+fps = 1
+max_pixels = 81920 # 320*256
+reward_function = ["single_choice", "format"]
+temperature = 0.9
+epsilon_low = 0.2
+epsilon_high = 0.2
+kl_beta = 0.0
+mu_iterations = 2
+mini_batch = 1
+
+[train.ckpt]
+enable_checkpoint = true
+save_freq = 50
+save_mode = "async"
+
+[rollout.parallelism]
+n_init_replicas = 1
+tp_size = 4
+pp_size = 1
+
+[policy.parallelism]
+n_init_replicas = 1
+tp_size = 2
+cp_size = 1
+dp_shard_size = 2
+pp_size = 1
+dp_replicate_size = 1
+cp_rotate_method = "allgather"

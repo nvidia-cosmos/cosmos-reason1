@@ -1,0 +1,60 @@
+redis = "12800"
+
+[train]
+resume = "None"
+epoch = 1
+output_dir = "./outputs/cosmos-reason1-7b-pp2-tp2-sft"
+epsilon = 1e-6
+optm_name = "AdamW"
+optm_lr = 1e-6
+optm_impl = "fused"
+optm_weight_decay = 0.0
+optm_betas = [ 0.9, 0.999,]
+optm_warmup_steps = 20
+optm_grad_norm_clip = 1.0
+async_tp_enabled = false
+compile = false
+param_dtype = "bfloat16"
+fsdp_reduce_dtype = "float32"
+fsdp_offload = false
+fsdp_reshard_after_forward = "default"
+train_batch_per_replica = 4
+sync_weight_interval = 1
+
+[policy]
+model_name_or_path = "nvidia/Cosmos-Reason1-7B"
+model_max_length = 4096
+model_gradient_checkpointing = true
+
+[logging]
+enable_logging = true
+project_name = "cosmos_reason1"
+experiment_name = "cosmos-reason1-sft"
+
+[train.train_policy]
+type = "sft"
+dataset_name = "nvidia/Cosmos-Reason1-SFT-Dataset"
+dataset_subset = "robovqa"
+dataset_train_split = "understanding"
+dataset_test_size = 100
+enable_validation = true
+validation_freq = 30
+validation_batch_per_replica = 2
+conversation_column_name = "conversations"
+vision_asset_column_name = "video"
+fps = 1
+max_pixels = 81920 # 320*256
+
+[train.ckpt]
+enable_checkpoint = true
+save_freq = 30
+save_mode = "async"
+
+[policy.parallelism]
+n_init_replicas = 1
+tp_size = 2
+cp_size = 1
+dp_shard_size = -1
+pp_size = 2
+dp_replicate_size = 1
+cp_rotate_method = "allgather"

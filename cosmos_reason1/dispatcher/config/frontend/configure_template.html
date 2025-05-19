@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Policy Training Settings</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+      }
+      .group {
+        border: 1px solid #ccc;
+        padding: 10px;
+        margin-bottom: 20px;
+      }
+      .group legend {
+        font-weight: bold;
+      }
+      .field {
+        margin-bottom: 10px;
+      }
+      .field label {
+        display: inline-block;
+        width: 200px;
+      }
+      input, select {
+        width: 300px;
+        padding: 5px;
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+      }
+      small {
+        display: block;
+        color: #666;
+      }
+    </style>
+    <script>
+        function updateTrainingFields() {
+            const form = document.getElementById('config-form');
+            const style = document.getElementById('training_style').value;
+            // Add a query parameter to indicate this is a style change
+            form.action = '/?style_change=true';
+            form.submit();
+        }
+    </script>
+</head>
+<body>
+    <h1>Policy Training Settings</h1>
+    <form id="config-form" method="POST" action="/">
+        <div class="field">
+            <label for="training_style">Training Style:</label>
+            <select name="training_style" id="training_style" onchange="updateTrainingFields()">
+                <option value="sft" {% if training_style == "sft" %}selected{% endif %}>Supervised Fine-tuning (SFT)</option>
+                <option value="grpo" {% if training_style == "grpo" %}selected{% endif %}>GRPO (Reinforcement Learning)</option>
+            </select>
+            <small>Select the training style to use</small>
+        </div>
+
+        {% macro render_fields(fields, prefix="", parent_key="") %}
+            {% for key, value in fields.items() %}
+                {% set full_key = prefix ~ ('.' if prefix else '') ~ key %}
+                {% if value.value is defined %}
+                    <div class="field">
+                        <label for="{{ full_key }}">{{ key.replace('_', ' ').capitalize() }}:</label>
+                        {% if value.metadata.choices is defined %}
+                            <select name="{{ full_key }}" id="{{ full_key }}">
+                                {% for choice in value.metadata.choices %}
+                                    <option value="{{ choice }}" {% if value.value == choice %}selected{% endif %}>
+                                        {{ choice }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+                        {% elif value.input_type == "checkbox" %}
+                            <input type="checkbox" name="{{ full_key }}" id="{{ full_key }}" value="true"
+                                  {% if value.value %}checked{% endif %}>
+                        {% else %}
+                            <input type="text" name="{{ full_key }}" id="{{ full_key }}" value="{{ value.value }}">
+                        {% endif %}
+                        {% if value.metadata.help is defined %}
+                            <small>{{ value.metadata.help }}</small>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    <fieldset class="group">
+                        <legend>{{ key.replace('_', ' ').capitalize() }}</legend>
+                        {% if key == 'train_policy' %}
+                            <div class="field">
+                                <small>Current training style: {{ training_style.upper() }}</small>
+                            </div>
+                        {% endif %}
+                        {{ render_fields(value, prefix=full_key, parent_key=key) }}
+                    </fieldset>
+                {% endif %}
+            {% endfor %}
+        {% endmacro %}
+        {{ render_fields(fields) }}
+        <button type="submit">Next</button>
+    </form>
+</body>
+</html>

@@ -14,7 +14,9 @@
 # limitations under the License.
 
 # Misc
+/data/
 outputs/
+results/
 checkpoints/*
 !checkpoints/README.md
 

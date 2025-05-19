@@ -1,0 +1,703 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import re
+import ast
+import multiprocessing
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import datasets
+from cosmos_reason1.utils.logging import logger
+import socket
+import queue
+import dataclasses
+import base64
+import struct
+import tarfile
+from tqdm import tqdm
+from typing import List, Dict, Any
+import torch
+import pynvml
+import cv2
+import numpy as np
+from contextlib import contextmanager
+from torch.functional import F
+from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
+from transformers import AutoProcessor, AutoConfig
+from qwen_vl_utils import process_vision_info
+import ctypes
+from msgpack import ExtType
+
+
+def load_data_from_disk_or_hf(data_name, data_subset=None, revision=None):
+    if data_subset is not None and len(data_subset) == 0:
+        data_subset = None
+
+    if os.path.exists(data_name):
+        try:
+            return datasets.load_from_disk(data_name)
+        except Exception as e:
+            logger.warning(
+                f"Failed to load dataset from disk: {e}. Trying to load from HuggingFace Hub..."
+            )
+            return datasets.load_dataset(data_name, data_subset, revision=revision)
+    return datasets.load_dataset(data_name, data_subset, revision=revision)
+
+
+def read_json_file(file_path):
+    with open(file_path, "r") as file:
+        json_data = json.load(file)
+    return json_data
+
+
+def write_json_file(data, file_path):
+    with open(file_path, "w") as json_file:
+        json.dump(data, json_file, indent=4)
+
+
+def resolve_model_path(model_path: str) -> str:
+    if not os.path.exists(model_path):
+        if ":" in model_path:
+            if model_path.count(":") > 1:
+                raise ValueError(
+                    f"Invalid model path {model_path}, should be in the format of 'owner/repo[:path]'"
+                )
+            model_path, file_path = model_path.split(":")
+        else:
+            model_path = model_path
+            file_path = None
+
+        # Check whether `model_path` is a HuggingFace repo id with repo name
+        if len(model_path.split("/")) == 2:
+            from huggingface_hub import snapshot_download, HfFileSystem
+
+            logger.info(
+                f"model path {model_path} is not a directory. Trying to load from HuggingFace Hub..."
+            )
+
+            hf_fs = HfFileSystem(token=os.environ.get("HF_TOKEN", None))
+            files = hf_fs.ls(model_path, detail=False)
+            if (
+                os.path.join(model_path, "model.safetensors.index.json") in files
+                or os.path.join(model_path, "model.safetensors") in files
+            ):
+                logger.info(
+                    f"Found safetensors in {model_path}. Ignoring *pytorch_model* and *consolidated* files."
+                )
+                ignore_patterns = ["*pytorch_model*", "*consolidated*"]
+            else:
+                ignore_patterns = None
+
+            try:
+                model_path = snapshot_download(
+                    model_path,
+                    token=os.environ.get("HF_TOKEN"),
+                    cache_dir=os.environ.get(
+                        "HF_HOME",
+                        os.path.expanduser("~/.cache/huggingface/transformers/"),
+                    ),
+                    ignore_patterns=ignore_patterns,
+                )
+            except Exception as e:
+                logger.error(f"Error: {e}")
+                raise
+
+            if file_path is not None:
+                model_path = os.path.join(model_path, file_path)
+            logger.info(f"Downloaded model from HuggingFace to {model_path}")
+
+        else:
+            raise ValueError(
+                f"Model path {model_path} is not a directory and not a valid HuggingFace repo id with repo name."
+            )
+
+    return model_path
+
+
+def is_port_free(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        return s.connect_ex(("127.0.0.1", port)) != 0
+
+
+def find_available_port(start_port):
+    max_port = 65535  # Maximum port number
+    for port in range(start_port, max_port + 1):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("localhost", port))
+                return port
+        except OSError:
+            continue
+
+    raise RuntimeError("No available ports found in the specified range.")
+
+
+def put_with_overwrite(q: queue.Queue, item):
+    assert isinstance(q, queue.Queue), "q must be a queue.Queue, but not asyncio.Queue"
+    if q.full():
+        try:
+            q.get_nowait()  # Remove the oldest item
+        except queue.Empty:
+            pass  # In case the queue becomes empty in a race condition
+    q.put(item)
+
+
+def extract_fields(dc_instance):
+    """
+    Recursively extract dataclass fields into a nested dictionary.
+    Leaf nodes contain a dict with 'value', 'metadata', 'type', and 'input_type'.
+    """
+
+    def recursive_extract(instance):
+        fields = {}
+        for f in dataclasses.fields(instance):
+            if f.metadata.get("skip_ui", False):
+                continue
+            value = getattr(instance, f.name)
+
+            # Special handling for train_policy field
+            if f.name == "train_policy" and hasattr(instance, "train_policy"):
+                fields[f.name] = recursive_extract(
+                    value
+                )  # Just extract current policy's fields
+                continue
+
+            if dataclasses.is_dataclass(value):
+                fields[f.name] = recursive_extract(value)
+            else:
+                field_data = {
+                    "value": value,
+                    "metadata": f.metadata,
+                    "type": f.type,
+                    "input_type": "checkbox" if f.type == bool else "text",
+                }
+                fields[f.name] = field_data
+        return fields
+
+    return recursive_extract(dc_instance)
+
+
+def parse_collection(s):
+    """
+    Attempts to parse a string into a Python literal.
+
+    If the string represents a list or tuple, it returns the corresponding
+    Python object. Otherwise, it returns None.
+    """
+    try:
+        result = ast.literal_eval(s)
+    except (ValueError, SyntaxError):
+        # The string is not a valid Python literal.
+        return None
+
+    # Check if the result is a list or tuple.
+    if isinstance(result, (list, tuple)):
+        return result
+    else:
+        return None
+
+
+def update_dataclass(dc_instance, form, prefix=""):
+    """
+    Recursively update the dataclass instance based on form data.
+    The form keys are built as nested keys
+    """
+    for f in dataclasses.fields(dc_instance):
+        if f.metadata.get("skip_ui", False):
+            continue
+
+        field_name = f.name
+        full_key = f"{prefix}.{field_name}" if prefix else field_name
+        value = getattr(dc_instance, field_name)
+
+        # Handle train_policy field specially
+        if field_name == "train_policy" and hasattr(dc_instance, "train_policy"):
+            # The train_policy instance is already set to the correct type (SFT or GRPO)
+            # Just update its fields
+            update_dataclass(value, form, prefix=full_key)
+            continue
+
+        if dataclasses.is_dataclass(value):
+            update_dataclass(value, form, prefix=full_key)
+        else:
+            form_value = form.get(full_key)
+            if form_value is None:
+                if f.type == bool:
+                    new_value = False
+                else:
+                    continue
+            elif f.type == bool:
+                new_value = form_value.lower() == "true"
+            elif f.type == int:
+                new_value = int(form_value)
+            elif f.type == float:
+                new_value = float(form_value)
+            elif f.type == tuple:
+                new_value = tuple(map(float, form_value.split(",")))
+            else:
+                parsed_set = parse_collection(form_value)
+                new_value = parsed_set if parsed_set is not None else form_value
+            setattr(dc_instance, field_name, new_value)
+
+
+def update_dataclass_with_dict(dc_instance, config_data):
+    if config_data is None:
+        raise RuntimeError("Got null config.")
+    for key, value in config_data.items():
+        current_value = getattr(dc_instance, key)
+        if dataclasses.is_dataclass(current_value):
+            if value is None:
+                continue
+            update_dataclass_with_dict(current_value, value)
+        else:
+            setattr(dc_instance, key, value)
+
+
+def list_to_b64(lst) -> str:
+    # for int64_t listy to base64
+    byte_data = struct.pack(f"{len(lst)}q", *lst)
+    return base64.b64encode(byte_data).decode("utf-8")
+
+
+def b64_to_list(b64_str) -> List[int]:
+    # for base64 to int64_t list
+    byte_data = base64.b64decode(b64_str)
+    n = len(byte_data) // 8
+    return list(struct.unpack(f"{n}q", byte_data))
+
+
+@contextmanager
+def cosmos_default_dtype(dtype: torch.dtype):
+    old = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(old)
+
+
+class IdentityLayer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
+
+
+def selective_log_softmax(logits, index):
+    """
+    A memory-efficient implementation of the common `log_softmax -> gather` operation.
+
+    This function is equivalent to the following naive implementation:
+    ```python
+    logps = torch.gather(logits.log_softmax(-1), dim=-1, index=index.unsqueeze(-1)).squeeze(-1)
+    ```
+
+    Args:
+        logits (`torch.Tensor`):
+            Logits tensor of shape `(..., num_classes)`.
+        index (`torch.Tensor`):
+            Index tensor of shape `(...)`, specifying the positions to gather from the log-softmax output.
+
+    Returns:
+        `torch.Tensor`:
+            Gathered log probabilities with the same shape as `index`.
+    """
+    if logits.dtype in [torch.float32, torch.float64]:
+        selected_logits = torch.gather(
+            logits, dim=-1, index=index.unsqueeze(-1)
+        ).squeeze(-1)
+        # loop to reduce peak mem consumption
+        logsumexp_values = torch.stack([torch.logsumexp(lg, dim=-1) for lg in logits])
+        per_token_logps = (
+            selected_logits - logsumexp_values
+        )  # log_softmax(x_i) = x_i - logsumexp(x)
+    else:
+        # logsumexp approach is unstable with bfloat16, fall back to slightly less efficent approach
+        per_token_logps = []
+        for row_logits, row_labels in zip(
+            logits, index
+        ):  # loop to reduce peak mem consumption
+            row_logps = F.log_softmax(row_logits, dim=-1)
+            row_per_token_logps = row_logps.gather(
+                dim=-1, index=row_labels.unsqueeze(-1)
+            ).squeeze(-1)
+            per_token_logps.append(row_per_token_logps)
+        per_token_logps = torch.stack(per_token_logps)
+    return per_token_logps
+
+
+def clear_weight_name(name: str) -> str:
+    return name.replace("._orig_mod", "").replace("._checkpoint_wrapped_module", "")
+
+
+def _extract_tgz_file(tgz_file, output_dir):
+    with tarfile.open(tgz_file, "r:gz") as tar:
+        tar.extractall(path=output_dir)
+
+
+def prepare_cosmos_data(config):
+    fps = config.train.train_policy.fps
+    max_pixels = config.train.train_policy.max_pixels
+
+    cache_dir = os.environ.get(
+        "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
+    )
+    dataset_dir = os.path.join(
+        cache_dir,
+        "datasets",
+        config.train.train_policy.dataset_name,
+        config.train.train_policy.dataset_subset,
+    )
+    video_clips_dir = os.path.join(dataset_dir, "video_clips")
+    video_tensors_dir = os.path.join(
+        dataset_dir,
+        "video_tensors",
+        f"fps-{fps}-pixels-{max_pixels}",
+    )
+
+    if os.path.exists(video_clips_dir) and os.path.exists(video_tensors_dir):
+        clip_files = []
+        for root, dirs, files in os.walk(video_clips_dir):
+            for file in files:
+                if file.endswith((".mp4", ".avi", ".mov")):
+                    clip_files.append(os.path.join(root, file))
+        num_clips = len(clip_files)
+        num_tensors = len(
+            [
+                tensor
+                for tensor in os.listdir(video_tensors_dir)
+                if tensor.endswith(".cosmos")
+            ]
+        )
+
+        # dataset = load_data_from_disk_or_hf(
+        #     config.train.train_policy.dataset_name,
+        #     config.train.train_policy.dataset_subset,
+        # )
+        # num_samples = len(dataset[config.train.train_policy.dataset_train_split])
+        if num_clips == num_tensors:
+            logger.info(
+                f"Dataset {config.train.train_policy.dataset_name} is already prepared."
+            )
+            return
+
+    ## Prepare video clips
+    re_pattern = re.compile(
+        rf"^{re.escape(config.train.train_policy.dataset_subset)}/clips/.*\.tar\.gz$"
+    )
+    file_pattern = f"{config.train.train_policy.dataset_subset}/clips/*.tar.gz"
+    remote_files = list_repo_files(
+        repo_id=config.train.train_policy.dataset_name,
+        repo_type="dataset",
+        revision=config.train.train_policy.dataset_revision or None,
+    )
+
+    tgz_files = [f for f in remote_files if re_pattern.match(f)]
+    if tgz_files:
+        downloaded_snapshot_directory_cache = snapshot_download(
+            repo_id=config.train.train_policy.dataset_name,
+            allow_patterns=[file_pattern],
+            repo_type="dataset",
+            revision=config.train.train_policy.dataset_revision or None,
+        )
+
+        downloaded_clips_dir_path = os.path.join(
+            downloaded_snapshot_directory_cache,
+            config.train.train_policy.dataset_subset,
+            "clips",
+        )
+        assert os.path.exists(
+            downloaded_clips_dir_path
+        ), f"Can not find clips directory at {downloaded_clips_dir_path}"
+
+        # Avoid redundant extraction
+        if not os.path.exists(video_clips_dir):
+            os.makedirs(video_clips_dir, exist_ok=True)
+            with tqdm(
+                total=len(tgz_files), desc="Extracting clips tar.gz files"
+            ) as pbar:
+                results = {}
+                with multiprocessing.Pool(
+                    processes=min(multiprocessing.cpu_count(), 8)
+                ) as pool:
+                    for tar_file in tgz_files:
+                        full_file_path = os.path.join(
+                            downloaded_clips_dir_path, os.path.basename(tar_file)
+                        )
+                        results[tar_file] = pool.apply_async(
+                            _extract_tgz_file,
+                            (full_file_path, video_clips_dir),
+                            callback=lambda _: pbar.update(1),
+                        )
+                    pool.close()
+                    pool.join()
+
+                for tar_file, result in results.items():
+                    if not result.successful():
+                        raise RuntimeError(
+                            f"Failed to extract {tar_file}: {result.get()}"
+                        )
+
+    else:
+        # legacy dataset format with single tar gz file
+        if not os.path.exists(video_clips_dir):
+            os.makedirs(video_clips_dir, exist_ok=True)
+            clip_filename = os.path.join(
+                config.train.train_policy.dataset_subset, "clips.tar.gz"
+            )
+            clip_tgz = hf_hub_download(
+                repo_id=config.train.train_policy.dataset_name,
+                revision=config.train.train_policy.dataset_revision or None,
+                repo_type="dataset",
+                filename=clip_filename,
+            )
+            _extract_tgz_file(clip_tgz, video_clips_dir)
+
+    if config.train.train_policy.dataset_subset == "av":
+        # For AV dataset, we need to rename the files
+        for root, dirs, files in os.walk(video_clips_dir):
+            for file in files:
+                if file.endswith(".mp4"):
+                    new_name = file.split(".")[0] + ".mp4"
+                    os.rename(os.path.join(root, file), os.path.join(root, new_name))
+                    logger.info(f"Renamed {file} to {new_name}")
+
+    if config.train.train_policy.enable_dataset_preprocess:
+        logger.info("Preprocessing dataset...")
+        ## Prepare video tensors
+        # List all clip files in the temporary directory
+        os.makedirs(video_tensors_dir, exist_ok=True)
+        processor = AutoProcessor.from_pretrained(config.policy.model_name_or_path)
+        config = AutoConfig.from_pretrained(config.policy.model_name_or_path)
+        image_token_id = config.image_token_id
+        video_token_id = config.video_token_id
+        clip_files = []
+        for root, dirs, files in os.walk(video_clips_dir):
+            for file in files:
+                if file.endswith((".mp4", ".avi", ".mov")):  # Common video extensions
+                    clip_files.append(os.path.join(root, file))
+
+        def process_clip_file(clip):
+            # Fetch original video frame rate
+            if fps == 0:
+                cap = cv2.VideoCapture(clip)
+                if not cap.isOpened():
+                    raise IOError(f"Cannot open {clip}")
+
+                fps_ = cap.get(cv2.CAP_PROP_FPS)
+                cap.release()
+            else:
+                fps_ = fps
+
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "video",
+                            "video": clip,
+                            "fps": fps_,
+                            "max_pixels": max_pixels,
+                        },
+                    ],
+                }
+            ]
+
+            # Preparation for inference
+            text = processor.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            _, video_inputs = process_vision_info(messages)
+            assert len(video_inputs) == 1, "Only one video should be detected"
+            # [T, 3, H, W]
+            video_frame_tensor = video_inputs[0]
+            assert (
+                video_frame_tensor.dim() == 4
+            ), "Video tensor should have 4 dimensions"
+
+            inputs = processor(
+                text=[text],
+                images=None,
+                videos=video_inputs,
+                padding=True,
+                return_tensors="pt",
+            )
+            # Convert video into patched sequence of shape [seq, dim]
+            # This will be the input into visual part of VLM
+            pixels = inputs["pixel_values_videos"]
+            assert pixels.dim() == 2, "Video tensor should have `2` dimensions"
+            assert (
+                pixels.dtype == torch.float32
+            ), "Pixel tensor should be of type `float32`"
+            # [N, 3]
+            grid_thw = inputs["video_grid_thw"]
+            assert grid_thw.dim() == 2, "Grid tensor should have `2` dimensions"
+            assert grid_thw.shape[0] == 1, "Only one video a time"
+            assert (
+                grid_thw.shape[1] == 3
+            ), "Grid tensor should have `3` dimensions for `THW`"
+
+            second_per_grid_ts = inputs.get("second_per_grid_ts")
+            target_filename = os.path.join(
+                video_tensors_dir,
+                f"{os.path.basename(clip).split('.')[0]}.cosmos",
+            )
+            torch.save(
+                {
+                    "pixel_values_videos": pixels,
+                    "video_grid_thw": grid_thw,
+                    "second_per_grid_ts": second_per_grid_ts,
+                    "n_image_tokens": (inputs["input_ids"] == image_token_id)
+                    .sum()
+                    .item(),
+                    "n_video_tokens": (inputs["input_ids"] == video_token_id)
+                    .sum()
+                    .item(),
+                },
+                target_filename,
+            )
+
+        with tqdm(total=len(clip_files), desc="Processing video clips") as pbar:
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = [
+                    executor.submit(process_clip_file, clip) for clip in clip_files
+                ]
+                for future in as_completed(futures):
+                    future.result()
+                    pbar.update(1)
+
+        logger.info(
+            f"\n\n\nSaved {len(clip_files)} processed video tensors to {video_tensors_dir}"
+        )
+
+
+GPU_FLOPS_MAPPING = {
+    "NVIDIA H100 80GB HBM3": {
+        "FP32": 989 * (1e12),
+        "FP16": 1979 * (1e12),
+    },
+    "NVIDIA A100 80GB": {
+        "FP32": 39 * (1e12),
+        "FP16": 195 * (1e12),
+    },
+}
+
+
+def get_device_flops(dtype: torch.dtype, num_gpus: int) -> int:
+    """
+    Get the GPU FLOPs for the current device.
+
+    Args:
+        dtype (torch.dtype): The data type of the model.
+        num_gpus (int): The number of GPUs available.
+
+    Returns:
+        int: The FLOPs of the current device.
+    """
+    gpu_flops = 0
+    if torch.cuda.is_available():
+        pynvml.nvmlInit()
+        handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+        gpu_type = pynvml.nvmlDeviceGetName(handle).decode("utf-8")
+        if dtype == "float32":
+            gpu_flops = GPU_FLOPS_MAPPING[gpu_type]["FP32"]
+        elif dtype == "float16" or dtype == "bfloat16":
+            gpu_flops = GPU_FLOPS_MAPPING[gpu_type]["FP16"]
+        else:
+            raise ValueError(f"Unsupported dtype: {dtype}")
+    else:
+        logger.warning("CUDA is not available. Cannot get GPU FLOPs.")
+    return gpu_flops * num_gpus
+
+
+def compute_mfu(
+    model: torch.nn.Module,
+    inputs: Dict[str, Any],
+    iter_time: float,
+    num_gpus: int,
+    dtype: str,
+) -> dict:
+    """
+    Compute the model FLOPs Utilization (MFU) for a given model and inputs.
+
+    Args:
+        model (torch.nn.Module): The model for which to compute the MFU.
+        inputs (Dict[str, Any]): The inputs to the model.
+        iter_time (float): The time taken for the forward pass in seconds.
+
+    Returns:
+        dict: A dictionary containing the MFU/FLOPs value.
+    """
+    result = {}
+    # Get the model FLOPs for the iteration
+    seq_len = np.prod(inputs["input_ids"].shape)
+    model_params, model_flops = model.get_nparams_and_flops(seq_len)
+    result["model_flops"] = model_flops
+
+    # Get the GPU FLOPs
+    try:
+        gpu_flops = get_device_flops(dtype, num_gpus)
+        # Calculate and return the MFU
+        mfu = (model_flops / gpu_flops) / iter_time
+        result["mfu"] = mfu
+        logger.info(
+            f"MFU: {mfu:.4f}, Model FLOPs: {model_flops / 1e12:.2f}T, GPU FLOPs: {gpu_flops / 1e12:.2f}T, Iter time: {iter_time:.2f}s"
+        )
+    except Exception as e:
+        logger.error(
+            f"Cannot compute MFU: {e}, only report model FLOPs, you can calculate MFU manually."
+        )
+        logger.info(
+            f"Model FLOPs: {model_flops / 1e12:.2f}T, Iter time: {iter_time:.2f}s"
+        )
+
+    return result
+
+
+def fix_data_type_size(obj):
+    if isinstance(obj, tuple):
+        return tuple([fix_data_type_size(x) for x in obj])
+    elif isinstance(obj, list):
+        return [fix_data_type_size(x) for x in obj]
+    elif isinstance(obj, dict):
+        return {fix_data_type_size(k): fix_data_type_size(v) for k, v in obj.items()}
+    elif isinstance(obj, int):
+        return ctypes.c_int64(obj)
+    else:
+        return obj
+
+
+# Extension code
+MSGPACK_C_LONG_EXT_TYPE = 0x10
+
+
+# Hooks
+def msgpack_c_long(obj):
+    if isinstance(obj, ctypes._SimpleCData) and isinstance(obj.value, int):
+        if isinstance(obj, ctypes.c_long):
+            return ExtType(
+                MSGPACK_C_LONG_EXT_TYPE, obj.value.to_bytes(8, "big", signed=True)
+            )
+    raise TypeError(f"Unsupported type: {type(obj)}")
+
+
+def msgunpack_c_long(code, data):
+    if code == MSGPACK_C_LONG_EXT_TYPE:
+        val = int.from_bytes(data, "big", signed=True)
+        return int(val)
+    return ExtType(code, data)

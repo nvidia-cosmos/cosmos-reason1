@@ -1,0 +1,56 @@
+redis = "12800"
+
+[train]
+resume = "None"
+epoch = 1
+output_dir = "./outputs/qwen2-5-7b-sft-tp2-pp2-sft"
+epsilon = 1e-6
+optm_name = "AdamW"
+optm_lr = 1e-6
+optm_impl = "fused"
+optm_weight_decay = 0.0
+optm_betas = [ 0.9, 0.999,]
+optm_warmup_steps = 20
+optm_grad_norm_clip = 1.0
+async_tp_enabled = false
+compile = false
+param_dtype = "bfloat16"
+fsdp_reduce_dtype = "float32"
+fsdp_offload = false
+fsdp_reshard_after_forward = "default"
+train_batch_per_replica = 8
+sync_weight_interval = 1
+
+[policy]
+model_name_or_path = "Qwen/Qwen2.5-7B-Instruct"
+model_max_length = 1024 
+model_gradient_checkpointing = true
+
+[logging]
+enable_logging = false
+project_name = "cosmos_reason1"
+experiment_name = "None"
+
+[train.train_policy]
+type = "sft"
+dataset_name = "LNTANOooo/sharegpt52k"
+dataset_subset = ""
+dataset_train_split = "train"
+dataset_test_split = "test"
+conversation_column_name = "conversation"
+vision_asset_column_name = ""
+
+[train.ckpt]
+enable_checkpoint = true
+save_freq = 30
+save_mode = "async"
+
+[policy.parallelism]
+n_init_replicas = 1
+tp_size = 2
+cp_size = 1
+dp_shard_size = -1
+pp_size = 2
+dp_replicate_size = 1
+cp_rotate_method = "allgather"
+

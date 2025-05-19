@@ -1,0 +1,28 @@
+datasets:
+  - robovqa
+  - av
+  - agibot
+  - bridgev2
+  - holoassist
+
+model:
+  model_name: nvidia/Cosmos-Reason1-7B
+  tokenizer_model_name: qwen2.5-vl-7b
+  dtype: bfloat16
+  tp_size: 1
+  max_length: 128000
+
+evaluation:
+  answer_type: reasoning
+  num_processes: 80
+  skip_saved: false
+  fps: 4
+  seed: 1
+
+generation:
+  max_retries: 10
+  max_tokens: 1024
+  temperature: 0.6
+  repetition_penalty: 1.0
+  presence_penalty: 0.0
+  frequency_penalty: 0.0

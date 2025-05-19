@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dispatcher Status</title>
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --secondary-color: #34495e;
+            --success-color: #27ae60;
+            --warning-color: #e74c3c;
+            --background-color: #f8f9fa;
+            --card-background: #ffffff;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: var(--background-color);
+            color: var(--primary-color);
+        }
+        
+        h1 {
+            text-align: center;
+            color: var(--primary-color);
+            font-size: 2.5em;
+            margin-bottom: 30px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid var(--primary-color);
+        }
+        
+        h2 {
+            color: var(--secondary-color);
+            margin: 30px 0 20px;
+            font-size: 1.8em;
+        }
+        
+        .replica {
+            background: var(--card-background);
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin: 20px 0;
+            padding: 20px;
+            transition: transform 0.2s ease;
+        }
+        
+        .replica:hover {
+            transform: translateY(-2px);
+        }
+        
+        .replica h3 {
+            color: var(--primary-color);
+            margin: 0 0 15px;
+            font-size: 1.4em;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 15px;
+            font-weight: 500;
+            font-size: 0.9em;
+        }
+        
+        .arrived {
+            background-color: rgba(39, 174, 96, 0.2);
+            color: var(--success-color);
+        }
+        
+        .not-arrived {
+            background-color: rgba(231, 76, 60, 0.2);
+            color: var(--warning-color);
+        }
+        
+        .atom {
+            background: rgba(44, 62, 80, 0.05);
+            border-radius: 8px;
+            margin: 8px 0;
+            padding: 12px 15px;
+            display: flex;
+            gap: 20px;
+            align-items: center;
+        }
+        
+        .atom-info {
+            display: flex;
+            gap: 20px;
+            flex: 1;
+            font-size: 0.95em;
+        }
+        
+        .atom-detail {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--secondary-color);
+        }
+        
+        .atom-label {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        
+        .role-badge {
+            display: inline-block;
+            background: var(--secondary-color);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 0.9em;
+            margin-bottom: 10px;
+        }
+        
+        #status {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .replica-info {
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        
+        .group-size {
+            display: inline-flex;
+            align-items: center;
+            background: rgba(44, 62, 80, 0.05);
+            padding: 6px 12px;
+            border-radius: 8px;
+            font-size: 0.9em;
+        }
+        
+        .group-size-label {
+            font-weight: 600;
+            color: var(--primary-color);
+            margin-right: 6px;
+        }
+        
+        .atoms-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .atom {
+            background: rgba(44, 62, 80, 0.05);
+            border-radius: 8px;
+            padding: 10px 15px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .atom-label {
+            font-weight: 600;
+            color: var(--primary-color);
+        }
+        
+        .atom-value {
+            color: var(--secondary-color);
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 10px;
+            }
+            
+            .replica {
+                margin: 15px 0;
+                padding: 15px;
+            }
+            
+            .atom {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            
+            .atom-info {
+                flex-direction: column;
+                gap: 8px;
+            }
+            
+            .atoms-container {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Dispatcher Status</h1>
+    <div id="status"></div>
+
+    <script>
+        function updateStatus() {
+            fetch('/api/status')
+                .then(response => response.json())
+                .then(data => {
+                    const statusDiv = document.getElementById('status');
+                    let html = '';
+                    
+                    // Policy Replicas
+                    html += '<h2>Policy Replicas</h2>';
+                    html += renderReplicas(data.policy_replicas, data.mesh_names);
+                    
+                    // Rollout Replicas
+                    html += '<h2>Rollout Replicas</h2>';
+                    html += renderReplicas(data.rollout_replicas, data.mesh_names);
+                    
+                    statusDiv.innerHTML = html;
+                });
+        }
+
+        function renderReplicas(replicas, meshNames) {
+            let html = '';
+            for (const replica of replicas) {
+                // Get group size from the first atom (since they're all the same)
+                const groupSize = replica.atoms.length > 0 ? replica.atoms[0].group_size : [];
+                
+                html += `
+                    <div class="replica">
+                        <h3>Replica: ${replica.name}</h3>
+                        <div class="replica-info">
+                            <div class="role-badge">${replica.role}</div>
+                            <div class="status-badge ${replica.arrived ? 'arrived' : 'not-arrived'}">
+                                ${replica.arrived ? '✓ All Atoms Arrived' : '⏳ Waiting for Atoms'}
+                            </div>
+                            <div class="group-size">
+                                <span class="group-size-label">Group Size:</span>
+                                <span>${renderRanks(groupSize, meshNames)}</span>
+                            </div>
+
+                            ${(typeof replica.weight_step === 'number' && replica.weight_step >= 0) ? `
+                                <div class="group-size">
+                                    <span class="group-size-label">Weight Step:</span>
+                                    <span>${replica.weight_step}</span>
+                                </div>` : ''
+                            }
+                        </div>
+                        
+                        <h4>Atoms:</h4>
+                        <div class="atoms-container">
+                `;
+                
+                for (const atom of replica.atoms) {
+                    html += `
+                        <div class="atom">
+                            <span class="atom-label">Ranks:</span>
+                            <span class="atom-value">${renderRanks(atom.ranks, meshNames)}</span>
+                        </div>
+                    `;
+                }
+                html += '</div></div>';
+            }
+            return html;
+        }
+
+        function renderRanks(ranks, meshNames) {
+            return ranks.map((rank, i) => `${meshNames[i]}: ${rank}`).join(', ');
+        }
+
+        // Update status every 2 seconds
+        updateStatus();
+        setInterval(updateStatus, 2000);
+    </script>
+</body>
+</html>
