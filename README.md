@@ -106,7 +106,7 @@ Cosmos-Reason1 provides toolchain to enable large scale SFT and RL training work
     - Dynamic NCCL Process Groups for on-the-fly replicas registration/un-registration to enable fault-tolerant and elastic large-scale RL training
     - Dynamic hyper-parameters adjustment
 
-![Policy-Rollout-Controller Decoupled Architecture](./assets/rl_infra.png)
+![Policy-Rollout-Controller Decoupled Architecture](./assets/rl_infra.svg)
 
 ## License and Contact
 
