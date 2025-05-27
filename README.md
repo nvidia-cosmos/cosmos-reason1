@@ -12,7 +12,7 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 ## Getting Started
 ### Inference
-
+> **NOTE:** We suggest using `fps=4` for the input video and `max_tokens=4096` to avoid truncated response.
 ```python
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
@@ -80,6 +80,30 @@ generated_text = outputs[0].outputs[0].text
 print(generated_text)
 ```
 
+<table>
+  <tr>
+    <td>
+      <p>User prompt: Is it safe to turn right?</p>
+      <img src="assets/sample.gif" alt="Demo GIF" width="400" /><br/>
+    </td>
+    <td style="vertical-align: top; padding-left: 20px;">
+      <!-- Text on the right -->
+      <p>Assistant response:</p>
+      <p>
+&lt;think&gt;
+Okay, let's see. The user is asking if it's safe to turn right based on the video provided. First, I need to ...
+The key points here are the parked vehicles. There are cars parked on both sides of the road, ...
+&lt;/think&gt;
+
+&lt;answer&gt;
+Based on the video, turning right may not be entirely safe due to the following factors: ...
+&lt;/answer&gt;
+      </p>
+    </td>
+  </tr>
+</table>
+
+<!-- ![Demo GIF](assets/sample.gif) -->
 ### SFT and RL Training
 Please check our [User Guide](docs/UserGuide.md).
 
