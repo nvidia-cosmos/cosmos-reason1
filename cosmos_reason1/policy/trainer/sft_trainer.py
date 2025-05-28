@@ -600,10 +600,88 @@ class SFTTrainer(Trainer):
             ),
         )
         # For iteration control
-        self.total_num_steps = len(self.train_data_loader) * config.train.epoch
+        self.total_steps = (
+            len(self.train_data_loader) * config.train.epoch // self.dp_world_size
+        )
         self.train_step = 0
 
         self.loss_fn = torch.nn.CrossEntropyLoss()
+
+    def validate(self):
+        logger.info(
+            f"[Policy] Validation at step {self.train_step}/{self.total_steps}..."
+        )
+        self.model.eval()
+        with torch.no_grad():
+            val_total_loss = 0.0
+            for val_batch in tqdm(self.val_data_loader, desc="Validation"):
+                for k, v in val_batch.items():
+                    val_batch[k] = (
+                        v.to(self.device) if isinstance(v, torch.Tensor) else v
+                    )
+                val_inputs = val_batch["input_ids"]
+                val_labels = val_batch.pop("label_ids")
+                val_position_ids, val_pos_seq_dim = self.model.get_position_ids(
+                    **val_batch
+                )
+
+                val_cp_context = (
+                    create_context_parallel_ctx(
+                        cp_mesh=self.parallel_dims.mesh["cp"],
+                        cp_buffers=[val_inputs, val_labels, val_position_ids],
+                        cp_seq_dims=[1, 1, val_pos_seq_dim],
+                        cp_no_restore_buffers={
+                            val_inputs,
+                            val_labels,
+                            val_position_ids,
+                        },
+                        cp_rotate_method=self.config.parallelism.cp_rotate_method,
+                    )
+                    if self.parallel_dims.cp_enabled
+                    else None
+                )
+
+                with self.context(val_cp_context):
+                    if self.parallel_dims.pp_enabled:
+                        pp_last_stage = (
+                            self.parallel_dims.pp_coord[0]
+                            == self.parallel_dims.pp_coord[1] - 1
+                        )
+                        pp_first_stage = self.parallel_dims.pp_coord[0] == 0
+
+                        # Pipeline Parallel forward / backward inside step() call
+                        val_targets, val_losses = (
+                            (val_labels, []) if pp_last_stage else (None, None)
+                        )
+                        if pp_first_stage:
+                            self.pp_scheduler.step(
+                                **val_batch, position_ids=val_position_ids
+                            )
+                        else:
+                            # FWD + BWD if it is 1F1B-like scheduler
+                            self.pp_scheduler.step(
+                                position_ids=val_position_ids,
+                                target=val_targets,
+                                losses=val_losses,
+                            )
+                        val_loss = (
+                            torch.mean(torch.stack(val_losses)).to(self.device)
+                            if pp_last_stage
+                            else torch.tensor([-1.0], device=self.device)
+                        )
+                    else:
+                        val_logits = self.model(
+                            **val_batch, position_ids=val_position_ids
+                        )[:, :-1].contiguous()
+                        val_loss = self.loss_fn(
+                            val_logits.view(-1, val_logits.size(-1)),
+                            val_labels[:, 1:].contiguous().view(-1),
+                        )
+                    val_total_loss += val_loss.item() * val_inputs.size(0)
+            val_avg_loss = val_total_loss / len(self.val_data_loader.dataset)
+            logger.info(f"[Policy] Validation loss: {val_avg_loss}")
+        self.model.train()
+        return val_avg_loss
 
     def train(self):
         for batch in self.train_data_loader:
@@ -729,12 +807,12 @@ class SFTTrainer(Trainer):
                         )
                     else:
                         logger.info(
-                            f"Step: {self.train_step}/{self.total_num_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s."
+                            f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s."
                         )
 
             if step_logging:
                 logger.info(
-                    f"Step: {self.train_step}/{self.total_num_steps}, Loss: {global_avg_loss:.5e}"
+                    f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5e}"
                 )
 
             val_score = None
@@ -744,81 +822,7 @@ class SFTTrainer(Trainer):
                 and self.train_step % self.config.train.train_policy.validation_freq
                 == 0
             ):
-                logger.info(
-                    f"[Policy] Validation at step {self.train_step}/{self.total_num_steps}..."
-                )
-                self.model.eval()
-                with torch.no_grad():
-                    val_total_loss = 0.0
-                    for val_batch in tqdm(self.val_data_loader, desc="Validation"):
-                        for k, v in val_batch.items():
-                            val_batch[k] = (
-                                v.to(self.device) if isinstance(v, torch.Tensor) else v
-                            )
-                        val_inputs = val_batch["input_ids"]
-                        val_labels = val_batch.pop("label_ids")
-                        val_position_ids, val_pos_seq_dim = self.model.get_position_ids(
-                            **val_batch
-                        )
-
-                        val_cp_context = (
-                            create_context_parallel_ctx(
-                                cp_mesh=self.parallel_dims.mesh["cp"],
-                                cp_buffers=[val_inputs, val_labels, val_position_ids],
-                                cp_seq_dims=[1, 1, val_pos_seq_dim],
-                                cp_no_restore_buffers={
-                                    val_inputs,
-                                    val_labels,
-                                    val_position_ids,
-                                },
-                                cp_rotate_method=self.config.parallelism.cp_rotate_method,
-                            )
-                            if self.parallel_dims.cp_enabled
-                            else None
-                        )
-
-                        with self.context(val_cp_context):
-                            if self.parallel_dims.pp_enabled:
-                                pp_last_stage = (
-                                    self.parallel_dims.pp_coord[0]
-                                    == self.parallel_dims.pp_coord[1] - 1
-                                )
-                                pp_first_stage = self.parallel_dims.pp_coord[0] == 0
-
-                                # Pipeline Parallel forward / backward inside step() call
-                                val_targets, val_losses = (
-                                    (val_labels, []) if pp_last_stage else (None, None)
-                                )
-                                if pp_first_stage:
-                                    self.pp_scheduler.step(
-                                        **val_batch, position_ids=val_position_ids
-                                    )
-                                else:
-                                    # FWD + BWD if it is 1F1B-like scheduler
-                                    self.pp_scheduler.step(
-                                        position_ids=val_position_ids,
-                                        target=val_targets,
-                                        losses=val_losses,
-                                    )
-                                val_loss = (
-                                    torch.mean(torch.stack(val_losses)).to(self.device)
-                                    if pp_last_stage
-                                    else torch.tensor([-1.0], device=self.device)
-                                )
-                            else:
-                                val_logits = self.model(
-                                    **val_batch, position_ids=val_position_ids
-                                )[:, :-1].contiguous()
-                                val_loss = self.loss_fn(
-                                    val_logits.view(-1, val_logits.size(-1)),
-                                    val_labels[:, 1:].contiguous().view(-1),
-                                )
-                            val_total_loss += val_loss.item() * val_inputs.size(0)
-                    val_avg_loss = val_total_loss / len(self.val_data_loader.dataset)
-                    val_score = val_avg_loss
-                    logger.info(f"[Policy] Validation loss: {val_avg_loss}")
-
-                self.model.train()
+                val_score = self.validate()
 
             # save checkpoint
             if (
@@ -826,17 +830,19 @@ class SFTTrainer(Trainer):
                 and self.train_step % self.config.train.ckpt.save_freq == 0
                 and self.train_step > 0
             ):
-                logger.info(
-                    f"[Policy] Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
-                )
-                self.export_safetensors(
-                    os.path.join(
-                        self.config.train.output_dir,
-                        "safetensors",
-                        f"step_{self.train_step}",
-                    ),
-                    trainable_only=False,
-                )
+                # TODO(dinghaoy): support export safetensors asynchronously.
+                if self.config.train.ckpt.export_safetensors:
+                    logger.info(
+                        f"[Policy] Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
+                    )
+                    self.export_safetensors(
+                        os.path.join(
+                            self.config.train.output_dir,
+                            "safetensors",
+                            f"step_{self.train_step}",
+                        ),
+                        trainable_only=False,
+                    )
                 logger.info(
                     f"[Policy] Saving cosmos checkpoint at step {self.train_step}..."
                 )
@@ -849,13 +855,33 @@ class SFTTrainer(Trainer):
                 )
                 self.save_manager.save_check(step=self.train_step, val_score=val_score)
 
+        # process the final step
+        val_score = self.validate()
+        if self.config.train.ckpt.export_safetensors:
+            logger.info(
+                f"[Policy] Saving final huggingface checkpoint to {self.config.train.output_dir}..."
+            )
+            self.export_safetensors(
+                os.path.join(
+                    self.config.train.output_dir,
+                    "safetensors",
+                    f"step_{self.train_step}",
+                ),
+                trainable_only=False,
+                is_final=True,
+            )
         logger.info(
-            f"[Policy] Training finished at step {self.train_step}/{self.total_num_steps}, saving final checkpoint in huggingface safetensors..."
+            f"[Policy] Training finished at step {self.train_step}/{self.total_steps}, saving final cosmos checkpoint..."
         )
-        self.export_safetensors(
-            os.path.join(self.config.train.output_dir, "safetensors", "final"),
-            trainable_only=False,
+        self.ckpt_manager.save_checkpoint(
+            model=self.model,
+            optimizer=self.optimizers,
+            scheduler=self.lr_schedulers,
+            step=self.train_step,
+            val_score=val_score,
+            is_final=True,
         )
+        self.save_manager.save_check(step=self.train_step, val_score=val_score)
 
     @property
     def pp_loss_fn(self):

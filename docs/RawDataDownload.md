@@ -17,13 +17,13 @@ pip install tensorflow tensorflow_datasets ffmpeg
 
 ## ⚙️ Run Preprocessing Script
 
-After downloading the data, run the following script, take `holoassist` as example:
+Run the following script to download and preprocess video clips, take `holoassist` as example:
 
 ```bash
 # Export HF_TOKEN to get access to Cosmos Reason dataset
 export HF_TOKEN=...
 
-python tools/eval/preprocessing.py \
+python tools/eval/process_raw_data.py \
   --dataset holoassist \
   --data_dir data \
   --task benchmark

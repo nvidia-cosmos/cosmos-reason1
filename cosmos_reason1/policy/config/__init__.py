@@ -90,8 +90,8 @@ class SFTDataConfig:
     dataloader_num_workers: int = field(
         default=0, metadata={"help": "Number of subprocess to use for data loading"}
     )
-    dataloader_prefetch_factor: int = field(
-        default=2,
+    dataloader_prefetch_factor: Optional[int] = field(
+        default=None,
         metadata={
             "help": "Number of batches loaded in advance by each worker.",
         },
@@ -116,6 +116,12 @@ class SFTDataConfig:
         default="conversations",  # "conversation",
         metadata={"help": "Column name for formated conversation json"},
     )
+    system_prompt: str = field(
+        default="",
+        metadata={
+            "help": "System prompt for the model, which will be prepended to the prompt",
+        },
+    )
     max_pixels: int = field(
         default=320 * 256,
         metadata={
@@ -135,6 +141,11 @@ class SFTDataConfig:
             " or `image_id`, content of this column should be image or video file name(s) located in `vision_asset_path`",
         },
     )
+
+    def __post_init__(self):
+        if self.dataloader_num_workers <= 0:
+            self.dataloader_prefetch_factor = None
+            self.dataloader_num_workers = 0
 
 
 @dataclass
@@ -162,6 +173,40 @@ class CheckpointConfig:
             "help": "Maximum number of checkpoints to keep. If set to -1, all checkpoints will be kept."
         },
     )
+    export_safetensors: bool = field(
+        default=True,
+        metadata={
+            "help": "Whether to export a safetensors weight for huggingface usage, include related config files."
+        },
+    )
+    upload_hf: bool = field(
+        default=False,
+        metadata={"help": "Whather to upload the safetensors weight to huggingface."},
+    )
+    hf_repo_name: str = field(
+        default="Comos-Reason1",
+        metadata={
+            "help": "The huggingface repo name to upload the safetensors weight."
+        },
+    )
+    upload_s3: Union[bool, str] = field(
+        default=False,
+        metadata={
+            "help": "Whether to upload the checkpoint and safetensors to S3. Default to False, set `final` will upload the final checkpoint, `all` will upload all checkpoints."
+        },
+    )
+    s3_bucket: str = field(
+        default="cosmos-reason1",
+        metadata={
+            "help": "The S3 bucket name to upload the checkpoint and safetensors weight."
+        },
+    )
+    s3_prefix: str = field(
+        default="outputs",
+        metadata={
+            "help": "The S3 prefix to upload the checkpoint and safetensors weight."
+        },
+    )
 
     def __post_init__(self):
         if self.save_mode not in ["async", "sync"]:
@@ -173,8 +218,37 @@ class CheckpointConfig:
 
 
 @dataclass
+class OverlongRewardConfig:
+    enable_overlong_penalty: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable overlong penalty for the model. If set to True, the output will be penalized for responses that are too long."
+        },
+    )
+    buffer_length: int = field(
+        default=4096,
+        metadata={
+            "help": "Length of the buffer for overlong penalty. If the response length exceeds this value, the output will be penalized."
+        },
+    )
+    penalty_factor: float = field(
+        default=1.0,
+        metadata={
+            "help": "Penalty factor for overlong penalty. The penalry increases linearly with the length of the response exceeding the buffer length from 0 to the penalty_factor."
+        },
+    )
+
+
+@dataclass
 class GrpoConfig:
     type: str = skip_ui_field(default="grpo")
+    variant: str = field(
+        default="grpo",
+        metadata={
+            "help": "Variant of the GRPO, currently support `grpo`, and `dapo`",
+            "choices": ["grpo", "dapo"],
+        },
+    )
     dataset_name: str = field(
         default="",
         metadata={"help": "Huggingface dataset name or local path to parquet file"},
@@ -208,8 +282,8 @@ class GrpoConfig:
     dataloader_num_workers: int = field(
         default=0, metadata={"help": "Number of subprocess to use for data loading"}
     )
-    dataloader_prefetch_factor: int = field(
-        default=2,
+    dataloader_prefetch_factor: Optional[int] = field(
+        default=None,
         metadata={
             "help": "Number of batches loaded in advance by each worker.",
         },
@@ -280,6 +354,13 @@ class GrpoConfig:
         },
     )
 
+    overlong_reward: OverlongRewardConfig = field(
+        default_factory=OverlongRewardConfig,
+        metadata={
+            "help": "Configuration for overlong reward penalty. If enabled, the output will be penalized for responses that are too long."
+        },
+    )
+
     kl_beta: float = field(
         default=0.0,
         metadata={
@@ -298,6 +379,24 @@ class GrpoConfig:
         default=2,
         metadata={"help": "mini-batch size for GRPO training."},
     )
+
+    allowed_outdated_steps: int = field(
+        default=10,
+        metadata={
+            "help": "Allowed outdated-async steps for rollout engine. "
+            "If the number of left pending rollouts is larger than the `allowed_outdated_steps * n_policy_replicas * train_batch_per_replica`, "
+            "then rollout engine traffic will be throttled. "
+        },
+    )
+
+    def __post_init__(self):
+        assert self.variant in [
+            "grpo",
+            "dapo",
+        ], "variant must be one of ['grpo', 'dapo']"
+        if self.dataloader_num_workers <= 0:
+            self.dataloader_prefetch_factor = None
+            self.dataloader_num_workers = 0
 
 
 @dataclass
@@ -617,6 +716,12 @@ class Config:
             "help": "Redis server address port, format: port",
         },
     )
+    eth_ips: str = skip_ui_field(
+        default="",
+        metadata={
+            "help": "List of eth ip addresses, format: ip1;ip2;ip3",
+        },
+    )
 
     def key_values(self):
         return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
@@ -705,3 +810,10 @@ class Config:
             self.train.train_policy.dataset_train_split = [
                 self.train.train_policy.dataset_train_split
             ]
+        if self.train.ckpt.upload_s3:
+            if self.train.ckpt.upload_s3 not in ["final", "all"]:
+                raise ValueError(
+                    "upload_s3 must be one of ['final', 'all'] or False, got {}".format(
+                        self.train.ckpt.upload_s3
+                    )
+                )

@@ -20,11 +20,13 @@ import math
 import os
 import re
 import socket
-import struct
 import time
+import struct
 from datetime import timedelta
 from typing import Dict, Iterable, Optional, Union
 from functools import partial
+from contextlib import contextmanager
+from importlib.metadata import version
 
 # Third party imports
 import requests
@@ -40,6 +42,8 @@ from torch.distributed.tensor.parallel import ParallelStyle
 # Local imports
 import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.logging import logger
+from cosmos_reason1.utils.util import make_request_with_retry
+from cosmos_reason1.utils import constant
 
 
 def init_distributed(cpu_enabled: bool):
@@ -52,43 +56,39 @@ def init_distributed(cpu_enabled: bool):
     )
 
 
-def get_controller_metadata(max_retries: int = 10, base_delay: float = 30.0) -> Dict:
+def get_controller_metadata() -> Dict:
     """
     Get metadata from the controller with retry logic.
 
-    Args:
-        max_retries (int): Maximum number of retry attempts
-        base_delay (float): Base delay in seconds for exponential backoff (default: 30.0)
-
     Returns:
-        Tuple containing (remote_ip, remote_port, metadata)
+        Tuple containing (remote_ips, remote_port, metadata)
     """
-    for attempt in range(max_retries):
-        try:
-            remote_host = os.environ["COSMOS_CONTROLLER_HOST"]
-            # Verify in the format of host:port
-            if not re.match(r"^([a-zA-Z0-9_.-]+):([1-9][0-9]{0,4})$", remote_host):
-                raise ValueError(f"Invalid remote host: {remote_host}")
-            remote_ip, remote_port = remote_host.split(":")
-            remote_host = f"http://{remote_host}"
-            metadata: Dict = requests.get(f"{remote_host}/api/meta").json()
-            return remote_ip, remote_port, metadata
-        except Exception as e:
-            if attempt < max_retries - 1:
-                delay = base_delay * (
-                    2**attempt
-                )  # Exponential backoff: 30s, 60s, 120s, ...
-                if delay > 240:
-                    delay = 240
-                logger.warning(
-                    f"Attempt {attempt + 1}/{max_retries} failed: {e}. Retrying in {delay:.1f} seconds..."
-                )
-                time.sleep(delay)
-            else:
-                logger.error(
-                    f"Failed to communicate with controller after {max_retries} attempts: {e}"
-                )
-                raise
+    remote_hosts = os.environ["COSMOS_CONTROLLER_HOST"]
+    # Verify in the format of host:port
+    remote_ips, remote_port = remote_hosts.split(":")
+    remote_ips = remote_ips.split(";")
+    for remote_ip in remote_ips:
+        if not re.match(
+            r"^([a-zA-Z0-9_.-]+):([1-9][0-9]{0,4})$", f"{remote_ip}:{remote_port}"
+        ):
+            raise ValueError(f"Invalid remote host: {remote_ip}:{remote_port}")
+    remote_hosts = [
+        f"http://{remote_ip}:{remote_port}/api/meta" for remote_ip in remote_ips
+    ]
+    try:
+        r = make_request_with_retry(
+            requests.get,
+            remote_hosts,
+            max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+        )
+    except Exception as e:
+        logger.error(f"Failed to communicate with controller after attempts: {e}")
+        raise e
+    metadata: Dict = r.json()
+    remote_eth_ips = metadata.get("config", {}).get("eth_ips", [])
+    if remote_eth_ips:
+        remote_ips = remote_ips + remote_eth_ips.split(";")
+    return remote_ips, remote_port, metadata
 
 
 def destroy_distributed():
@@ -265,7 +265,7 @@ def get_ip_address(ifname):
 
 def get_mellanox_ips():
     """
-    Scans for Mellanox Ethernet interfaces (vendor "0x15b3") in /sys/class/net and returns
+    Scans for Mellanox Ethernet interfaces (vendor "0x15b3", "0x1d0f") in /sys/class/net and returns
     their associated IPv4 addresses.
 
     Returns:
@@ -287,7 +287,9 @@ def get_mellanox_ips():
         except Exception:
             continue
 
-        if vendor != "0x15b3":
+        # Amazon: 0x1d0f
+        # Mellanox: 0x15b3
+        if vendor not in ["0x1d0f", "0x15b3"]:
             continue
 
         # Get the IPv4 address for this interface.
@@ -413,3 +415,63 @@ class ReplicateParallel(ParallelStyle):
             partial(self._prepare_input_fn, self.input_layout),
             partial(self._prepare_output_fn, self.use_local_output),
         )
+
+
+def broadcast_object_cpu(obj, src=0, device=torch.device("cpu"), group=None):
+    """
+    Broadcast an object from the source process to all processes.
+    The object is first converted to a list and then broadcasted.
+    """
+    self_rank = int(os.environ.get("RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+
+    if world_size == 1:
+        return obj
+
+    obj_lst = [obj if self_rank == src else None]
+    dist.broadcast_object_list(obj_lst, src=src, device=device, group=group)
+    return obj_lst[0]
+
+
+@contextmanager
+def nccl_timeout_watchdog(wait_stream=False):
+    """
+    Context manager to monitor NCCL operations and raise an error if they take longer than a specified timeout.
+    Important: do not call any synchronous API:
+    - torch.cuda.synchronize()
+    - torch.cuda.stream.synchronize()
+    - torch.cuda.stream.wait_stream()
+    - torch.cuda.event.wait()
+    - ...
+
+    Args:
+        wait_stream (bool): If True, wait for the NCCL operation to complete before raising an error.
+        If False, just wait until all NCCL operations are enqueued to the stream.
+    """
+    nccl_v = version("nvidia-nccl-cu12")
+    if nccl_v < "2.26.2":
+        logger.warning(
+            "NCCL version is less than 2.26.2, which is known to hang in some cases, please upgrade to a newer version"
+        )
+
+    start_time = time.time()
+    threshold_ms = cosmos_c.nccl_timeout_in_ms()
+    # Enter the watchdog context
+    cosmos_c.watchdog_enter()
+    error_raised = False
+    try:
+        yield
+    except Exception as e:
+        error_raised = True
+        raise e
+    finally:
+        if wait_stream and not error_raised:
+            event = torch.cuda.Event()
+            event.record()
+            while not event.query():
+                if time.time() - start_time > threshold_ms / 1000:
+                    cosmos_c.watchdog_exit(abort=True)
+                    raise RuntimeError(
+                        f"NCCL operation took {time.time() - start_time} seconds, which is longer than the threshold {threshold_ms} ms"
+                    )
+        cosmos_c.watchdog_exit(abort=error_raised)

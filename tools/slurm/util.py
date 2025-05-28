@@ -20,6 +20,9 @@ from dataclasses import dataclass, asdict
 
 @dataclass
 class ReplicaLaunchMetadata:
+    # The number of nodes for the specific replica
+    nnode: int
+    # The role of the specific replica
     role: Literal["policy", "rollout"]
     # The head node of specific replica
     rendezvous_node: int
@@ -28,7 +31,8 @@ class ReplicaLaunchMetadata:
     # The number of GPUs visible to the specific replica
     visible_gpus: List[int]
 
-    def __init__(self, role: Literal["policy", "rollout"], rendezvous_node: int, rendezvous_port: int, visible_gpus: List[int]):
+    def __init__(self, nnode: int, role: Literal["policy", "rollout"], rendezvous_node: int, rendezvous_port: int, visible_gpus: List[int]):
+        self.nnode = nnode
         self.role = role
         self.rendezvous_node = rendezvous_node
         self.rendezvous_port = rendezvous_port

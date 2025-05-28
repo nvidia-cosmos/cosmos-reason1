@@ -56,6 +56,9 @@ class PolicyStatusManager:
     """
 
     status: Dict[str, PolicyStatus]
+    train_batch_per_replica: int
+    num_data_samples: int
+    total_steps: int
     train_step: Dict[str, int]
     optimize_step: Dict[str, int]
     policy_to_rank: Dict[str, int]
@@ -64,12 +67,27 @@ class PolicyStatusManager:
 
     def __init__(self):
         self.status = {}
+        self.train_batch_per_replica = 0
+        self.num_data_samples = 0
+        self.total_steps = 0
         self.train_step = {}
         self.policy_to_rank = {}
         self.optimize_step = {}
         self.heartbeat_timestamp = {}
         self.life_status = {}
         self.deleted = {}
+
+    def set_train_batch_per_replica(self, train_batch_per_replica: int):
+        """
+        Set the train batch per replica for policys.
+        """
+        self.train_batch_per_replica = train_batch_per_replica
+
+    def set_num_data_samples(self, num_data_samples: int):
+        """
+        Set the number of data samples for policys.
+        """
+        self.num_data_samples = num_data_samples
 
     def set_timestamp(self, replica_name: str, timestamp: int):
         """
@@ -148,6 +166,7 @@ class PolicyStatusManager:
             assert name in self.train_step, "Train step not found"
             # Increment the train step
             self.train_step[name] += 1
+            self.num_data_samples -= self.train_batch_per_replica
         elif status == PolicyStatus.REDUCED:
             assert name in self.optimize_step, "Optimize step not found"
             # Increment the optimize step
@@ -158,6 +177,27 @@ class PolicyStatusManager:
         Set the ranks of the policies.
         """
         self.policy_to_rank = policy_to_rank
+        # Update total step when policy replicas are set
+        num_policy_replicas = len(policy_to_rank)
+        if num_policy_replicas > 0:
+            self.total_steps = self.completed_train_step() + self.num_data_samples // (
+                self.train_batch_per_replica * num_policy_replicas
+            )
+
+    def get_total_steps(self) -> int:
+        """
+        Get the total step of the policies.
+        """
+        if self.total_steps == 0:
+            raise ValueError("Total step is not set")
+        return self.total_steps
+
+    def remove_from_ranks(self, name: str):
+        """
+        Remove the policy from the ranks.
+        """
+        if name in self.policy_to_rank:
+            self.policy_to_rank.pop(name)
 
     def get_world_size(self) -> int:
         """
@@ -245,12 +285,14 @@ class RolloutStatusManager:
     heartbeat_timestamp: Dict[str, int]
     life_status: Dict[str, LifeStatus]
     status: Dict[str, RolloutStatus]
+    rollout_to_rank: Dict[str, int]
 
     def __init__(self):
         self.optimize_step = {}
         self.heartbeat_timestamp = {}
         self.life_status = {}
         self.status = {}
+        self.rollout_to_rank = {}
 
     def set_timestamp(self, replica_name: str, timestamp: int):
         """
@@ -359,3 +401,22 @@ class RolloutStatusManager:
         Check if all rollouts are end.
         """
         return all([x == RolloutStatus.END for x in self.status.values()])
+
+    def set_ranks(self, rollout_to_rank: Dict[str, int]):
+        """
+        Set the ranks of the rollouts
+        """
+        self.rollout_to_rank = rollout_to_rank
+
+    def remove_from_ranks(self, name: str):
+        """
+        Remove the rollout from the ranks.
+        """
+        if name in self.rollout_to_rank:
+            self.rollout_to_rank.pop(name)
+
+    def get_world_size(self) -> int:
+        """
+        Get the world size of the rollouts.
+        """
+        return len(self.rollout_to_rank)

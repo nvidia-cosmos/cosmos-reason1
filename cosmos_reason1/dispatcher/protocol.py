@@ -47,6 +47,10 @@ class TrainAckRequest(BaseModel):
     iteration_count: int
 
 
+class WeightReadyRequest(BaseModel):
+    replica_name: str
+
+
 class RolloutRequest(BaseModel):
     src_replica_name: str
     prompt_idxs: List[int]

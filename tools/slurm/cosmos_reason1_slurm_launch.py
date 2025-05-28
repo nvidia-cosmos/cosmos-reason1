@@ -50,13 +50,14 @@ if __name__ == "__main__":
         rendezvous_node = node_list[replica_launch_metadata.rendezvous_node]
         rendezvous_port = replica_launch_metadata.rendezvous_port
         visible_gpus = replica_launch_metadata.visible_gpus
+        nnode = replica_launch_metadata.nnode
 
         logging.info(f"Rendezvous node: {rendezvous_node}, rendezvous port: {rendezvous_port}, visible GPUs: {visible_gpus}")
         env  = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = ",".join(str(gpu) for gpu in visible_gpus)
         env["VLLM_DISABLE_COMPILE_CACHE"] = "1"
         replica_launch_script = os.path.join(os.path.dirname(__file__), "..", "launch_replica.sh")
-        cmds.append([replica_launch_script, "--type", args.type, "--rdzv-endpoint", f"{rendezvous_node}:{rendezvous_port}", "--ngpus", str(len(visible_gpus))])
+        cmds.append([replica_launch_script, "--type", args.type, "--rdzv-endpoint", f"{rendezvous_node}:{rendezvous_port}", "--ngpus", str(len(visible_gpus)), "--nnodes", str(nnode)])
         envs.append(env)
     
     procs = [subprocess.Popen(cmd, env=env) for cmd, env in zip(cmds, envs)]

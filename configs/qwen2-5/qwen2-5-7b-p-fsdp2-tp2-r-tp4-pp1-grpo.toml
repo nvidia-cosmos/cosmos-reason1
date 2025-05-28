@@ -1,7 +1,7 @@
 redis = "12808"
 
 [train]
-resume = "False"
+resume = false
 epoch = 1
 output_dir = "./outputs/qwen2-5-7b-p-fsdp2-tp2-r-tp4-pp1-grpo"
 epsilon = 1e-6
@@ -22,7 +22,7 @@ train_batch_per_replica = 8
 sync_weight_interval = 1
 
 [rollout]
-gpu_memory_utilization = 0.8
+gpu_memory_utilization = 0.7
 enable_chunked_prefill = false
 max_response_length = 2048
 n_generation = 16

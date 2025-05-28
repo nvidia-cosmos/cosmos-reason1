@@ -21,9 +21,32 @@ from cosmos_reason1.utils.distributed import (
     destroy_distributed,
     get_controller_metadata,
 )
-from cosmos_reason1.rollout.vllm_rollout.vllm_rollout_worker import vLLMRolloutWorker
 import sys
+import os
 
+try:
+    # Prevent vllm from changing NCCL env
+    origin_env_map = os.environ.copy()
+    # Begin with `NCCL_`
+    origin_nccl_env = {k: v for k, v in origin_env_map.items() if k.startswith("NCCL_")}
+
+    import vllm  # noqa: F401
+except ImportError:
+    logger.warning("vllm is not installed, skipping nccl env consistency check")
+finally:
+    current_env_map = os.environ.copy()
+    current_nccl_env = {
+        k: v for k, v in current_env_map.items() if k.startswith("NCCL_")
+    }
+    # Delete all keys in current_nccl_env that are not in origin_nccl_env
+    for k in current_nccl_env.keys():
+        if k not in origin_nccl_env:
+            os.environ.pop(k)
+            logger.info(f"Deleted {k} from env")
+    # Restore original NCCL env
+    os.environ.update(origin_nccl_env)
+
+from cosmos_reason1.rollout.vllm_rollout.vllm_rollout_worker import vLLMRolloutWorker
 
 if __name__ == "__main__":
     ctrl_ip, ctrl_port, metadata = get_controller_metadata()
@@ -51,6 +74,7 @@ if __name__ == "__main__":
     parallel_dims = ParallelDims.from_config(
         parallesim_config=cosmos_rollout_config.rollout.parallelism
     )
+
     init_distributed(cpu_enabled=False)
     parallel_dims.build_mesh(device_type="cuda")
     try:

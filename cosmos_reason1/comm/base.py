@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import torch.distributed as dist
 import uuid
 from cosmos_reason1.utils.logging import logger
@@ -27,21 +26,22 @@ import time
 import atexit
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
 import threading
+from cosmos_reason1.utils.util import make_request_with_retry
+from functools import partial
 
 
 class CommMixin:
     def init_comm(self):
-        replica_name = [uuid.uuid4() if self.global_rank == 0 else None]
-        dist.broadcast_object_list(replica_name, src=0, device=torch.device("cpu"))
-        self.replica_name = str(replica_name[0])
+        self.replica_name = str(dist_utils.broadcast_object_cpu(uuid.uuid4()))
         logger.info(
             f"{self.role} Replica started at global rank {self.global_rank}, with replica name: {self.replica_name}"
         )
         # Fetch metadata from the controller
-        self.remote_ip, self.remote_port, metadata = (
-            dist_utils.get_controller_metadata()
-        )
-        self.remote_host = f"http://{self.remote_ip}:{self.remote_port}"
+        # Get list of remote IPs and port
+        self.remote_ips, self.remote_port, _ = dist_utils.get_controller_metadata()
+        self.remote_hosts = [
+            f"http://{remote_ip}:{self.remote_port}" for remote_ip in self.remote_ips
+        ]
         self.register_to_controller()
 
     def register_to_controller(self):
@@ -62,25 +62,25 @@ class CommMixin:
                 ranks.append(0)
                 group_size.append(1)
 
-        while True:
-            counter = 0
-            try:
-                payload = {
-                    "replica_name": self.replica_name,
-                    "role": self.role,
-                    "mesh_names": target_mesh_names,
-                    "ranks": ranks,
-                    "group_size": group_size,
-                }
-                requests.post(f"{self.remote_host}/api/register", json=payload)
-            except Exception as e:
-                logger.error(f"Failed to register to controller: {e}")
-                counter += 1
-                if counter > 10:
-                    raise e
-                time.sleep(1)
-                continue
-            break
+        try:
+            payload = {
+                "replica_name": self.replica_name,
+                "role": self.role,
+                "mesh_names": target_mesh_names,
+                "ranks": ranks,
+                "group_size": group_size,
+            }
+            make_request_with_retry(
+                partial(
+                    requests.post,
+                    json=payload,
+                ),
+                self.get_alternative_urls("api/register"),
+                max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+            )
+        except Exception as e:
+            logger.error(f"Failed to register to controller: {e}")
+            raise e
 
         dist.barrier()  # wait all the atoms registered.
 
@@ -97,10 +97,17 @@ class CommMixin:
         self._is_registered = False
         # let only rank == 0 send the unregister request
         if self.global_rank == 0:
-            requests.post(
-                f"{self.remote_host}/api/unregister",
-                json={"replica_name": self.replica_name},
-            )
+            try:
+                make_request_with_retry(
+                    partial(
+                        requests.post,
+                        json={"replica_name": self.replica_name},
+                    ),
+                    self.get_alternative_urls("api/unregister"),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+            except Exception as e:
+                logger.error(f"Failed to unregister to controller: {e}")
 
     def get_group_unique_key(self, replica_name_to_rank: Dict[str, int]):
         return (
@@ -116,21 +123,13 @@ class CommMixin:
             + str(self.global_rank)
         )
 
-    def init_redis(self, wait_retries: int = 60000):
+    def init_redis(self):
         # For command fetch via redis connection
         self.redis_controller = RedisStreamHandler(
-            ip=self.remote_ip, port=int(self.config.redis)
+            ips=self.remote_ips, port=int(self.config.redis)
         )
-        for _ in range(wait_retries):
-            try:
-                self.redis_controller.redis_client.ping()
-                time.sleep(2)
-                break
-            except Exception:
-                pass
-        self.redis_controller.redis_client.ping()
         logger.debug(
-            f"[{self.role}] Init redis at {self.remote_ip}:{self.redis_controller.port}"
+            f"[{self.role}] Init redis at {self.remote_ips}:{self.redis_controller.port}"
         )
 
     def heartbeat_trigger(self, shutdown_signal: threading.Event):
@@ -140,32 +139,20 @@ class CommMixin:
                     "[Policy] Heartbeat thread is stopped since the shutdown signal is set."
                 )
                 break
-            max_retry = 3
-            while max_retry > 0:
-                try:
-                    r = requests.post(
-                        f"{self.remote_host}/api/heartbeat",
+
+            try:
+                make_request_with_retry(
+                    partial(
+                        requests.post,
                         json={
                             "replica_name": self.replica_name,
                         },
-                    )
-                    if r.status_code != 200:
-                        logger.error(
-                            f"[Policy] Error response in send heartbeat: {r.json()}"
-                        )
-                    else:
-                        break
-                except Exception as e:
-                    logger.error(
-                        f"[Policy] Failed to send heartbeat to controller: {e}. Retrying..."
-                    )
-                finally:
-                    max_retry -= 1
-                    if max_retry == 0:
-                        raise RuntimeError(
-                            f"[Policy] Failed in in send heartbeat to controller after {max_retry} retries."
-                        )
-                    time.sleep(0.5)
+                    ),
+                    self.get_alternative_urls("api/heartbeat"),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+            except Exception as e:
+                logger.error(f"Failed to send heartbeat to controller: {e}")
             time.sleep(constant.COSMOS_HEARTBEAT_SEND_INTERVAL)
 
     def start_heartbeat(self, shutdown_signal: threading.Event):
@@ -180,3 +167,10 @@ class CommMixin:
             return thread
         else:
             return None
+
+    def get_alternative_urls(self, suffix: str):
+        # Get the alternative URLs for the given suffix
+        urls = []
+        for remote_host in self.remote_hosts:
+            urls.append(f"{remote_host}/{suffix}")
+        return urls

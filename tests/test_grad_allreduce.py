@@ -37,7 +37,7 @@ def write_train_config(dp_replica: int = 1, dp_shard: int = 1):
 redis = "12808"
 
 [train]
-resume = "False"
+resume = false
 epoch = 1
 output_dir = "{WORK_DIR}"
 epsilon = 1e-6
@@ -58,7 +58,7 @@ train_batch_per_replica = {train_batch_per_replica}
 sync_weight_interval = 1
 
 [rollout]
-gpu_memory_utilization = 0.8
+gpu_memory_utilization = 0.7
 enable_chunked_prefill = false
 max_response_length = 2048
 n_generation = 16

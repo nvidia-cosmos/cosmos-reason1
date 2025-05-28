@@ -2,6 +2,7 @@
 
 # Default values
 NGPU=2
+NNODES=1
 LOG_RANKS=""
 TYPE=""
 RDZV_ENDPOINT="localhost:0"
@@ -12,6 +13,7 @@ print_help() {
   echo ""
   echo "Options:"
   echo "  --type <rollout|policy>            Required. Type of replica to launch."
+  echo "  --nnodes <int>                     Number of nodes to launch. Default: 1"
   echo "  --ngpus <int>                      Number of GPUs per node. Default: 2"
   echo "  --log-rank <comma-separated ints>  Comma-separated list of ranks to enable logging. Default: Empty for all ranks."
   echo "  --rdzv-endpoint <host:port>        Rendezvous endpoint for distributed training. Default: localhost:0"
@@ -27,6 +29,10 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
   --ngpus)
     NGPU="$2"
+    shift 2
+    ;;
+  --nnodes)
+    NNODES="$2"
     shift 2
     ;;
   --log-rank)
@@ -78,6 +84,7 @@ fi
 TORCHRUN_CMD=(
   torchrun
   --nproc-per-node="$NGPU"
+  --nnodes="$NNODES"
   --role rank
   --tee 3
   --rdzv_backend c10d

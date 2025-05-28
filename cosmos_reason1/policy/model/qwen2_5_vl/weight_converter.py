@@ -75,6 +75,7 @@ def map_weight_parallel_dims(
 
     dims_map = {}
     dim = "tp"
+    no_dp = False
     assert dest_name.startswith("visual.")
     if tp_size > 1:
         if (
@@ -95,11 +96,12 @@ def map_weight_parallel_dims(
             pass
         elif (
             match := re.search(  # noqa: F841
-                r"blocks\.(\d+)\.attn\.qkv\.(weight|bias)",
+                r"blocks\.(\d+)\.attn\.(q|k|v)\.(weight|bias)",
                 dest_name,
             )
         ) is not None:
             dims_map[dim] = 0
+            no_dp = True
         elif (
             match := re.search(r"blocks\.(\d+)\.attn\.proj\.weight", dest_name)  # noqa: F841
         ) is not None:
@@ -135,7 +137,7 @@ def map_weight_parallel_dims(
 
     # Do FSDP sharding
     dim = "dp_shard_cp"
-    if dp_shard_size > 1:
+    if dp_shard_size > 1 and not no_dp:
         dims_map[dim] = 0
     else:
         pass
@@ -157,6 +159,7 @@ def map_weight_parallel_dims_no_visual_tp(
     dp_shard_size = parallel_dims.dp_shard * parallel_dims.cp
 
     dims_map = {}
+    no_dp = False
     assert tp_size == 1, f"tp_size should be 1, but got {tp_size}"
     if dest_name.startswith("visual."):
         assert (
@@ -164,8 +167,16 @@ def map_weight_parallel_dims_no_visual_tp(
             or dest_name.startswith("visual.merger.")
             or dest_name.startswith("visual.blocks.")
         )
+        if (
+            match := re.search(  # noqa: F841
+                r"blocks\.(\d+)\.attn\.(q|k|v)\.(weight|bias)",
+                dest_name,
+            )
+        ) is not None:
+            no_dp = True
+
         dim = "dp_shard_cp"
-        if dp_shard_size > 1:
+        if dp_shard_size > 1 and not no_dp:
             dims_map[dim] = 0
         else:
             pass

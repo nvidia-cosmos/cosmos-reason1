@@ -15,27 +15,44 @@
 
 import redis
 from datetime import datetime
-from cosmos_reason1.utils.constant import RedisStreamConstant
+from cosmos_reason1.utils.constant import (
+    RedisStreamConstant,
+    COSMOS_HTTP_RETRY_CONFIG,
+    COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
+)
 from typing import List
+from cosmos_reason1.utils.util import make_request_with_retry
+from functools import partial
+from cosmos_reason1.utils.logging import logger
+import enum
+
+
+class RedisOpType(enum.Enum):
+    XADD = "add"
+    XREAD = "read"
+    PING = "ping"
 
 
 class RedisStreamHandler:
-    def __init__(self, ip: str, port: int):
+    def __init__(self, ips: List[str], port: int):
         """
         Initialize the RedisStreamHandler.
 
         Args:
-            ip (str): The IP address of the Redis server.
+            ips (List[str]): The alternative IP addresses of the Redis server.
             port (int): The port of the Redis server.
             stream_name (str): The name of the Redis stream to interact with.
         """
-        self.ip = ip
+        self.ips = ips
         self.port = port
-        self.redis_client = redis.Redis(
-            host=self.ip, port=self.port, db=0, decode_responses=False
-        )
+        self.redis_clients = []
+        for ip in ips:
+            self.redis_clients.append(
+                redis.Redis(host=ip, port=self.port, db=0, decode_responses=False)
+            )
         self.latest_id_command = "0-0"
         self.latest_id_rollout = "0-0"
+        self.ping()
 
     def publish_command(self, data, stream_name: str):
         """
@@ -49,11 +66,20 @@ class RedisStreamHandler:
         """
         message = {"command": data, "timestamp": datetime.now().isoformat()}
         # Add message to stream
-        self.redis_client.xadd(
-            stream_name + "_command",
-            message,
-            maxlen=RedisStreamConstant.STREAM_MAXLEN,
-        )
+        try:
+            make_request_with_retry(
+                self.requests_for_alternative_clients(
+                    RedisOpType.XADD,
+                    stream_name + "_command",
+                    message,
+                    maxlen=RedisStreamConstant.STREAM_MAXLEN,
+                ),
+                response_parser=None,
+                max_retries=COSMOS_HTTP_RETRY_CONFIG.max_retries,
+            )
+        except Exception as e:
+            logger.error(f"Failed to write to Redis stream {stream_name}_command: {e}")
+            raise e
 
     def subscribe_command(self, stream_name: str) -> List[dict]:
         """
@@ -65,11 +91,20 @@ class RedisStreamHandler:
         Returns:
             list: A list of stream entries.
         """
-        messages = self.redis_client.xread(
-            {stream_name + "_command": self.latest_id_command},
-            count=RedisStreamConstant.CMD_FETCH_SIZE,
-            block=RedisStreamConstant.CMD_READING_TIMEOUT_MS,
-        )
+        try:
+            messages = make_request_with_retry(
+                self.requests_for_alternative_clients(
+                    RedisOpType.XREAD,
+                    {stream_name + "_command": self.latest_id_command},
+                    count=RedisStreamConstant.CMD_FETCH_SIZE,
+                    block=RedisStreamConstant.CMD_READING_TIMEOUT_MS,
+                ),
+                response_parser=None,
+                max_retries=COSMOS_HTTP_RETRY_CONFIG.max_retries,
+            )
+        except Exception as e:
+            logger.error(f"Failed to read from Redis stream {stream_name}_command: {e}")
+            raise e
         commands = []
         if messages:
             for _, message_list in messages:
@@ -90,11 +125,20 @@ class RedisStreamHandler:
         """
         message = {"rollout": data, "timestamp": datetime.now().isoformat()}
         # Add message to stream
-        self.redis_client.xadd(
-            stream_name + "_rollout",
-            message,
-            maxlen=RedisStreamConstant.STREAM_MAXLEN,
-        )
+        try:
+            make_request_with_retry(
+                self.requests_for_alternative_clients(
+                    RedisOpType.XADD,
+                    stream_name + "_rollout",
+                    message,
+                    maxlen=RedisStreamConstant.STREAM_MAXLEN,
+                ),
+                response_parser=None,
+                max_retries=COSMOS_HTTP_RETRY_CONFIG.max_retries,
+            )
+        except Exception as e:
+            logger.error(f"Failed to write to Redis stream {stream_name}_rollout: {e}")
+            raise e
 
     def subscribe_rollout(self, stream_name: str, count: int = -1) -> List[dict]:
         """
@@ -107,11 +151,22 @@ class RedisStreamHandler:
         Returns:
             list: A list of stream entries.
         """
-        messages = self.redis_client.xread(
-            {stream_name + "_rollout": self.latest_id_rollout},
-            count=RedisStreamConstant.ROLLOUT_FETCH_SIZE if count <= 0 else count,
-            block=RedisStreamConstant.ROLLOUT_READING_TIMEOUT_MS,
-        )
+        try:
+            messages = make_request_with_retry(
+                self.requests_for_alternative_clients(
+                    RedisOpType.XREAD,
+                    {stream_name + "_rollout": self.latest_id_rollout},
+                    count=RedisStreamConstant.ROLLOUT_FETCH_SIZE
+                    if count <= 0
+                    else count,
+                    block=RedisStreamConstant.ROLLOUT_READING_TIMEOUT_MS,
+                ),
+                response_parser=None,
+                max_retries=COSMOS_HTTP_RETRY_CONFIG.max_retries,
+            )
+        except Exception as e:
+            logger.error(f"Failed to read from Redis stream {stream_name}_rollout: {e}")
+            raise e
         rollouts = []
         if messages:
             for _, message_list in messages:
@@ -119,3 +174,53 @@ class RedisStreamHandler:
                     rollouts.append(message_data[b"rollout"])
                     self.latest_id_rollout = message_id
         return rollouts
+
+    def requests_for_alternative_clients(self, op: RedisOpType, *args, **kwargs):
+        """
+        Make requests to alternative clients based on the operation type.
+
+        Args:
+            op (RedisOpType): The operation type (XADD or XREAD or PING).
+            *args: Positional arguments for the request.
+            **kwargs: Keyword arguments for the request.
+
+        Returns:
+            list: A list of Callable objects for the requests.
+        """
+        calls = []
+        if op == RedisOpType.XADD:
+            for redis_client in self.redis_clients:
+                calls.append(
+                    partial(
+                        redis_client.xadd,
+                        *args,
+                        **kwargs,
+                    )
+                )
+        elif op == RedisOpType.XREAD:
+            for redis_client in self.redis_clients:
+                calls.append(
+                    partial(
+                        redis_client.xread,
+                        *args,
+                        **kwargs,
+                    )
+                )
+        elif op == RedisOpType.PING:
+            for redis_client in self.redis_clients:
+                calls.append(redis_client.ping)
+        else:
+            raise ValueError(f"Unsupported operation type: {op}")
+        return calls
+
+    def ping(self):
+        # Wait for redis to be ready
+        try:
+            make_request_with_retry(
+                self.requests_for_alternative_clients(RedisOpType.PING),
+                response_parser=None,
+                max_retries=COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
+            )
+        except Exception as e:
+            logger.error(f"Failed to ping Redis when init Redis: {e}")
+            raise e

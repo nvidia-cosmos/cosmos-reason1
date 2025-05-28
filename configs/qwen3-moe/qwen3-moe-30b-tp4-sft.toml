@@ -1,7 +1,7 @@
 redis = "12808"
 
 [train]
-resume = "False"
+resume = false
 epoch = 1
 output_dir = "./outputs/qwen3-moe-30b-tp8-sft"
 epsilon = 1e-6

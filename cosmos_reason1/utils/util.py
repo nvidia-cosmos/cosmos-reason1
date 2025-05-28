@@ -20,26 +20,36 @@ import multiprocessing
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import datasets
-from cosmos_reason1.utils.logging import logger
 import socket
 import queue
 import dataclasses
 import base64
 import struct
 import tarfile
+import ctypes
+from msgpack import ExtType
 from tqdm import tqdm
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Callable, Union
 import torch
 import pynvml
 import cv2
 import numpy as np
 from contextlib import contextmanager
 from torch.functional import F
-from huggingface_hub import hf_hub_download, list_repo_files, snapshot_download
+from huggingface_hub import (
+    hf_hub_download,
+    list_repo_files,
+    snapshot_download,
+    HfFileSystem,
+)
 from transformers import AutoProcessor, AutoConfig
 from qwen_vl_utils import process_vision_info
-import ctypes
-from msgpack import ExtType
+import time
+import random
+import functools
+from cosmos_reason1.utils.constant import COSMOS_HTTP_RETRY_CONFIG
+from cosmos_reason1.utils.logging import logger
+from safetensors import safe_open
 
 
 def load_data_from_disk_or_hf(data_name, data_subset=None, revision=None):
@@ -69,7 +79,7 @@ def write_json_file(data, file_path):
 
 
 def resolve_model_path(model_path: str) -> str:
-    if not os.path.exists(model_path):
+    if not os.path.exists(model_path.replace(":", "/")):
         if ":" in model_path:
             if model_path.count(":") > 1:
                 raise ValueError(
@@ -82,8 +92,6 @@ def resolve_model_path(model_path: str) -> str:
 
         # Check whether `model_path` is a HuggingFace repo id with repo name
         if len(model_path.split("/")) == 2:
-            from huggingface_hub import snapshot_download, HfFileSystem
-
             logger.info(
                 f"model path {model_path} is not a directory. Trying to load from HuggingFace Hub..."
             )
@@ -102,7 +110,7 @@ def resolve_model_path(model_path: str) -> str:
                 ignore_patterns = None
 
             try:
-                model_path = snapshot_download(
+                model_path = retry(snapshot_download)(
                     model_path,
                     token=os.environ.get("HF_TOKEN"),
                     cache_dir=os.environ.get(
@@ -110,6 +118,7 @@ def resolve_model_path(model_path: str) -> str:
                         os.path.expanduser("~/.cache/huggingface/transformers/"),
                     ),
                     ignore_patterns=ignore_patterns,
+                    allow_patterns=file_path,
                 )
             except Exception as e:
                 logger.error(f"Error: {e}")
@@ -123,7 +132,8 @@ def resolve_model_path(model_path: str) -> str:
             raise ValueError(
                 f"Model path {model_path} is not a directory and not a valid HuggingFace repo id with repo name."
             )
-
+    else:
+        model_path = model_path.replace(":", "/")
     return model_path
 
 
@@ -409,7 +419,7 @@ def prepare_cosmos_data(config):
 
     tgz_files = [f for f in remote_files if re_pattern.match(f)]
     if tgz_files:
-        downloaded_snapshot_directory_cache = snapshot_download(
+        downloaded_snapshot_directory_cache = retry(snapshot_download)(
             repo_id=config.train.train_policy.dataset_name,
             allow_patterns=[file_pattern],
             repo_type="dataset",
@@ -482,8 +492,10 @@ def prepare_cosmos_data(config):
         ## Prepare video tensors
         # List all clip files in the temporary directory
         os.makedirs(video_tensors_dir, exist_ok=True)
-        processor = AutoProcessor.from_pretrained(config.policy.model_name_or_path)
-        config = AutoConfig.from_pretrained(config.policy.model_name_or_path)
+        processor = retry(AutoProcessor.from_pretrained)(
+            config.policy.model_name_or_path
+        )
+        config = retry(AutoConfig.from_pretrained)(config.policy.model_name_or_path)
         image_token_id = config.image_token_id
         video_token_id = config.video_token_id
         clip_files = []
@@ -701,3 +713,179 @@ def msgunpack_c_long(code, data):
         val = int.from_bytes(data, "big", signed=True)
         return int(val)
     return ExtType(code, data)
+
+
+def status_check_for_response(response):
+    """
+    Handle the status code for the response.
+    Raises an exception if the status code is not 200.
+    """
+    response.raise_for_status()
+
+
+def make_request_with_retry(
+    requests: Union[Callable, List[Callable]],
+    urls: List[str] = None,
+    response_parser: Callable = status_check_for_response,
+    max_retries: int = COSMOS_HTTP_RETRY_CONFIG.max_retries,
+    retries_per_delay: int = COSMOS_HTTP_RETRY_CONFIG.retries_per_delay,
+    initial_delay: float = COSMOS_HTTP_RETRY_CONFIG.initial_delay,
+    max_delay: float = COSMOS_HTTP_RETRY_CONFIG.max_delay,
+    backoff_factor: float = COSMOS_HTTP_RETRY_CONFIG.backoff_factor,
+) -> Any:
+    """
+    Make an HTTP GET request with exponential backoff retry logic.
+
+    Args:
+        requests (List[Callable]): The functions to make the request in an alternative way
+        urls (List[str]): List of host URLs to try
+        response_parser (Callable): Function to parse the response
+        max_retries (int): Maximum number of retry attempts
+        retries_per_delay (int): Number of retries to attempt at each delay level
+        initial_delay (float): Initial delay between retries in seconds
+        max_delay (float): Maximum delay between retries in seconds
+        backoff_factor (float): Factor to increase delay between retries
+
+    Returns:
+        Any: The response object from the successful request or redis client request.
+
+    Raises:
+        Exception: If all retry attempts fail
+    """
+    delay = initial_delay
+    last_exception = None
+    total_attempts = 0
+    url_index = 0
+    request_idx = 0
+
+    if isinstance(requests, Callable):
+        requests = [requests]
+
+    while total_attempts < max_retries:
+        # Try multiple times at the current delay level
+        total_retries_cur_delay = 0
+        while total_retries_cur_delay < retries_per_delay:
+            try:
+                request = requests[request_idx]
+                if urls is not None:
+                    url = urls[url_index]
+                    r = request(url)
+                else:
+                    url = None
+                    r = request()
+                if response_parser is not None:
+                    response_parser(r)
+                return r
+
+            except Exception as e:
+                last_exception = e
+                url_index += 1
+                if url_index >= (1 if urls is None else len(urls)):
+                    url_index = 0
+                    request_idx += 1
+                    if request_idx >= len(requests):
+                        request_idx = 0
+                        total_retries_cur_delay += 1
+                        total_attempts += 1
+                logger.debug(
+                    f"Request failed: {e}. Attempt {total_attempts} of {max_retries} for {request} on {url}."
+                )
+                if total_attempts >= max_retries:
+                    break
+
+                if request_idx != 0 or url_index != 0:
+                    jitter = (1.0 + random.random()) * initial_delay
+                    time.sleep(jitter)
+                    continue
+                # Add some jitter to prevent thundering herd
+                jitter = (1.0 + random.random()) * delay
+                time.sleep(jitter)
+
+        # Increase delay for next round of retries
+        delay = min(delay * backoff_factor, max_delay)
+
+    raise last_exception or Exception("All retry attempts failed")
+
+
+def sync_model_vocab(
+    model_name_or_path,
+    lm_head_key="lm_head.weight",
+    embed_tokens_key="model.embed_tokens.weight",
+):
+    self_rank = int(os.environ.get("RANK", 0))
+    vocab_size = None
+    if self_rank == 0:
+        weight_map_path = resolve_model_path(
+            f"{model_name_or_path}:model.safetensors.index.json"
+        )
+        weight_map = read_json_file(weight_map_path)["weight_map"]
+
+        if lm_head_key in weight_map:
+            lm_head = weight_map[lm_head_key]
+            lm_head_path = resolve_model_path(f"{model_name_or_path}:{lm_head}")
+            with safe_open(lm_head_path, framework="pt", device="cpu") as f:
+                tensor_slice = f.get_slice(lm_head_key)
+                vocab_size, _ = tensor_slice.get_shape()
+        elif embed_tokens_key in weight_map:
+            embed_tokens = weight_map[embed_tokens_key]
+            embed_tokens_path = resolve_model_path(
+                f"{model_name_or_path}:{embed_tokens}"
+            )
+            with safe_open(embed_tokens_path, framework="pt", device="cpu") as f:
+                tensor_slice = f.get_slice(embed_tokens_key)
+                vocab_size, _ = tensor_slice.get_shape()
+        else:
+            raise ValueError(
+                "Could not find `lm_head` or `model.embed_tokens.weight` in the model."
+            )
+    from cosmos_reason1.utils.distributed import broadcast_object_cpu
+
+    vocab_size = broadcast_object_cpu(vocab_size, src=0, device=torch.device("cpu"))
+    logger.info(f"Vocabulary size: {vocab_size}")
+
+    return vocab_size
+
+
+def retry(func=None, *, max_retry=10, max_delay=30.0):
+    """
+    Decorator (or wrapper) to retry a function up to max_retry times,
+    backing off exponentially (1s, 2s, 4s, …) up to max_delay seconds.
+
+    Usage:
+
+      @retry(max_retry=5)                # uses default max_delay=30
+      def foo(...): …
+
+      @retry(max_retry=5, max_delay=60)  # override max_delay
+      def bar(...): …
+
+      wrapped = retry(baz, max_retry=2)  # direct call style
+    """
+
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            delay = 1.0
+            for attempt in range(max_retry + 1):
+                try:
+                    return f(*args, **kwargs)
+                except Exception:
+                    if attempt == max_retry:
+                        # out of retries: re-raise last exception
+                        raise
+                    time.sleep(delay)
+                    delay = min(delay * 2, max_delay)
+
+        return wrapper
+
+    # allow both @retry(...) and retry(func, ...)
+    if callable(func):
+        return decorator(func)
+    return decorator
+
+
+def seperate_nccl_comm_needed():
+    """
+    Check if separate NCCL communications needed to prevent hang.
+    """
+    return False

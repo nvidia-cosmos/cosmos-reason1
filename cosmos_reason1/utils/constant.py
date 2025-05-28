@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 from enum import IntEnum
 
 COSMOS_TCP_STORE_TIMEOUT = 10000
@@ -25,12 +24,17 @@ COSMOS_ROLLOUT_STEP_INTERVAL = 100  # 100 steps
 COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE = 50  # 50 prompts
 COSMOS_HEARTBEAT_SEND_INTERVAL = 60  # 60 seconds
 
-# We use this env to indicate rollout worker will
-# only do the correctness check after first P2R weight sync
-# done and then it will stop.
-COSMOS_WEIGHT_SYNC_CHECK = (
-    os.getenv("COSMOS_WEIGHT_SYNC_CHECK", "false").lower() == "true"
-)
+
+class CosmosHttpRetryConfig:
+    max_retries: int = 60
+    retries_per_delay: int = 5
+    initial_delay: float = 1.0
+    max_delay: float = 60.0
+    backoff_factor: float = 2.0
+
+
+COSMOS_HTTP_RETRY_CONFIG = CosmosHttpRetryConfig()
+COSMOS_HTTP_LONG_WAIT_MAX_RETRY = 100
 
 
 class Algo:
@@ -39,16 +43,22 @@ class Algo:
 
 
 class RewardFn:
+    DIRECT_MATH = "direct_math"
     BOXED_MATH = "boxed_math"
     SINGLE_CHOICE = "single_choice"
+    GSM8K = "gsm8k"
     FORMAT = "format"
+    OVERLONG = "overlong"
 
     @classmethod
     def from_string(cls, value: str):
         mapping = {
+            "direct_math": cls.DIRECT_MATH,
             "boxed_math": cls.BOXED_MATH,
             "single_choice": cls.SINGLE_CHOICE,
+            "gsm8k": cls.GSM8K,
             "format": cls.FORMAT,
+            "overlong": cls.OVERLONG,
         }
         if value not in mapping:
             raise ValueError(f"Invalid value: {value}")

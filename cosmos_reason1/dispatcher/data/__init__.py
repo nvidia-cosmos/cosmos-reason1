@@ -30,11 +30,13 @@ class RLDataset(Dataset):
         prompt_column: str,
         response_column: Optional[str] = None,
         is_cosmos: bool = False,
+        is_dapo_math: bool = False,
     ):
         self.dataset = dataset
         self.prompt_column = prompt_column
         self.response_column = response_column
         self.is_cosmos = is_cosmos
+        self.is_dapo_math = is_dapo_math
 
     def __len__(self):
         return len(self.dataset)
@@ -42,11 +44,15 @@ class RLDataset(Dataset):
     def __getitem__(self, idx: int) -> tuple[int, str]:
         if self.is_cosmos:
             return idx, json.dumps(self.dataset[idx])
+        if self.is_dapo_math:
+            return idx, self.dataset[idx][self.prompt_column][0]["content"]
         return idx, self.dataset[idx][self.prompt_column]
 
     def query_reference_answer(self, idx: int) -> str:
         if self.is_cosmos:
             return self.dataset[idx]["qa_pairs"][self.response_column]
+        if self.is_dapo_math:
+            return self.dataset[idx][self.response_column]["ground_truth"]
         return self.dataset[idx][self.response_column] if self.response_column else None
 
 
@@ -54,6 +60,7 @@ class CosmosDataset:
     def __init__(self, config: CosmosConfig):
         self.config = config
         self.grpo_config = config.train.train_policy
+        self.is_dapo_math = False
         # Hack for cosmos RL dataset
         if self.grpo_config.prompt_column_name == "qa_pairs":
             self.is_cosmos = True
@@ -61,7 +68,10 @@ class CosmosDataset:
             self.response_column = "answer"
             self.choices_column = "index2ans"
         else:
+            # TODO(dinghaoy): Temporarily hack for specific datasets, will be unified by abstract dataset
             self.is_cosmos = False
+            if "dapo-math" in self.grpo_config.dataset_name.lower():
+                self.is_dapo_math = True
             self.prompt_column = self.grpo_config.prompt_column_name
             self.response_column = self.grpo_config.response_column_name
             self.choices_column = self.grpo_config.choices_column_name
@@ -81,5 +91,9 @@ class CosmosDataset:
         logger.info(f"Final dataset size = {len(train_dataset)}")
 
         self.train_set = RLDataset(
-            train_dataset, self.prompt_column, self.response_column, self.is_cosmos
+            train_dataset,
+            self.prompt_column,
+            self.response_column,
+            self.is_cosmos,
+            self.is_dapo_math,
         )
