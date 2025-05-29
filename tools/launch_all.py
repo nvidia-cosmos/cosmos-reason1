@@ -24,6 +24,8 @@ import os
 import re
 import argparse
 from typing import List, Dict, Optional, Any, Callable
+import toml
+import tempfile
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("cosmos")
@@ -66,11 +68,9 @@ def read_config(config_file: str) -> Dict[str, Any]:
     Returns:
         Dictionary containing the configuration
     """
-    import tomli
-
     try:
-        with open(config_file, "rb") as f:
-            config = tomli.load(f)
+        with open(config_file, "r") as f:
+            config = toml.load(f)
         return config
     except Exception as e:
         logger.error(f"Error reading config file {config_file}: {e}")
@@ -925,8 +925,16 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
             port = util.find_available_port(args.port)
 
     controller_cmd = None
+    tmpfile_toml = None
     if control_url is None:
-        controller_cmd = f"{controller_script} --config {args.config}"
+        cosmos_config["policy"]["parallelism"]["n_init_replicas"] = n_policy
+        cosmos_config["rollout"]["parallelism"]["n_init_replicas"] = n_rollouts
+        # Create a temporary file and write to it
+        with tempfile.NamedTemporaryFile(mode='w+', suffix=".toml", delete=False) as tmpfile:
+            toml.dump(cosmos_config, tmpfile)
+            tmpfile_toml = tmpfile.name
+        logger.info(f"Temporary configuration file created at {tmpfile_toml}")
+        controller_cmd = f"{controller_script} --config {tmpfile_toml}"
         controller_cmd += f" --port {port}"
         control_url = f"localhost:{port}"
     else:
@@ -1046,6 +1054,13 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
 
         # Launch all processes
         processes.extend(launch_processes(commands, gpu_devices, control_urls, output_files))
+
+    if tmpfile_toml is not None and os.path.exists(tmpfile_toml):
+        # Clean up the temporary file
+        try:
+            os.unlink(tmpfile_toml)
+        except Exception as e:
+            logger.error(f"Error deleting temporary file {tmpfile_toml}: {e}")
 
     # Wait for all processes to complete without blocking
     while len(processes) > 0:

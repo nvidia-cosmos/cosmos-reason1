@@ -121,6 +121,13 @@ def compute_loss(
 class GRPOTrainer(Trainer):
     def __init__(self, config: CosmosConfig, parallel_dims: ParallelDims):
         super().__init__(config, parallel_dims)
+
+        # Heartbeat thread is used to keep the connection alive with the controller.
+        self.shutdown_background_task_event = threading.Event()
+        self.heartbeat_thread = self.start_heartbeat(
+            self.shutdown_background_task_event
+        )
+
         self.grpo_config = self.config.train.train_policy
         # For model load
         self.model_ready = False
@@ -202,12 +209,8 @@ class GRPOTrainer(Trainer):
         # Currently ony 1 is supported.
         self.mu_iterations = self.config.train.train_policy.mu_iterations
         self.optimizers.zero_grad()
-        self.shutdown_background_task_event = threading.Event()
         self.fetch_command_thread = None
         self.fetch_rollouts_thread = None
-        self.heartbeat_thread = self.start_heartbeat(
-            self.shutdown_background_task_event
-        )
         atexit.register(self.handle_shutdown)
         self.p2r_related_ranks = None
         self.p2r_nccl_uuids = {}
