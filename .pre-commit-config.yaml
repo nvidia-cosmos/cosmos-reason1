@@ -10,3 +10,11 @@ repos:
     # Run the formatter.
     - id: ruff-format
       files: ^(cosmos_reason1|scripts|tests|tools/launch_all.py)/
+- repo: https://github.com/pocc/pre-commit-hooks
+  rev: v1.3.5
+  hooks:
+    - id: clang-format
+      args: [ -i, --style=Google]
+      files: ^cosmos_reason1/csrc/
+      additional_dependencies: ['clang-format']
+

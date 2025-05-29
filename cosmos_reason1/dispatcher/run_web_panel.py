@@ -34,6 +34,7 @@ from cosmos_reason1.dispatcher.protocol import (
     UnregisterRequest,
     TrainAckRequest,
     HeartbeatRequest,
+    WeightReadyRequest,
 )
 from cosmos_reason1.policy.config import Config as CosmosConfig
 import cosmos_reason1.utils.util as util
@@ -45,6 +46,7 @@ import time
 from cosmos_reason1.utils.constant import COSMOS_ROLLOUT_SCAN_INTERVAL
 import asyncio
 from contextlib import asynccontextmanager
+from cosmos_reason1.utils.distributed import get_eth_ips
 
 
 def create_error_response(
@@ -252,17 +254,36 @@ async def put_rollout(rollout: RolloutRequest):
             rollout_group.compute_rollouts(controller.rl_algo)
             for rollout_group in rollout_groups
         ]
+
+        # Dynamic Sampling: Filter out the rollouts that the rewards are all the same
+        valid_rollouts_list: List[List[Rollout]] = []
+        invalid_rollouts_list: List[List[Rollout]] = []
+        for rollouts_group in rollouts_list:
+            if len(set([rollout.reward for rollout in rollouts_group])) > 1:
+                valid_rollouts_list.append(rollouts_group)
+            else:
+                # If the rewards are all the same, we need to sample one rollout from the group
+                invalid_rollouts_list.append(rollouts_group)
+
         # Flatten the rollouts into a single list
-        rollouts = [
-            rollout for rollouts_group in rollouts_list for rollout in rollouts_group
+        valid_rollouts = [
+            rollout
+            for rollouts_group in valid_rollouts_list
+            for rollout in rollouts_group
+        ]
+        invalid_rollouts = [
+            rollout
+            for rollouts_group in invalid_rollouts_list
+            for rollout in rollouts_group
         ]
 
-        logger.debug(
-            f"[RolloutGroup] from replica: {rollout.src_replica_name} with {len(rollout.completions)} samples:"
-            f"example: rollouts[0]\n{rollouts[0]}"
-        )
+        if len(valid_rollouts) > 0:
+            logger.debug(
+                f"[RolloutGroup] from replica: {rollout.src_replica_name} with {len(rollout.completions)} samples:"
+                f"example: rollouts[0]\n{valid_rollouts[0]}"
+            )
 
-        await controller.put_rollouts(rollouts)
+        await controller.put_rollouts(valid_rollouts, invalid_rollouts)
         return {"message": "Rollout put"}
     except Exception as e:
         import traceback
@@ -297,6 +318,19 @@ async def train_ack(request: TrainAckRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
+@app.post("/api/policy/weight_ready")
+async def weight_ready(request: WeightReadyRequest):
+    try:
+        replicaname = request.replica_name
+        await controller.weight_ready(replicaname)
+        return {"message": "Weight ready received"}
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
+
+
 def _serialize_replicas(replicas: Dict) -> List[Dict]:
     result = []
     for name, replica in replicas.items():
@@ -321,7 +355,7 @@ def _serialize_replicas(replicas: Dict) -> List[Dict]:
     return result
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser(
         description="Run the web panel for the dispatcher."
     )
@@ -394,6 +428,10 @@ if __name__ == "__main__":
     if controller.config:  # Check if config was set (either loaded or via web later)
         controller.config.redis = str(redis_free_port)
 
+    ips = get_eth_ips()
+    if len(ips) > 0:
+        controller.config.eth_ips = ";".join(ips)
+
     random_db_file_name = f"cosmos_reason1_{str(uuid.uuid4())}.rdb"
     if args.create_redis_config:
         write_redis_config(REDIS_CONFIG_PATH, redis_free_port, args.redis_logfile_path)
@@ -422,3 +460,7 @@ if __name__ == "__main__":
         logger.info("Redis server stopped.")
 
     atexit.register(exit_server)
+
+
+if __name__ == "__main__":
+    main()

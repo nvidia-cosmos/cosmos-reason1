@@ -20,16 +20,23 @@ from cosmos_reason1.utils.parallelism import (
     train_context,
 )
 from cosmos_reason1.dispatcher.protocol import Role
-import torch
+import json
 import os
+import torch
 from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.checkpoint import CheckpointMananger, SaveManager
+from cosmos_reason1.utils.checkpoint import (
+    upload_folder_to_s3,
+    CheckpointMananger,
+    SaveManager,
+)
 from transformers import AutoTokenizer, AutoConfig, AutoProcessor, GenerationConfig
 from cosmos_reason1.policy.trainer.optm import build_optimizers, build_lr_schedulers
 from cosmos_reason1.comm.base import CommMixin
 from safetensors.torch import save_file
+from huggingface_hub import create_repo, upload_folder, whoami
+from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
 from typing import Dict
-import json
+import cosmos_reason1.utils.util as util
 
 
 class Trainer(CommMixin):
@@ -52,16 +59,23 @@ class Trainer(CommMixin):
         self.device = torch.device(f"cuda:{self.local_rank}")
         torch.cuda.set_device(self.device)
 
-        self.tokenizer = AutoTokenizer.from_pretrained(config.policy.model_name_or_path)
-        self.hf_config = AutoConfig.from_pretrained(config.policy.model_name_or_path)
+        self.tokenizer = util.retry(AutoTokenizer.from_pretrained)(
+            config.policy.model_name_or_path,
+            trust_remote_code=True,
+        )
+        self.hf_config = util.retry(AutoConfig.from_pretrained)(
+            config.policy.model_name_or_path,
+            trust_remote_code=True,
+        )
         try:
-            self.hf_processor = AutoProcessor.from_pretrained(
-                config.policy.model_name_or_path
+            self.hf_processor = util.retry(AutoProcessor.from_pretrained)(
+                config.policy.model_name_or_path,
+                trust_remote_code=True,
             )
-        except Exception:
+        except Exception as e:
             self.hf_processor = None
             logger.info(
-                f"Failed to load processor for {config.policy.model_name_or_path}, using tokenizer as processor, ignore if not needed"
+                f"Failed to load processor for {config.policy.model_name_or_path}, using tokenizer as processor, ignore if not needed, error = {e}"
             )
 
         self.train_stream = torch.cuda.current_stream()
@@ -100,7 +114,9 @@ class Trainer(CommMixin):
     def pp_loss_fn(self):
         raise NotImplementedError("pp_loss_fn must be provided by subclass")
 
-    def export_safetensors(self, path: str, trainable_only: bool = False):
+    def export_safetensors(
+        self, path: str, trainable_only: bool = False, is_final=False
+    ):
         if self.parallel_dims.dp_replicate_coord[0] > 0:
             return
 
@@ -216,12 +232,52 @@ class Trainer(CommMixin):
                 self.hf_processor.save_pretrained(path)
             # save the generation config to get the generation aligned with HF.
             try:
-                generation_config = GenerationConfig.from_pretrained(
+                generation_config = util.retry(GenerationConfig.from_pretrained)(
                     self.config.policy.model_name_or_path
                 )
                 generation_config.save_pretrained(path)
             except Exception:
                 logger.warning("[Policy] No generation config found, do not save it.")
+            # upload the final model to huggingface
+            if self.config.train.ckpt.upload_hf and is_final:
+
+                def upload_hf(folder_path, repo_id):
+                    # hide redundant logs of huggingface
+                    disable_progress_bars()
+                    upload_folder(
+                        folder_path=folder_path,
+                        path_in_repo=".",
+                        repo_id=repo_id,
+                        commit_message="Upload model",
+                    )
+                    enable_progress_bars()
+                    logger.info(f"Model uploaded to huggingface: {repo_id}")
+
+                username = whoami()["name"]
+                repo_id = (
+                    username
+                    + "/"
+                    + self.config.train.ckpt.hf_repo_name
+                    + "-"
+                    + self.config.train.timestamp
+                )
+                create_repo(repo_id, exist_ok=True)
+                logger.info(f"Uploading the final model to huggingface: {repo_id}...")
+                upload_hf(path, repo_id)
+            # upload the model to s3
+            if self.config.train.ckpt.upload_s3:
+                if (self.config.train.ckpt.upload_s3 == "final" and is_final) or (
+                    self.config.train.ckpt.upload_s3 == "all"
+                ):
+                    logger.info(
+                        f"Uploading the model to s3: {self.config.train.ckpt.s3_bucket}..."
+                    )
+                    upload_folder_to_s3(
+                        self.config.train.ckpt.s3_bucket,
+                        self.config.train.ckpt.s3_prefix,
+                        path,
+                    )
+
         torch.distributed.barrier()
         if self.global_rank == 0:
             logger.info(f"\n\nExported safetensors to {path}\n\n")

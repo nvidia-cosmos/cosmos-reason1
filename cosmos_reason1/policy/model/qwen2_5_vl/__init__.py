@@ -23,20 +23,22 @@ from transformers.activations import ACT2FN
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from transformers import AutoConfig
 from cosmos_reason1.utils.util import (
-    read_json_file,
     resolve_model_path,
     IdentityLayer,
     clear_weight_name,
+    sync_model_vocab,
+    retry,
 )
 from safetensors import safe_open
-from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.policy.model.qwen2_5_vl.weight_converter import (
     convert_weight_from_hf,
 )
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.policy.model.base import BaseModel
-from functools import cached_property, partial
+from functools import cached_property
+import re
+from functools import partial
 
 
 def build_norm(norm_type: str, dim: int, eps: float):
@@ -1294,7 +1296,7 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
             parallel_dims (ParallelDims): Parallel dimensions definition.
         """
         # Load all safetensors from `model_path`
-        model_type = AutoConfig.from_pretrained(model_name_or_path).model_type
+        model_type = retry(AutoConfig.from_pretrained)(model_name_or_path).model_type
         model_path = resolve_model_path(model_name_or_path)
         safetensors_files = [
             f for f in os.listdir(model_path) if f.endswith(".safetensors")
@@ -1365,7 +1367,10 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
 
     @classmethod
     def from_pretrained(
-        cls, model_name_or_path: str, max_position_embeddings: Optional[int] = None
+        cls,
+        hf_config: AutoConfig,
+        model_name_or_path: str,
+        max_position_embeddings: Optional[int] = None,
     ) -> "Qwen2_5_VLConditionalModel":
         """
         Initialize a GPT model from a pretrained model.
@@ -1377,38 +1382,13 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
             Qwen2_5_VLConditionalModel: Qwen2_5_VLConditionalModel model.
 
         """
-        hf_config = AutoConfig.from_pretrained(model_name_or_path)
         if hf_config.model_type not in cls.supported_model_types():
             raise ValueError(f"Unsupported model type: {hf_config.model_type}")
 
         if max_position_embeddings is None:
             max_position_embeddings = hf_config.max_position_embeddings
 
-        # Fetch vocab size from `lm_head`
-        # Read `model.safetensors.index.json` to get the `lm_head` layer
-        model_path = resolve_model_path(model_name_or_path)
-        weight_map = read_json_file(
-            os.path.join(model_path, "model.safetensors.index.json")
-        )["weight_map"]
-        if "lm_head.weight" in weight_map:
-            lm_head = weight_map["lm_head.weight"]
-            with safe_open(
-                os.path.join(model_path, lm_head), framework="pt", device="cpu"
-            ) as f:
-                tensor_slice = f.get_slice("lm_head.weight")
-                vocab_size, _ = tensor_slice.get_shape()
-        elif "model.embed_tokens.weight" in weight_map:
-            embed_tokens = weight_map["model.embed_tokens.weight"]
-            with safe_open(
-                os.path.join(model_path, embed_tokens), framework="pt", device="cpu"
-            ) as f:
-                tensor_slice = f.get_slice("model.embed_tokens.weight")
-                vocab_size, _ = tensor_slice.get_shape()
-        else:
-            raise ValueError(
-                "Could not find `lm_head` or `model.embed_tokens.weight` in the model."
-            )
-        logger.info(f"Vocabulary size: {vocab_size}")
+        vocab_size = sync_model_vocab(model_name_or_path)
 
         rope_scaling = {}
         if hasattr(hf_config, "rope_scaling"):
@@ -1471,6 +1451,67 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
             n_flops += lm_n_flops
         return n_params, n_flops
 
+    def weight_sync_transform_by_key_internal(
+        self, dest_name: str, lm_state_dict, visual_state_dict
+    ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
+        is_visual = dest_name.startswith("visual.")
+        # Handle qkv weights for separate q, k, v tensors
+        if (
+            match := re.search(  # noqa: F841
+                r"blocks\.(\d+)\.attn\.(q|k|v)\.(weight|bias)",
+                dest_name,
+            )
+        ) is not None and is_visual:
+            new_dest_name = re.sub(r"\.(q|k|v)\.", ".qkv.", dest_name)
+            qkv_mode = match.group(2)
+            new_dest_name = new_dest_name.replace("visual.", "")
+            assert (
+                new_dest_name in visual_state_dict
+            ), f"Unsupported weight: {dest_name}"
+            target_tensor = visual_state_dict[new_dest_name]
+
+            def policy_to_rollout_weight_transform(
+                target_tensor: torch.Tensor, qkv_mode: str
+            ) -> torch.Tensor:
+                is_dist_tensor = isinstance(
+                    target_tensor, torch.distributed.tensor.DTensor
+                )
+                full_view = (
+                    target_tensor.full_tensor() if is_dist_tensor else target_tensor
+                )
+                # If the weight is a qkv weight, we need to split it into q, k, v
+                if qkv_mode == "q":
+                    return full_view[: full_view.shape[0] // 3]
+                elif qkv_mode == "k":
+                    return full_view[
+                        full_view.shape[0] // 3 : 2 * full_view.shape[0] // 3
+                    ]
+                elif qkv_mode == "v":
+                    return full_view[2 * full_view.shape[0] // 3 :]
+
+            return partial(
+                policy_to_rollout_weight_transform,
+                target_tensor=target_tensor,
+                qkv_mode=qkv_mode,
+            )
+        if is_visual:
+            dest_name = dest_name.replace("visual.", "")
+            assert dest_name in visual_state_dict, f"Unsupported weight: {dest_name}"
+        elif dest_name.startswith("model."):
+            dest_name = dest_name.replace("model.", "")
+            assert dest_name in lm_state_dict, f"Unsupported weight: {dest_name}"
+        elif dest_name == "lm_head.weight":
+            assert dest_name in lm_state_dict, f"Unsupported weight: {dest_name}"
+        else:
+            raise ValueError(f"Unsupported weight: {dest_name} in state_dict")
+
+        target_tensor = (
+            visual_state_dict[dest_name] if is_visual else lm_state_dict[dest_name]
+        )
+        is_dist_tensor = isinstance(target_tensor, torch.distributed.tensor.DTensor)
+        local_view = target_tensor.to_local() if is_dist_tensor else target_tensor
+        return local_view
+
     def weight_sync_transform_by_key(
         self, dest_name: str
     ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
@@ -1483,42 +1524,28 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
         visual_state_dict = {
             clear_weight_name(k): v for k, v in visual_state_dict.items()
         }
+        return self.weight_sync_transform_by_key_internal(
+            dest_name, lm_state_dict, visual_state_dict
+        )
 
-        is_visual = dest_name.startswith("visual.")
-        if is_visual:
-            dest_name = dest_name.replace("visual.", "")
-            assert dest_name in visual_state_dict, f"Unsupported weight: {dest_name}"
-        elif dest_name.startswith("model."):
-            dest_name = dest_name.replace("model.", "")
-            assert dest_name in lm_state_dict, f"Unsupported weight: {dest_name}"
-        elif dest_name == "lm_head.weight":
-            assert dest_name in lm_state_dict, f"Unsupported weight: {dest_name}"
+    @cached_property
+    def weight_sync_transforms(self) -> List[Tuple[str, Tuple[int], torch.Tensor]]:
+        lm_state_dict = self.model.state_dict()
+        if self.visual is not None:
+            visual_state_dict = self.visual.state_dict()
         else:
-            raise ValueError(f"Unsupported weight: {dest_name} in state_dict")
-
-        import weakref
-
-        weak_self = weakref.ref(self)
-
-        def policy_to_rollout_weight_transform(
-            dest_name: str, weak_self: weakref.ref, is_visual: bool
-        ) -> torch.Tensor:
-            target_tensor = (
-                weak_self().visual.state_dict()[dest_name]
-                if is_visual
-                else weak_self().model.state_dict()[dest_name]
+            visual_state_dict = {}
+        lm_state_dict = {clear_weight_name(k): v for k, v in lm_state_dict.items()}
+        visual_state_dict = {
+            clear_weight_name(k): v for k, v in visual_state_dict.items()
+        }
+        transforms = []
+        for dest_name, shape in self.sorted_params:
+            local_view = self.weight_sync_transform_by_key_internal(
+                dest_name, lm_state_dict, visual_state_dict
             )
-            is_dist_tensor = isinstance(target_tensor, torch.distributed.tensor.DTensor)
-            local_view = target_tensor.to_local() if is_dist_tensor else target_tensor
-            return local_view
-
-        # return the tensor directly rather than a callable since no real transform needed.
-        return partial(
-            policy_to_rollout_weight_transform,
-            dest_name=dest_name,
-            weak_self=weak_self,
-            is_visual=is_visual,
-        )()
+            transforms.append((dest_name, shape, local_view))
+        return transforms
 
     @classmethod
     def map_local_key_to_hf_key(cls, name: str) -> str:
@@ -1528,3 +1555,49 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
         if name == "model.lm_head.weight":
             name = "lm_head.weight"
         return name
+
+    @cached_property
+    def sorted_params(self) -> List[Tuple[str, Tuple[int]]]:
+        """
+        Returns the state dict of the model and visual model, along with the sorted parameters information.
+        The sorted parameters information is a list of tuples, where each tuple contains the parameter name and its shape.
+        The state dicts are obtained from the model and visual model respectively.
+        """
+        sorted_params_info = []
+        for k, v in self.named_parameters():
+            k = self.map_local_key_to_hf_key(k)
+            is_dist_tensor = isinstance(v, torch.distributed.tensor.DTensor)
+            if k.startswith("visual.") and "qkv" in k:
+                # For visual model, we need to split qkv weights
+                local_view = v.full_tensor() if is_dist_tensor else v
+                unit_dim = local_view.shape[0] // 3
+                q_view = local_view[:unit_dim]
+                k_view = local_view[unit_dim : 2 * unit_dim]
+                v_view = local_view[2 * unit_dim :]
+                sorted_params_info.append((k.replace("qkv", "q"), q_view.shape))
+                sorted_params_info.append((k.replace("qkv", "k"), k_view.shape))
+                sorted_params_info.append((k.replace("qkv", "v"), v_view.shape))
+            else:
+                local_view = v.to_local() if is_dist_tensor else v
+                sorted_params_info.append((k, local_view.shape))
+        sorted_params_info.sort(key=lambda x: x[0])
+        return sorted_params_info
+
+    def tensor_precollect_required_for_sync(self, name: str) -> bool:
+        """
+        Check if the tensor sync precollect is required for the given name.
+        Args:
+            name (str): The name of the tensor.
+        Returns:
+            bool: True if the tensor sync precollect is required, False otherwise.
+        """
+        is_visual = name.startswith("visual.")
+        # Handle qkv weights for separate q, k, v tensors
+        if (
+            match := re.search(  # noqa: F841
+                r"blocks\.(\d+)\.attn\.(q|k|v)\.(weight|bias)",
+                name,
+            )
+        ) is not None and is_visual:
+            return True
+        return False

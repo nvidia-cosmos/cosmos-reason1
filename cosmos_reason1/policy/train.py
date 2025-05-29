@@ -25,13 +25,6 @@ from cosmos_reason1.policy.trainer.sft_trainer import SFTTrainer
 from cosmos_reason1.policy.trainer.grpo_trainer import GRPOTrainer
 from cosmos_reason1.policy.config import Config as PolicyConfig
 
-try:
-    # for policy and rollout nccl env consistency
-    import vllm  # noqa: F401
-except ImportError:
-    logger.warning("vllm is not installed, skipping nccl env consistency check")
-    pass
-
 
 def run_train():
     ctrl_ip, ctrl_port, metadata = get_controller_metadata()

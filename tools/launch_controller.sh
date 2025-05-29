@@ -40,7 +40,19 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-CMD="python -m cosmos_reason1.dispatcher.run_web_panel"
+# if env var COSMOS_CONTROLLER_LAUNCHER is set, use it as the controller launcher
+# otherwise, use the default controller launcher
+# Purpose: to allow user to register custom reward functions
+if [ -n "$COSMOS_CONTROLLER_LAUNCHER" ]; then
+  # Check it is ending with .py
+  if [[ "$COSMOS_CONTROLLER_LAUNCHER" == *.py ]]; then
+    CMD="python $COSMOS_CONTROLLER_LAUNCHER"
+  else
+    CMD="python -m $COSMOS_CONTROLLER_LAUNCHER"
+  fi
+else
+  CMD="python -m cosmos_reason1.dispatcher.run_web_panel"
+fi
 
 if [[ -n "$PORT" ]]; then
   CMD+=" --port $PORT"

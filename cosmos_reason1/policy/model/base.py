@@ -19,9 +19,15 @@ import torch
 from functools import cached_property
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
+from transformers import AutoConfig
 
 
 class BaseModel(ABC):
+    @staticmethod
+    @abstractmethod
+    def supported_model_types():
+        raise NotImplementedError
+
     def current_device(self):
         return next(self.parameters()).device
 
@@ -114,7 +120,10 @@ class BaseModel(ABC):
     @classmethod
     @abstractmethod
     def from_pretrained(
-        cls, model_name_or_path: str, max_position_embeddings: Optional[int] = None
+        cls,
+        hf_config: AutoConfig,
+        model_name_or_path: str,
+        max_position_embeddings: Optional[int] = None,
     ) -> "BaseModel":
         raise NotImplementedError
 
@@ -131,6 +140,18 @@ class BaseModel(ABC):
         """
         raise NotImplementedError
 
+    @cached_property
+    def weight_sync_transforms(self) -> List[Tuple[str, Tuple[int], torch.Tensor]]:
+        """
+        Get the local view of the tensors from the state dict.
+        This method retrieves the state dict of the model, clears the weight names,
+        and returns a list of tuples containing the destination name, shape, and local view of each tensor.
+        Returns:
+            List[Tuple[str, Tuple[int], torch.Tensor]]: A list of tuples containing the destination name,
+            shape, and local view of each tensor.
+        """
+        raise NotImplementedError
+
     @classmethod
     @abstractmethod
     def get_nparams_and_flops(self, seq_len: int) -> tuple[int, int]:
@@ -142,3 +163,13 @@ class BaseModel(ABC):
             tuple[int, int]: The number of parameters and flops of the model.
         """
         raise NotImplementedError
+
+    def tensor_precollect_required_for_sync(self, name: str) -> bool:
+        """
+        Check if the tensor sync precollect is required for the given name.
+        Args:
+            name (str): The name of the tensor.
+        Returns:
+            bool: True if the tensor sync precollect is required, False otherwise.
+        """
+        return False

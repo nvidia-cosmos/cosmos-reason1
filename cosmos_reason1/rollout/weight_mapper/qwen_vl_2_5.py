@@ -27,13 +27,14 @@ from cosmos_reason1.utils.parallelism_registry import (
     get_policy_parallelism_strategy,
     get_rollout_parallelism_strategy,
 )
+import cosmos_reason1.utils.util as util
 
 
 @register_class("qwen2_5_vl")
 class QwenVL25WeightMapper(WeightMapper):
     def __init__(self, hf_config_path: str):
         super().__init__(hf_config_path)
-        self.qwen_config = AutoConfig.from_pretrained(hf_config_path)
+        self.qwen_config = util.retry(AutoConfig.from_pretrained)(hf_config_path)
         self.prefix_str = None
         assert isinstance(self.qwen_config, Qwen2_5_VLConfig)
 
@@ -54,8 +55,17 @@ class QwenVL25WeightMapper(WeightMapper):
     def split_qkv_weight(self, name, weight: torch.Tensor):
         # visual
         if "visual" in name:
-            # do nothing for visual qkv
-            return
+            # split qkv weight for visual
+            # weight has shape [3 * head_dim, hidden_dim]
+            # kv head ratio is 1, so we can split it into q, k, v
+            assert (
+                weight.shape[0] % 3 == 0
+            ), "Weight shape is not compatible for splitting."
+            unit_dim = weight.shape[0] // 3  # for both weight and bias
+            q_weight = weight[:unit_dim]
+            k_weight = weight[unit_dim : unit_dim * 2]
+            v_weight = weight[unit_dim * 2 :]
+            return q_weight, k_weight, v_weight
         # language
         # split qkv weight
         # weight has shape [q_num_heads * head_dim + k_num_heads * head_dim + v_num_heads * head_dim, hidden_dim]
@@ -111,6 +121,19 @@ class QwenVL25WeightMapper(WeightMapper):
                 up_proj_weight_key = compatible_key.replace("gate_up_proj", "up_proj")
                 compatible_weight_map[up_proj_weight_key] = up_proj_weight
                 compatible_list.append((up_proj_weight_key, up_proj_weight.shape))
+            elif "qkv" in compatible_key and "visual" in compatible_key:
+                q_weight, k_weight, v_weight = self.split_qkv_weight(
+                    compatible_key, param
+                )
+                q_visual_proj_weight_key = compatible_key.replace("qkv", "q")
+                k_visual_proj_weight_key = compatible_key.replace("qkv", "k")
+                v_visual_proj_weight_key = compatible_key.replace("qkv", "v")
+                compatible_weight_map[q_visual_proj_weight_key] = q_weight
+                compatible_list.append((q_visual_proj_weight_key, q_weight.shape))
+                compatible_weight_map[k_visual_proj_weight_key] = k_weight
+                compatible_list.append((k_visual_proj_weight_key, k_weight.shape))
+                compatible_weight_map[v_visual_proj_weight_key] = v_weight
+                compatible_list.append((v_visual_proj_weight_key, v_weight.shape))
             else:
                 compatible_weight_map[compatible_key] = param
                 compatible_list.append((compatible_key, param.shape))

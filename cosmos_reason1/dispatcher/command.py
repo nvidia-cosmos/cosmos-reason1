@@ -84,6 +84,7 @@ class Command(ABC):
                 dict_v["src_replica_size"],
                 dict_v["dst_replica_size"],
                 dict_v["uuid"],
+                dict_v["do_weight_sync_check"],
             )
         elif dict_v["command_type"] == CommandType.ROLLOUT_TO_ROLLOUT_BROADCAST:
             return RolloutToRolloutBroadcastCommand(
@@ -94,6 +95,7 @@ class Command(ABC):
                 dict_v["replica_name"],
                 dict_v["items_count"],
                 dict_v["global_step"],
+                dict_v["total_steps"],
                 dict_v["uuid"],
             )
         elif dict_v["command_type"] == CommandType.ALL_REDUCE:
@@ -140,7 +142,6 @@ class WeightResumeCommand(Command):
         ), "WeightResumeCommand can only be triggered on policy replicas"
         cmd = cls(replica.name, cls.new_uuid())
         redis_handler.publish_command(cmd.pack(), replica.name)
-        replica.weights_loaded_in_view_of_command = True
         # initial weight step
         replica.weight_step = 0
 
@@ -237,6 +238,8 @@ class PolicyToRolloutUnicastCommand(Command):
         - weight initialization of first rollout replica.
     """
 
+    do_weight_sync_check_flag: bool = True
+
     def __init__(
         self,
         src_replica_name: str,
@@ -244,6 +247,7 @@ class PolicyToRolloutUnicastCommand(Command):
         src_replica_size: int,
         dst_replica_size: int,
         uuid: str,
+        do_weight_sync_check: bool = False,
     ):
         super().__init__(
             uuid, CommandScope.LOCAL, CommandType.POLICY_TO_ROLLOUT_UNICAST
@@ -252,11 +256,13 @@ class PolicyToRolloutUnicastCommand(Command):
         self.dst_replica_name = dst_replica_name
         self.src_replica_size = src_replica_size
         self.dst_replica_size = dst_replica_size
+        self.do_weight_sync_check = do_weight_sync_check
 
     src_replica_name: Optional[str] = None
     dst_replica_name: Optional[str] = None
     src_replica_size: Optional[int] = None
     dst_replica_size: Optional[int] = None
+    do_weight_sync_check: Optional[bool] = None
 
     @classmethod
     def trigger(
@@ -275,6 +281,7 @@ class PolicyToRolloutUnicastCommand(Command):
             src_replica_size,
             dst_replica_size,
             cls.new_uuid(),
+            cls.do_weight_sync_check_flag,
         )
         redis_handler.publish_command(cmd.pack(), src_replica.name)
         redis_handler.publish_command(cmd.pack(), dst_replica.name)
@@ -285,6 +292,9 @@ class PolicyToRolloutUnicastCommand(Command):
         status_manager.set_status(dst_replica.name, RolloutStatus.READY)
 
         dst_replica.weights_loaded_in_view_of_command = True
+
+        if cls.do_weight_sync_check_flag:
+            cls.do_weight_sync_check_flag = False
 
 
 class RolloutToRolloutBroadcastCommand(Command):
@@ -335,16 +345,23 @@ class DataFetchCommand(Command):
     """
 
     def __init__(
-        self, replica_name: str, items_count: int, global_step: int, uuid: str
+        self,
+        replica_name: str,
+        items_count: int,
+        global_step: int,
+        total_steps: int,
+        uuid: str,
     ):
         super().__init__(uuid, CommandScope.LOCAL, CommandType.DATA_FETCH)
         self.replica_name = replica_name
         self.items_count = items_count
         self.global_step = global_step
+        self.total_steps = total_steps
 
     replica_name: Optional[str] = None
     items_count: Optional[int] = None
     global_step: Optional[int] = None
+    total_steps: Optional[int] = None
 
     @classmethod
     def trigger(
@@ -352,9 +369,10 @@ class DataFetchCommand(Command):
         replica: Replica,
         items_count: int,
         global_step: int,
+        total_steps: int,
         redis_handler: RedisStreamHandler,
     ):
-        cmd = cls(replica.name, items_count, global_step, cls.new_uuid())
+        cmd = cls(replica.name, items_count, global_step, total_steps, cls.new_uuid())
         redis_handler.publish_command(cmd.pack(), replica.name)
 
 

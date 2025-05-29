@@ -18,11 +18,11 @@ from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.constant import (
-    COSMOS_WEIGHT_SYNC_CHECK,
     COSMOS_ROLLOUT_STEP_INTERVAL,
     COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE,
 )
 from cosmos_reason1.utils.util import list_to_b64, b64_to_list
+import cosmos_reason1.utils.distributed as dist_utils
 import torch
 from transformers import AutoTokenizer, AutoConfig
 from cosmos_reason1.rollout.vllm_rollout.vllm_rollout import vLLMRollout
@@ -36,7 +36,6 @@ from cosmos_reason1.dispatcher.command import (
 )
 import cosmos_reason1._cpp as _C
 import requests
-import torch.distributed as dist
 import threading
 import time
 from queue import Queue
@@ -47,6 +46,9 @@ from cosmos_reason1.utils.parallelism_map import (
     ParallelTopoMapperGroup,
 )
 from cosmos_reason1.rollout.weight_mapper import get_weight_mapper
+import cosmos_reason1.utils.util as util
+from functools import partial
+from cosmos_reason1.utils import constant
 
 """
 Keep in mind that torch distributed is not thread safe. So try to keep the usage in the same thread.
@@ -88,7 +90,9 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         assert (
             self.cosmos_config.rollout.parallelism.dp_shard_size > 0
         ), "[Rollout] dp_shard_size should be greater than 0."
-        self.tokenizer = AutoTokenizer.from_pretrained(config.policy.model_name_or_path)
+        self.tokenizer = util.retry(AutoTokenizer.from_pretrained)(
+            config.policy.model_name_or_path
+        )
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         # CommandQueue queried from controller.
@@ -99,13 +103,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
         self.seed = self.cosmos_config.rollout.seed
 
-        self.rollout = vLLMRollout(
+        self.rollout: vLLMRollout = vLLMRollout(
             self.cosmos_config,
             tokenizer=self.tokenizer,
-            hf_config_path=self.cosmos_config.policy.model_name_or_path,
             seed=self.seed,
+            load_format="dummy",
         )
-
         _patch_vllm_rollout_locked_step(self.rollout, self.consume_command)
 
         # communicator index for the cached communicators in C++ binding.
@@ -125,7 +128,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
         # For Polocy to Rollout weight mapping
         self.parallel_mapper = None
-        hf_config = AutoConfig.from_pretrained(
+        hf_config = util.retry(AutoConfig.from_pretrained)(
             self.cosmos_config.policy.model_name_or_path
         )
         model_type = hf_config.model_type
@@ -149,7 +152,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         )
 
         self.inference_stream = torch.cuda.Stream()
-        self.weight_sync_stream = torch.cuda.Stream()
 
     def handle_shutdown(self):
         if not self.shutdown_background_task_event.is_set():
@@ -186,39 +188,26 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         # group_m-1: [rank m-1 in replica 0, rank m-1 in replica 1, ..., rank m-1 in replica n-1]
         unique_rollout_group_key = self.get_group_unique_key(replica_name_to_rank)
         nccl_group_id = None
-        max_retry = 3
         if self.rank_in_rollout_repicas == 0:
             # only replica_rank == 0 have the right to generate nccl id.
             nccl_group_id = _C.create_nccl_uid()
             base64_nccl_group_id = list_to_b64(nccl_group_id)
-            while max_retry > 0:
-                try:
-                    r = requests.post(
-                        f"{self.remote_host}/api/nccl/comm_initiator",
+            try:
+                util.make_request_with_retry(
+                    partial(
+                        requests.post,
                         json={
                             "unique_pair_name": unique_rollout_group_key,
                             "handle_base64": base64_nccl_group_id,
                         },
-                    )
-                    if r.status_code != 200:
-                        logger.error(
-                            f"[Rollout] Error response in post nccl group_id to controller: {r.json()}"
-                        )
-                    else:
-                        break
-                except Exception as e:
-                    # just logging the error now.
-                    logger.error(
-                        f"[Rollout] Failed in post nccl group_id to controller after {max_retry} retries: {str(e)}"
-                    )
-                finally:
-                    max_retry -= 1
-
-                    if max_retry == 0:
-                        raise RuntimeError(
-                            f"[Rollout] Failed in post nccl group_id to controller after {max_retry} retries."
-                        )
-                    time.sleep(0.5)
+                    ),
+                    self.get_alternative_urls("api/nccl/comm_initiator"),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"[Rollout] Failed in post nccl group_id to controller after retries {e}."
+                )
 
         if self.rank_in_rollout_repicas != 0:
             # other replicas should query the nccl group id from controller
@@ -242,36 +231,23 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
     def query_nccl_unique_id_from_controller(self, unique_id_key: str):
         # We don't have something like dist.barrier(), so just use while True loop to query it like synchronize.
-        max_retry = 1000
         nccl_group_id = None
         # all ranks not zero in replica 0 or all ranks of other replicas need to query the group_id from controller
-        while max_retry > 0:
-            try:
-                r = requests.post(
-                    f"{self.remote_host}/api/nccl/comm_acceptor",
+        try:
+            r = util.make_request_with_retry(
+                partial(
+                    requests.post,
                     json={"unique_pair_name": unique_id_key},
-                )
-                if r.status_code != 200:
-                    logger.warning(
-                        f"[Rollout] Failed in query nccl group_id from controller: {r.json()}"
-                    )
-                    pass
-                else:
-                    base64_nccl_group_id = r.json()["handle_base64"]
-                    nccl_group_id = b64_to_list(base64_nccl_group_id)
-                    break
-
-            except Exception as e:
-                logger.error(
-                    f"[Rollout] Failed in query nccl group_id from controller: {str(e)}"
-                )
-            finally:
-                max_retry -= 1
-                if max_retry == 0:
-                    raise RuntimeError(
-                        f"[Rollout] Failed in query nccl group_id from controller after {max_retry} retries."
-                    )
-                time.sleep(0.5)
+                ),
+                self.get_alternative_urls("api/nccl/comm_acceptor"),
+                max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
+            )
+        except Exception as e:
+            raise RuntimeError(
+                f"[Rollout] Failed in post nccl group_id to controller after retries {e}."
+            )
+        base64_nccl_group_id = r.json()["handle_base64"]
+        nccl_group_id = b64_to_list(base64_nccl_group_id)
         return nccl_group_id
 
     @torch.no_grad()
@@ -281,9 +257,9 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         This is Policy -> Rollout replica. Will only happen between
         a pair of policy and rollout replica.
         """
+        need_sep_comm = util.seperate_nccl_comm_needed()
         if command.dst_replica_name != self.replica_name:
             return
-        rank_in_p2r = self.global_rank + command.src_replica_size
         if self.parallel_mapper is None:
             self.parallel_mapper = ParallelTopoMapperGroup(
                 self.cosmos_config.policy.parallelism,
@@ -295,56 +271,76 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             )
 
         # get the nccl_unique_id from the controller
-        nccl_unique_id_key = command.src_replica_name + "_" + command.dst_replica_name
-        communicator_index = -1
-        if nccl_unique_id_key in self.policy_to_rollout_nccl_communicators:
-            communicator_index = self.policy_to_rollout_nccl_communicators[
-                nccl_unique_id_key
-            ]
-        else:
-            nccl_group_id = self.query_nccl_unique_id_from_controller(
-                nccl_unique_id_key
+        communicator_index = {}
+        _, compatible_list = self.weight_mapper.generate_compatible_map(
+            self.get_underlying_model()
+        )
+        # same as policy
+        compatible_list.sort(key=lambda x: x[0])
+
+        insts = self.parallel_mapper.generate_rollout_from_policy_insts(
+            compatible_list, self.global_rank
+        )
+
+        related_ranks = [set() for _ in range(command.dst_replica_size)]
+        for i in insts:
+            p_rank, r_rank, _, _, _ = i
+            related_ranks[r_rank].add(p_rank)
+
+        for p_rank in sorted(related_ranks[self.global_rank]):
+            nccl_unique_id_key = (
+                command.src_replica_name + "_" + command.dst_replica_name
             )
-            if nccl_group_id is None:
-                raise RuntimeError(
-                    "[Rollout] Failed to query nccl group_id from controller!"
+            if need_sep_comm:
+                nccl_unique_id_key += f"_{p_rank}_{self.global_rank}"
+            if nccl_unique_id_key in self.policy_to_rollout_nccl_communicators:
+                communicator_index[p_rank] = self.policy_to_rollout_nccl_communicators[
+                    nccl_unique_id_key
+                ]
+            else:
+                # query the nccl group id from controller
+                nccl_group_id = self.query_nccl_unique_id_from_controller(
+                    nccl_unique_id_key
                 )
-            communicator_index = _C.create_nccl_comm(
-                nccl_group_id, rank_in_p2r, command.src_replica_size + self.world_size
-            )
-            self.policy_to_rollout_nccl_communicators[nccl_unique_id_key] = (
-                communicator_index
-            )
+                if nccl_group_id is None:
+                    raise RuntimeError(
+                        "[Rollout] Failed to query nccl group_id from controller!"
+                    )
+                # create the communicator index
+                # p_rank is the rank in policy, r_rank is the rank in rollout
+                communicator_index[p_rank] = _C.create_nccl_comm(
+                    nccl_group_id,
+                    1
+                    if need_sep_comm
+                    else (self.global_rank + command.src_replica_size),
+                    2
+                    if need_sep_comm
+                    else (self.world_size + command.src_replica_size),
+                )
+                # cache the communicator index
+                self.policy_to_rollout_nccl_communicators[nccl_unique_id_key] = (
+                    communicator_index[p_rank]
+                )
 
-        with torch.cuda.stream(self.weight_sync_stream):
+        if command.do_weight_sync_check:
+            self.rollout.reload_weight()
+
+        with torch.cuda.stream(self.inference_stream):
             # recv the weight from policy
-            _, compatible_list = self.weight_mapper.generate_compatible_map(
-                self.get_underlying_model()
-            )
-            # same as policy
-            compatible_list.sort(key=lambda x: x[0])
-
-            insts = self.parallel_mapper.generate_rollout_from_policy_insts(
-                compatible_list, self.global_rank
-            )
             st = time.time()
-
             total_bytes_received = 0
             for inst in insts:
                 total_bytes_received += self.weight_mapper.recv_weight_shard(
                     self.global_rank,
                     inst,
                     communicator_index,
+                    command.do_weight_sync_check,
                 )
             time_eclapsed = time.time() - st
 
             logger.debug(
                 f"[Rolout] All {len(insts)} recv operations finished in {time_eclapsed:.3f} seconds with {total_bytes_received / (1024 * 1024)} MB received."
             )
-
-            if not self.weight_synced_event.is_set():
-                # this means we have not synced the weight yet, so we need to sync the weight.
-                self.weight_sync_stream.synchronize()
 
             self.weight_synced_event.set()
 
@@ -362,7 +358,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             # only one rollout replica, no need to broadcast.
             return
 
-        with torch.cuda.stream(self.weight_sync_stream):
+        with torch.cuda.stream(self.inference_stream):
             assert (
                 self.rank_in_rollout_repicas >= 0
             ), "[Rollout] rank in rollout replicas should be set before broadcast."
@@ -372,28 +368,10 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
             src_rank = self.replica_name_to_rank[src_replica_name]
 
-            # use default stream to broadcast the weight.
             cnt = 0
             for parameter in self.get_underlying_model().parameters():
                 _C.nccl_broadcast(parameter, src_rank, self.global_commnicator_idex)
                 cnt += 1
-
-            # below are just tests that broadcast takes effect.
-            # if self.rank_in_rollout_repicas == src_rank:
-            #     for parameter in self.get_underlying_model().parameters():
-            #         with torch.no_grad():
-            #             parameter.add_(1)
-            #         _C.nccl_broadcast(
-            #             parameter, src_rank, self.global_commnicator_idex
-            #         )
-            # else:
-            #     for parameter in self.get_underlying_model().parameters():
-            #         _C.nccl_broadcast(
-            #             parameter, src_rank, self.global_commnicator_idex
-            #         )
-            if not self.weight_synced_event.is_set():
-                # this means we have not synced the weight yet, so we need to sync the weight.
-                self.weight_sync_stream.synchronize()
 
             self.weight_synced_event.set()
 
@@ -439,9 +417,13 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         try:
             if not self._prompt_queue.full():
                 # blocking request
-                prompt_meta = requests.get(
-                    f"{self.remote_host}/api/next_prompt",
-                    params={"n": self.batch_size},
+                prompt_meta = util.make_request_with_retry(
+                    partial(
+                        requests.get,
+                        params={"n": self.batch_size},
+                    ),
+                    self.get_alternative_urls("api/next_prompt"),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
                 prompt_meta = prompt_meta.json()
                 payload = prompt_meta["prompt_id_and_str_list"]
@@ -458,19 +440,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
     def request_new_prompts(self):
         if not self.prompt_end_event.is_set():
-            prompts = [
-                (None, False),
-            ]
+            prompts_and_is_end = (None, False)
             if self.global_rank == 0:
-                prompts[0] = self.query_prompt()
+                prompts_and_is_end = self.query_prompt()
 
-            if self.world_size > 1:
-                dist.broadcast_object_list(
-                    prompts,
-                    src=0,
-                    device=torch.device("cpu"),
-                )
-            prompts, is_end = prompts[0]
+            prompts_and_is_end = dist_utils.broadcast_object_cpu(prompts_and_is_end)
+            prompts, is_end = prompts_and_is_end
             if is_end:
                 logger.info(
                     f"[Rollout] Receive prompt end, preparing exiting for {self.replica_name}."
@@ -482,22 +457,14 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 self._prompt_queue.put(prompts)
 
     def consume_command(self):
-        current_command = [None]
+        current_command = None
         if self.global_rank == 0:
             if not self._command_queue.empty():
                 # this means we have a command to process, broadcast the command to all ranks
-                current_command[0] = self._command_queue.get()
+                current_command = self._command_queue.get()
 
-        if self.world_size > 1:
-            dist.broadcast_object_list(
-                current_command,
-                src=0,
-                device=torch.device("cpu"),
-            )
-            # Now all the ranks have their command broadcasted.
-            dist.barrier()
+        current_command = dist_utils.broadcast_object_cpu(current_command)
 
-        current_command = current_command[0]
         if current_command is not None:
             # this means we have a command to process, process the command
             command_type = current_command.command_type
@@ -521,12 +488,13 @@ class vLLMRolloutWorker(RolloutWorkerBase):
     @torch.no_grad()
     def rollout_procedure(self):
         while not self.shutdown_background_task_event.is_set():
-            self.request_new_prompts()
             self.consume_command()
             if not self.weight_synced_event.is_set():
                 continue
-            if self._prompt_queue.empty() or COSMOS_WEIGHT_SYNC_CHECK:
-                if self.prompt_end_event.is_set() or COSMOS_WEIGHT_SYNC_CHECK:
+            self.request_new_prompts()
+
+            if self._prompt_queue.empty():
+                if self.prompt_end_event.is_set():
                     # if we have no prompt and the prompt end event is set, we can stop the worker.
                     logger.info(
                         f"[Rollout] Receive prompt end event, exiting for {self.replica_name}."
@@ -537,8 +505,8 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                     ):
                         response = RolloutRequest(
                             src_replica_name=self.replica_name,
-                            prompt_idx=-1,
-                            prompt="",
+                            prompt_idxs=[],
+                            prompt_strs=[],
                             completions=[],
                             extra_info={
                                 "is_end": True,
@@ -548,9 +516,13 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                             logger.info(
                                 f"[Rollout] Posting prompt end event to controller: {response}"
                             )
-                            requests.post(
-                                f"{self.remote_host}/api/rollout",
-                                json=response.model_dump(),
+                            util.make_request_with_retry(
+                                partial(
+                                    requests.post,
+                                    json=response.model_dump(),
+                                ),
+                                self.get_alternative_urls("api/rollout"),
+                                max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                             )
                         except Exception as e:
                             logger.error(
@@ -577,17 +549,19 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                         prompt_strs=prompt_strs,
                         completions=completions,
                     )
-
                     try:
-                        requests.post(
-                            f"{self.remote_host}/api/rollout",
-                            json=response.model_dump(),
+                        util.make_request_with_retry(
+                            partial(
+                                requests.post,
+                                json=response.model_dump(),
+                            ),
+                            self.get_alternative_urls("api/rollout"),
+                            max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                         )
                     except Exception as e:
                         logger.error(
                             f"[Rollout] Failed in post rollout completion to controller: {str(e)}"
                         )
-        self.weight_sync_stream.synchronize()
 
     def _background_task(self):
         # only rank 0 in reploca will have this background task

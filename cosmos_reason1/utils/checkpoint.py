@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import boto3
 import os
 import json
 import heapq
@@ -24,6 +25,29 @@ import concurrent.futures as futures
 from dataclasses import asdict
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.policy.config import Config as CosmosConfig
+
+
+def upload_folder_to_s3(
+    local_folder: str,
+    bucket_name: str,
+    s3_folder: str,
+    aws_access_key_id: str = None,
+    aws_secret_access_key: str = None,
+):
+    s3_client = boto3.client(
+        "s3",
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )
+    for root, _, files in os.walk(local_folder):
+        for file in files:
+            local_file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(local_file_path, local_folder)
+            s3_file_path = os.path.join(s3_folder, relative_path)
+            s3_client.upload_file(local_file_path, bucket_name, s3_file_path)
+            logger.info(
+                f"Uploaded {local_file_path} to s3://{bucket_name}/{s3_file_path}"
+            )
 
 
 class CheckpointMananger:
@@ -77,6 +101,30 @@ class CheckpointMananger:
         step: int,
         **kwargs,
     ):
+        """
+        Save the model, optimizer, scheduler state dicts and extra info to disk.
+        Also upload the checkpoint to S3 if configured.
+        Args:
+            model (torch.nn.Module): The model to save.
+            optimizer (torch.optim.Optimizer): The optimizer to save.
+            scheduler (torch.optim.lr_scheduler._LRScheduler): The scheduler to save.
+            step (int): The current training step.
+            **kwargs: Additional information to save, e.g., is_final.
+        """
+
+        def _save_upload(state_dict, path, is_final=False):
+            torch.save(state_dict, path)
+            if self.config.train.ckpt.upload_s3:
+                if (self.config.train.ckpt.upload_s3 == "final" and is_final) or (
+                    self.config.train.ckpt.upload_s3 == "all"
+                ):
+                    upload_folder_to_s3(
+                        local_folder=os.path.dirname(path),
+                        bucket_name=self.config.train.ckpt.s3_bucket,
+                        s3_folder=self.config.train.ckpt.s3_prefix,
+                    )
+
+        is_final = kwargs.get("is_final", False)
         cur_step_ckpt_dir = os.path.join(self.ckpt_output_dir, f"step_{step}", "policy")
         os.makedirs(cur_step_ckpt_dir, exist_ok=True)
 
@@ -123,28 +171,39 @@ class CheckpointMananger:
 
             # save the state dicts to disk
             self.pre_save_futures.append(
-                self.executor.submit(torch.save, model_state_dict_cpu, model_ckpt_path)
-            )
-            self.pre_save_futures.append(
                 self.executor.submit(
-                    torch.save, optimizer_state_dict_cpu, optimizer_ckpt_path
+                    _save_upload, model_state_dict_cpu, model_ckpt_path, is_final
                 )
             )
             self.pre_save_futures.append(
                 self.executor.submit(
-                    torch.save, scheduler_state_dict_cpu, scheduler_ckpt_path
+                    _save_upload,
+                    optimizer_state_dict_cpu,
+                    optimizer_ckpt_path,
+                    is_final,
                 )
             )
             self.pre_save_futures.append(
                 self.executor.submit(
-                    torch.save, extra_info_state_dict_cpu, extra_info_ckpt_path
+                    _save_upload,
+                    scheduler_state_dict_cpu,
+                    scheduler_ckpt_path,
+                    is_final,
+                )
+            )
+            self.pre_save_futures.append(
+                self.executor.submit(
+                    _save_upload,
+                    extra_info_state_dict_cpu,
+                    extra_info_ckpt_path,
+                    is_final,
                 )
             )
         else:  # sync
-            torch.save(model.state_dict(), model_ckpt_path)
-            torch.save(optimizer.state_dict(), optimizer_ckpt_path)
-            torch.save(scheduler.state_dict(), scheduler_ckpt_path)
-            torch.save(extra_info, extra_info_ckpt_path)
+            _save_upload(model.state_dict(), model_ckpt_path, is_final)
+            _save_upload(optimizer.state_dict(), optimizer_ckpt_path, is_final)
+            _save_upload(scheduler.state_dict(), scheduler_ckpt_path, is_final)
+            _save_upload(extra_info, extra_info_ckpt_path, is_final)
 
         logger.info(
             f"[Policy] Step: {step}, checkpoint saved successfully at {cur_step_ckpt_dir}."
@@ -236,14 +295,15 @@ class SaveManager:
                     best_ckpt_dir = os.path.join(
                         self.config.train.output_dir, "checkpoints", "best"
                     )
-                    best_safetensors_dir = os.path.join(
-                        self.config.train.output_dir, "safetensors", "best"
-                    )
                     if os.path.islink(best_ckpt_dir):
                         os.unlink(best_ckpt_dir)
                     os.symlink(f"step_{step}", best_ckpt_dir)
                     logger.info(f"Best checkpoint updated to step_{step}")
-                    if os.path.islink(best_safetensors_dir):
-                        os.unlink(best_safetensors_dir)
-                    os.symlink(f"step_{step}", best_safetensors_dir)
-                    logger.info(f"Best safetensors updated to step_{step}")
+                    if self.config.train.ckpt.export_safetensors:
+                        best_safetensors_dir = os.path.join(
+                            self.config.train.output_dir, "safetensors", "best"
+                        )
+                        if os.path.islink(best_safetensors_dir):
+                            os.unlink(best_safetensors_dir)
+                        os.symlink(f"step_{step}", best_safetensors_dir)
+                        logger.info(f"Best safetensors updated to step_{step}")

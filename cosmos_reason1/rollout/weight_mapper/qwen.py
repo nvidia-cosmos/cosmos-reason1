@@ -27,6 +27,7 @@ from cosmos_reason1.utils.parallelism_registry import (
     get_policy_parallelism_strategy,
     get_rollout_parallelism_strategy,
 )
+import cosmos_reason1.utils.util as util
 
 
 @register_class("qwen2")
@@ -35,7 +36,7 @@ class QwenWeightMapper(WeightMapper):
     def __init__(self, hf_config_path: str):
         self.prefix_str = "model."
         self.tp_size = 2
-        self.qwen_config = AutoConfig.from_pretrained(hf_config_path)
+        self.qwen_config = util.retry(AutoConfig.from_pretrained)(hf_config_path)
         assert (
             "qwen" in type(self.qwen_config).__name__.lower()
         ), f"qwen_config is not a QwenConfig: {type(self.qwen_config).__name__}"

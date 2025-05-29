@@ -21,10 +21,11 @@ from dataclasses import dataclass, field
 from typing import Tuple, List, Optional, Callable, Union
 from transformers import AutoConfig
 from cosmos_reason1.utils.util import (
-    read_json_file,
     resolve_model_path,
     IdentityLayer,
     clear_weight_name,
+    sync_model_vocab,
+    retry,
 )
 from safetensors import safe_open
 from cosmos_reason1.policy.model.base import BaseModel
@@ -33,7 +34,7 @@ from cosmos_reason1.policy.model.gpt.weight_converter import convert_weight_from
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
-from functools import cached_property, partial
+from functools import cached_property
 
 
 class RMSNorm(nn.Module):
@@ -528,7 +529,7 @@ class GPT(nn.Module, BaseModel):
             info_inly (bool): Only collect the tensor infomation without actual data loading.
         """
         # Load all safetensors from `model_path`
-        model_type = AutoConfig.from_pretrained(model_name_or_path).model_type
+        model_type = retry(AutoConfig.from_pretrained)(model_name_or_path).model_type
         model_path = resolve_model_path(model_name_or_path)
         safetensors_files = [
             f for f in os.listdir(model_path) if f.endswith(".safetensors")
@@ -642,30 +643,37 @@ class GPT(nn.Module, BaseModel):
     def get_nparams_and_flops(self, seq_len: int) -> tuple[int, int]:
         return self._get_nparams_and_flops_fn(seq_len)
 
+    def weight_sync_transform_by_key_internal(
+        self,
+        dest_name: str,
+        self_state_dict,
+    ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
+        if dest_name.startswith("model."):
+            dest_name = dest_name[len("model.") :]
+        assert dest_name in self_state_dict, f"Unsupported weight: {dest_name}"
+        target_tensor = self_state_dict[dest_name]
+        is_dist_tensor = isinstance(target_tensor, torch.distributed.tensor.DTensor)
+        local_view = target_tensor.to_local() if is_dist_tensor else target_tensor
+        return local_view
+
     def weight_sync_transform_by_key(
         self, dest_name: str
     ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
         self_state_dict = self.state_dict()
         self_state_dict = {clear_weight_name(k): v for k, v in self_state_dict.items()}
-        if dest_name.startswith("model."):
-            dest_name = dest_name[len("model.") :]
-        assert dest_name in self_state_dict, f"Unsupported weight: {dest_name}"
-        import weakref
+        return self.weight_sync_transform_by_key_internal(dest_name, self_state_dict)
 
-        weak_self = weakref.ref(self)
-
-        def policy_to_rollout_weight_transform(
-            dest_name: str, weak_self: weakref.ref
-        ) -> torch.Tensor:
-            target_tensor = weak_self().state_dict()[dest_name]
-            is_dist_tensor = isinstance(target_tensor, torch.distributed.tensor.DTensor)
-            local_view = target_tensor.to_local() if is_dist_tensor else target_tensor
-            return local_view
-
-        # return the tensor directly rather than a callable since no real transform needed.
-        return partial(
-            policy_to_rollout_weight_transform, dest_name=dest_name, weak_self=weak_self
-        )()
+    @cached_property
+    def weight_sync_transforms(self) -> List[Tuple[str, Tuple[int], torch.Tensor]]:
+        self_state_dict = self.state_dict()
+        self_state_dict = {clear_weight_name(k): v for k, v in self_state_dict.items()}
+        transforms = []
+        for dest_name, shape in self.sorted_params:
+            local_view = self.weight_sync_transform_by_key_internal(
+                dest_name, self_state_dict
+            )
+            transforms.append((dest_name, shape, local_view))
+        return transforms
 
     @classmethod
     def from_model_args(cls, model_args: GPTArgs) -> "GPT":
@@ -683,7 +691,10 @@ class GPT(nn.Module, BaseModel):
 
     @classmethod
     def from_pretrained(
-        cls, model_name_or_path: str, max_position_embeddings: Optional[int] = None
+        cls,
+        hf_config: AutoConfig,
+        model_name_or_path: str,
+        max_position_embeddings: Optional[int] = None,
     ) -> "GPT":
         """
         Initialize a GPT model from a pretrained model.
@@ -695,38 +706,13 @@ class GPT(nn.Module, BaseModel):
             GPT: GPT model.
 
         """
-        hf_config = AutoConfig.from_pretrained(model_name_or_path)
         if hf_config.model_type not in cls.supported_model_types():
             raise ValueError(f"Unsupported model type: {hf_config.model_type}")
 
         if max_position_embeddings is None:
             max_position_embeddings = hf_config.max_position_embeddings
 
-        # Fetch vocab size from `lm_head`
-        # Read `model.safetensors.index.json` to get the `lm_head` layer
-        model_path = resolve_model_path(model_name_or_path)
-        weight_map = read_json_file(
-            os.path.join(model_path, "model.safetensors.index.json")
-        )["weight_map"]
-        if "lm_head.weight" in weight_map:
-            lm_head = weight_map["lm_head.weight"]
-            with safe_open(
-                os.path.join(model_path, lm_head), framework="pt", device="cpu"
-            ) as f:
-                tensor_slice = f.get_slice("lm_head.weight")
-                vocab_size, _ = tensor_slice.get_shape()
-        elif "model.embed_tokens.weight" in weight_map:
-            embed_tokens = weight_map["model.embed_tokens.weight"]
-            with safe_open(
-                os.path.join(model_path, embed_tokens), framework="pt", device="cpu"
-            ) as f:
-                tensor_slice = f.get_slice("model.embed_tokens.weight")
-                vocab_size, _ = tensor_slice.get_shape()
-        else:
-            raise ValueError(
-                "Could not find `lm_head` or `model.embed_tokens.weight` in the model."
-            )
-        logger.info(f"Vocabulary size: {vocab_size}")
+        vocab_size = sync_model_vocab(model_name_or_path)
 
         rope_scaling = {}
         if hasattr(hf_config, "rope_scaling"):

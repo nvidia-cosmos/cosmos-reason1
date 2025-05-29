@@ -12,9 +12,9 @@ Overall, cosmos_reason1 can support SFT/RL training with a broad range of models
 | `cosmos-reason1-7b-tp2-sft.toml`                    | 2         | 1           | 1         | -          | -          | 2                            | SFT     |
 | `cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml` | 2         | 1           | 1         | 2          | 1          | 2 for policy,  2 for rollout | GRPO    |
 
-SFT training requires using a minimum of 2 GPUs, and RL training requires at least 4 GPUs. Depending on the size of the model you are going to train, for 7B (or larger size) models, GPUs with 80GB of memory are required. For 3B (or smaller size) models, GPUs with >=32GB memory are required.
+SFT training requires using a **minimum of 2** GPUs, and RL training requires **at least 4** GPUs. Depending on the size of the model you are going to train, for **7B (or larger size)** models, GPUs with **80GB** of memory are required. For **3B (or smaller size)** models, GPUs with **>=32GB** memory are required.
 
-You can customize your own training config based on the above recipes. For example, you can change the `epoch` and `train_batch_per_replica` to adjust the epochs number and batch size, and `save_freq` to adjust the checkpoint saving interval.
+You can customize your own training config based on the above recipes. For example, you can change the `epoch` and `train_batch_per_replica` to adjust the epochs number and batch size, and `save_freq` to adjust the checkpoint saving interval. To reduce the storage usage, you can reduce the number of `max_keep` in checkpoint config, which limits the number of saved checkpoint. Regularly delete intermediate checkpoints and tar archives not needed for recovery.
 
 For the evaluation or inference, single GPU with at least 24GB memory is sufficient to run the `nvidia/Cosmos-Reason1-7B` model.
 
@@ -77,9 +77,41 @@ To get access to Cosmos-SFT/RL datasets, you can add your HF_TOKEN to the enviro
 export HF_TOKEN=${HF_TOKEN}
 ```
 
+### 📝 Checkpoints Management
+We support various types of checkpoints, e.g. basic checkpoints for training resume, huggingface safetensors for convient usage. We also support upload our checkpoints to huggingface and s3.
+
+If you want to upload to huggingface, make sure your HF_TOKEN mentioned above have the **write access**.
+
+If you want to upload to s3, you need to add the following variables to your environment:
+```bash
+export AWS_ACCESS_KEY_ID='your-access-key'
+export AWS_SECRET_ACCESS_KEY='your-secret-key'
+export AWS_DEFAULT_REGION='your-s3-region'
+```
+
+Then you can configure the checkpoint settings in the toml file as follows:
+```toml
+[train.ckpt]
+## Basic checkpoint
+enable_checkpoint = true # Enable checkpointing for training. If set to False, no checkpoint will be saved.
+save_freq = 100 # Checkpoint save frequency for training steps
+max_keep = 2 # Maximum number of checkpoints to keep. If set to -1, all checkpoints will be kept.
+save_mode = "async" # Checkpoint save mode for training steps, `async` is recommended
+
+## Huggingface safetensors
+export_safetensors = true # Whether to export a safetensors weight for huggingface usage, include related config files.
+upload_hf = true # Whather to upload the final safetensors weight to huggingface.
+hf_repo_name = "Cosmos-Reason1" # The huggingface repo name to upload the safetensors weight.
+
+## S3
+upload_s3 = true # Whether to upload the checkpoint and safetensors to S3. Default to False, set `final` will upload the final checkpoint, `all` will upload all checkpoints.
+s3_bucket = 'your-s3-bucket' # The S3 bucket name to upload the checkpoint and safetensors weight.
+s3_prefix = 'outputs' # The S3 prefix to upload the checkpoint and safetensors weight.
+```
+
 ## 📘 Training Scripts
 
-> **_NOTE:_**  Following the below training steps will trigger downloading around 50GB of model and dataset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
+> **_NOTE:_**  Following the below training steps will trigger downloading around 200GB of model and dataset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
 
 
 ### 🧠 Supervised Fine-Tuning (SFT)
@@ -147,6 +179,32 @@ python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-p-f
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 
+### Customized Reward Function
+
+1. Register a new reward function with signature `(to_be_evaluated: str, reference: Union[str, None], *args, **kwargs) -> float`.
+```python
+from cosmos_reason1.dispatcher.algo.reward import register_reward_fn
+
+def custom_reward_fn(to_be_evaluated: str, reference: Union[str, None], *args, **kwargs) -> float:
+    ...
+
+register_reward_fn("your_reward_fn_name", custom_reward_fn, override_toml=True)
+```
+
+if `override_toml` is set to `True`, the reward function will be registered and used no matter what is specified in the toml file.
+
+2. (Optional) If `override_toml` is set to `False`, make sure to specify the reward function manually in the toml file:
+```toml
+[train.train_policy]
+reward_fn = ["custom_reward_fn1", "custom_reward_fn2"...]
+```
+
+3. Specify customized controller launcher so that your registration get executed before controller launch.
+  `export COSMOS_CONTROLLER_LAUNCHER=PATH_TO_LAUNCHER` 
+
+Check [custom_reward_launcher.py](../tools/examples/custom_reward_launcher.py) for detail.
+
+
 ## 🚀 Inference
 You may refer to the `inference.py` code snippet adopted from the [Qwen2.5-VL repo](https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md#inference-locally) to run inference with the Cosmos-Reason1 model.
 
@@ -187,7 +245,7 @@ python tools/eval/download_hf_data.py \
 
 ### 🛠️ Step 2: (Optional) Download Remaining Video Clips
 
-Follow the instructions in [DataDownload.md](DataDownload.md) to manually download and preprocess the AgiBot, BridgeV2, and HoloAssist datasets for evaluation.
+Follow the instructions in [RawDataDownload.md](RawDataDownload.md) to manually download and preprocess the AgiBot, BridgeV2, and HoloAssist datasets for evaluation.
 
 ### 🚀 Step 3: Run Evaluation on Benchmarks
 

@@ -38,6 +38,8 @@ class CMakeBuild(build_ext):
             self.build_extension(ext)
 
     def build_extension(self, ext):
+        # Pip install the `constraints.txt` as a workaround inside setuptools
+        subprocess.check_call(['pip', 'install', '-r', 'constraints.txt'])
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
         cmake_args = [
             '-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=' + extdir,
@@ -49,9 +51,6 @@ class CMakeBuild(build_ext):
             os.makedirs(self.build_temp)
         subprocess.check_call(['cmake', ext.sourcedir] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.'], cwd=self.build_temp)
-        # Copy the built module to the current directory with appropriate cwd
-        # Switch to the build_temp directory
-        os.chdir(self.build_temp)
 
 with open(os.path.join(os.path.dirname(__file__), "requirements.txt")) as f:
     requirements = f.read().splitlines()

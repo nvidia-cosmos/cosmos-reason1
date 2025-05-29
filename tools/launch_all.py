@@ -18,12 +18,15 @@
 import socket
 import subprocess
 import sys
+import logging
 import time
 import os
+import re
 import argparse
-from typing import List, Dict, Optional, Any
-from cosmos_reason1.utils.logging import logger
+from typing import List, Dict, Optional, Any, Callable
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("cosmos")
 
 COSMOS_REASON1_DIR = "/workspace/cosmos_reason1"
 TOOLS_RELATIVE_DIR = "tools"
@@ -202,22 +205,22 @@ def parse_args():
         help="Total number of rollout replicas to launch in the whole system. If not provided, the number of rollout replicas will be obtained from TOML configuration file.",
     )
     parser.add_argument(
+        "--p2r-ratio",
+        type=str,
+        default=None,
+        help="Ratio of policy replicas to rollout replicas. This is used to determine the number of rollout replicas and the number of policy replicas based on the number of workers.",
+    )
+
+    parser.add_argument(
         "--log-dir",
         type=str,
         default=None,
         help="Directory to save logs. If not provided, logs will be printed to stdout.",
     )
     parser.add_argument(
-        "-wc",
-        "--weight-sync-check",
-        action="store_true",
-        default=False,
-        help="Whether to do weight sync correctness check between policy and rollout for debugging.",
-    )
-    parser.add_argument(
         "--num-workers",
         type=int,
-        default=1,
+        default=None,
         help="Number of workers to use for the job, default is 1. This is used when multi-node training are used for the job.",
     )
     parser.add_argument(
@@ -228,10 +231,31 @@ def parse_args():
     )
 
     parser.add_argument(
+        "--node-ip-list",
+        type=str,
+        default=None,
+        help="list of ips for all the workers, separated by ';'. This is used when multi-node training are used for one replica.",
+    )
+
+    parser.add_argument(
+        "--rdzv-port",
+        type=int,
+        default=29345,
+        help="Rendezvous endpoint port for the job, default is 29345. This is used when multi-node training are used for one replica.", 
+    )
+
+    parser.add_argument(
         "--lepton-mode",
         action="store_true",
         default=False,
         help="Enable Lepton mode for remote execution",
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="Enable log level to debug",
     )
 
     # Lepton specific options
@@ -357,21 +381,264 @@ def get_local_ip():
 
         hostname = socket.gethostname()
         local_ip = socket.gethostbyname(hostname)
-        return local_ip
+        return [local_ip, hostname]
     except Exception as e:
         logger.error(f"Error getting local IP address: {e}")
         return None
 
+def replica_placement(
+    available_gpus: List[int],
+    n_policy: int,
+    n_rollouts: int,
+    min_n_gpus_policy: int,
+    min_n_gpus_rollout: int,
+    replica_script: str,
+    control_url: str,
+    output_dir: Optional[str],
+    get_worker_ip: Optional[Callable] = None,
+    rdzv_port: Optional[int] = None,
+) -> List[List[str]]:
+    commands = []
+    gpu_devices = []
+    control_urls = []
+    output_files = []
+    assert len(available_gpus) in [1, 2, 4, 8], "Number of GPUs per worker must be 1, 2, 4, or 8"
+    # Prepare the command to launch the controller for all workers
+    global_available_gpus = [available_gpus]
+    # Create commands for policy and rollout replicas
+    gpu_idx = 0
+    global_worker_idx = 0
+    global_launch_settings = []
+
+    # Assign launch settings for each worker
+    for i in range(n_policy):
+        if min_n_gpus_policy > len(global_available_gpus[global_worker_idx]):
+            assert min_n_gpus_policy % len(
+                global_available_gpus[global_worker_idx]
+            ) == 0, f"min_n_gpus_policy {min_n_gpus_policy} is not divisible by {len(global_available_gpus[global_worker_idx])}"
+            nodes_needed = min_n_gpus_policy // len(
+                global_available_gpus[global_worker_idx]
+            )
+            rdzv_ip = "localhost"
+            for node_in_replica in range(nodes_needed):
+                gpu_devices.append(
+                    ",".join(
+                        [
+                            str(g)
+                            for g in global_available_gpus[global_worker_idx]
+                        ]
+                    )
+                )
+                commands.append(f"{replica_script} --type policy --ngpus {len(global_available_gpus[global_worker_idx])} --nnodes {nodes_needed}")
+                if node_in_replica == 0:
+                    commands[-1] += f" --rdzv-endpoint {rdzv_ip}:{rdzv_port}"
+                    if get_worker_ip is not None:
+                        rdzv_ip = get_worker_ip(global_worker_idx)
+                else:
+                    commands[-1] += f" --rdzv-endpoint {rdzv_ip}:{rdzv_port}"
+
+                control_urls.append(control_url)
+                output_files.append(
+                    os.path.join(output_dir, f"policy_{i}.log")
+                    if output_dir is not None
+                    else None
+                )
+                global_launch_settings.append(
+                    [commands, gpu_devices, control_urls, output_files]
+                )
+                commands = []
+                gpu_devices = []
+                control_urls = []
+                output_files = []
+                global_worker_idx += 1
+                global_available_gpus.append(
+                    available_gpus)
+        else:
+            if gpu_idx + min_n_gpus_policy > len(global_available_gpus[global_worker_idx]):
+                global_launch_settings.append(
+                    [commands, gpu_devices, control_urls, output_files]
+                )
+                commands = []
+                gpu_devices = []
+                control_urls = []
+                output_files = []
+                gpu_idx = 0
+                global_worker_idx += 1
+                global_available_gpus.append(
+                    available_gpus
+                )
+
+            gpu_devices.append(
+                ",".join(
+                    [
+                        str(g)
+                        for g in global_available_gpus[global_worker_idx][
+                            gpu_idx : gpu_idx + min_n_gpus_policy
+                        ]
+                    ]
+                )
+            )
+            commands.append(f"{replica_script} --type policy --ngpus {min_n_gpus_policy}")
+            control_urls.append(control_url)
+            output_files.append(
+                os.path.join(output_dir, f"policy_{i}.log")
+                if output_dir is not None
+                else None
+            )
+            gpu_idx += min_n_gpus_policy
+
+    for i in range(n_rollouts):
+        if min_n_gpus_rollout > len(global_available_gpus[global_worker_idx]):
+            assert min_n_gpus_rollout % len(
+                global_available_gpus[global_worker_idx]
+            ) == 0, f"min_n_gpus_rollout {min_n_gpus_rollout} is not divisible by {len(global_available_gpus[global_worker_idx])}"
+            nodes_needed = min_n_gpus_rollout // len(
+                global_available_gpus[global_worker_idx]
+            )
+            rdzv_ip = "localhost"
+            for node_in_replica in range(nodes_needed):
+                gpu_devices.append(
+                    ",".join(
+                        [
+                            str(g)
+                            for g in global_available_gpus[global_worker_idx]
+                        ]
+                    )
+                )
+                commands.append(f"{replica_script} --type rollout --ngpus {len(global_available_gpus[global_worker_idx])} --nnodes {nodes_needed}")
+                if node_in_replica == 0:
+                    commands[-1] += f" --rdzv-endpoint {rdzv_ip}:{rdzv_port}"
+                    if get_worker_ip is not None:
+                        rdzv_ip = get_worker_ip(global_worker_idx)
+                else:
+                    commands[-1] += f" --rdzv-endpoint {rdzv_ip}:{rdzv_port}"
+                
+                control_urls.append(control_url)
+                output_files.append(
+                    os.path.join(output_dir, f"rollout_{i}.log")
+                    if output_dir is not None
+                    else None
+                )
+                global_launch_settings.append(
+                    [commands, gpu_devices, control_urls, output_files]
+                )
+                commands = []
+                gpu_devices = []
+                control_urls = []
+                output_files = []
+                global_worker_idx += 1
+                global_available_gpus.append(
+                    available_gpus
+                )
+        else:
+            if gpu_idx + min_n_gpus_rollout > len(global_available_gpus[global_worker_idx]):
+                global_launch_settings.append(
+                    [commands, gpu_devices, control_urls, output_files]
+                )
+                commands = []
+                gpu_devices = []
+                control_urls = []
+                output_files = []
+                gpu_idx = 0
+                global_worker_idx += 1
+                global_available_gpus.append(
+                    available_gpus
+                )
+
+            gpu_devices.append(
+                ",".join(
+                    [str(g) for g in available_gpus[gpu_idx : gpu_idx + min_n_gpus_rollout]]
+                )
+            )
+            commands.append(f"{replica_script} --type rollout --ngpus {min_n_gpus_rollout}")
+            control_urls.append(control_url)
+            output_files.append(
+                os.path.join(output_dir, f"rollout_{i}.log")
+                if output_dir is not None
+                else None
+            )
+            gpu_idx += min_n_gpus_rollout
+
+    if len(commands) > 0:
+        global_launch_settings.append(
+            [commands, gpu_devices, control_urls, output_files]
+        )
+    return global_launch_settings
+
 
 def main():
     args, parser = parse_args()
-    if args.weight_sync_check:
-        # This launch is only for weight sync correctness check
-        os.environ["COSMOS_WEIGHT_SYNC_CHECK"] = "true"
+    if args.debug:
+        os.environ["COSMOS_LOG_LEVEL"] = "DEBUG"
+
+    # Check if the config file is provided
+    cosmos_config = read_config(args.config)
+    # Get the number of GPUs required for policy and rollout
+    # and the number of replicas for each
+    policy_parallelism = cosmos_config.get("policy", {}).get("parallelism", {})
+    rollout_parallelism = cosmos_config.get("rollout", {}).get("parallelism", {})
+    # Calculate the minimum number of GPUs required for policy and rollout
+    # based on the parallelism settings in the configuration
+    # Treat dp_shard_size as 1 if it is not set
+    min_n_gpus_policy = (
+        policy_parallelism.get("tp_size", 1)
+        * policy_parallelism.get("dp_replicate_size", 1)
+        * policy_parallelism.get("pp_size", 1)
+        * policy_parallelism.get("cp_size", 1)
+    )
+    min_n_gpus_rollout = (
+        rollout_parallelism.get("tp_size", 1)
+        * rollout_parallelism.get("dp_replicate_size", 1)
+        * rollout_parallelism.get("pp_size", 1)
+        * rollout_parallelism.get("cp_size", 1)
+    )
+    if policy_parallelism.get("dp_shard_size", 1) >= 1:
+        min_n_gpus_policy = (
+            min_n_gpus_policy * policy_parallelism.get("dp_shard_size", 1)
+        )
+    if rollout_parallelism.get("dp_shard_size", 1) >= 1:
+        min_n_gpus_rollout = (
+            min_n_gpus_rollout * rollout_parallelism.get("dp_shard_size", 1)
+        )
+    if args.p2r_ratio is not None:
+        assert args.num_workers is not None, "When using --p2r-ratio, --num-workers must be specified"
+        p2r_ratio = args.p2r_ratio.split(":")
+        assert len(p2r_ratio) == 2, "Invalid --p2r-ratio format. Use 'policy:rollout' format."
+        p_ratio = int(p2r_ratio[0])
+        r_ratio = int(p2r_ratio[1])
+
+        if args.lepton_mode:
+            match = re.search(r'(8|4|2)x', args.lepton_resource_shape)
+            if match:
+                num_gpus_per_node = int(match.group(1))
+            else:
+                num_gpus_per_node = 1
+        else:
+            num_gpus_per_node = len(get_available_gpus())
+
+        num_per_ratio = args.num_workers * num_gpus_per_node / (p_ratio * min_n_gpus_policy + r_ratio * min_n_gpus_rollout)
+        args.policy = int(num_per_ratio * p_ratio)
+        args.rollout = int(num_per_ratio * r_ratio)
+        assert args.policy >= 1, "Number of policy replicas must be at least 1"
+        assert args.policy * min_n_gpus_policy + args.rollout * min_n_gpus_rollout <= args.num_workers * num_gpus_per_node
+
+
+    if args.policy is None:
+        n_policy = policy_parallelism.get("n_init_replicas", 1)
+    else:
+        n_policy = args.policy
+    if args.rollout is None:
+        n_rollouts = rollout_parallelism.get("n_init_replicas", 1)
+    else:
+        n_rollouts = args.rollout
+
+    # If the training type is SFT, set n_rollouts to 0
+    if cosmos_config.get("train", {}).get("train_policy", {}).get("type", "grpo") == "sft":
+        n_rollouts = 0
 
     # Handle Lepton mode
     if args.lepton_mode:
-        from leptonai.api.v1.client import APIClient
+        from leptonai.api.v2.client import APIClient
         from leptonai.config import BASE_IMAGE, VALID_SHAPES
         from leptonai.api.v1.types.job import (
             LeptonJob,
@@ -399,7 +666,16 @@ def main():
         job_spec = LeptonJobUserSpec()
 
         # Construct the original launch_processes command
-        launch_cmd = f"cd {COSMOS_REASON1_DIR} && python {TOOLS_RELATIVE_DIR}/launch_all.py"
+        with open(args.config, "r") as f:
+            config_content = f.read()
+        launch_cmd = f"""\
+cd {COSMOS_REASON1_DIR}
+
+cat >config.toml <<EOF
+{config_content}
+EOF
+
+python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
 
         # Get all non-Lepton arguments
         non_lepton_args = []
@@ -413,6 +689,7 @@ def main():
                         for opt in action.option_strings
                     )
                     or action.dest == "worker_idx"
+                    or action.dest == "config"
                 ):  # skip worker-idx
                     continue
 
@@ -469,10 +746,34 @@ def main():
             )
             sys.exit(1)
 
+        # Only for calculating the number of nodes needed.
+        # Use this to replace the args.num_workers to calculate the number of nodes needed rather than specifying it using --num-workers
+        # example
+
+        match = re.search(r'(8|4|2)x', args.lepton_resource_shape)
+        if match:
+            num_gpus_per_node = int(match.group(1))
+        else:
+            num_gpus_per_node = 1
+        global_launch_settings = replica_placement(
+            list(range(num_gpus_per_node)),
+            n_policy,
+            n_rollouts,
+            min_n_gpus_policy,
+            min_n_gpus_rollout,
+            "",
+            "",
+            None
+        )
+        if args.num_workers is not None:
+            assert args.num_workers >= len(global_launch_settings)
+        num_workers = len(global_launch_settings)
+        logger.info(f"Number of workers required: {num_workers}")
+
         # Handle workers and communication
-        if args.num_workers:
-            job_spec.completions = args.num_workers
-            job_spec.parallelism = args.num_workers
+        if num_workers > 0:
+            job_spec.completions = num_workers
+            job_spec.parallelism = num_workers
             job_spec.intra_job_communication = True
         elif args.lepton_intra_job_communication is not None:
             job_spec.intra_job_communication = args.lepton_intra_job_communication
@@ -551,62 +852,16 @@ def main():
 
         return
 
-    from cosmos_reason1.policy.config import Config as PolicyConfig
     import cosmos_reason1.utils.util as util
 
-    # Check if the config file is provided
-    cosmos_config = PolicyConfig.from_dict(read_config(args.config))
-    # Get the number of GPUs required for policy and rollout
-    # and the number of replicas for each
-    if args.policy is None:
-        n_policy = cosmos_config.policy.parallelism.n_init_replicas
-    else:
-        n_policy = args.policy
-    if args.rollout is None:
-        n_rollouts = cosmos_config.rollout.parallelism.n_init_replicas
-    else:
-        n_rollouts = args.rollout
-
-    # If the training type is SFT, set n_rollouts to 0
-    if cosmos_config.train.train_policy.type == "sft":
-        n_rollouts = 0
-
-    logger.info(f"Number of policy replicas: {n_policy}")
-    logger.info(f"Number of rollout replicas: {n_rollouts}")
-    # Calculate the minimum number of GPUs required for policy and rollout
-    # based on the parallelism settings in the configuration
-    # Treat dp_shard_size as 1 if it is not set
-    min_n_gpus_policy = (
-        cosmos_config.policy.parallelism.tp_size
-        * cosmos_config.policy.parallelism.dp_replicate_size
-        * cosmos_config.policy.parallelism.pp_size
-        * cosmos_config.policy.parallelism.cp_size
-    )
-    min_n_gpus_rollout = (
-        cosmos_config.rollout.parallelism.tp_size
-        * cosmos_config.rollout.parallelism.dp_replicate_size
-        * cosmos_config.rollout.parallelism.pp_size
-        * cosmos_config.rollout.parallelism.cp_size
-    )
-    if cosmos_config.policy.parallelism.dp_shard_size >= 1:
-        min_n_gpus_policy = (
-            min_n_gpus_policy * cosmos_config.policy.parallelism.dp_shard_size
-        )
-    if cosmos_config.rollout.parallelism.dp_shard_size >= 1:
-        min_n_gpus_rollout = (
-            min_n_gpus_rollout * cosmos_config.rollout.parallelism.dp_shard_size
-        )
-
-    num_workers = args.num_workers
+    logger.info(f"Number of policy replicas: {n_policy} with {min_n_gpus_policy} gpus each")
+    logger.info(f"Number of rollout replicas: {n_rollouts} with {min_n_gpus_rollout} gpus each")
 
     # Get available GPUs
     available_gpus = get_available_gpus()
-    assert (
-        len(available_gpus) * num_workers
-        >= min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts
-    ), f"Not enough GPUs available. Required: {min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts}, Available: {len(available_gpus)}"
     if not available_gpus:
         raise RuntimeError("No GPUs available. Please check your GPU configuration.")
+
 
     # List of bash scripts to run (these should exist in the same directory)
     script_names = ["launch_controller.sh", "launch_replica.sh"]
@@ -628,10 +883,6 @@ def main():
     replica_script = os.path.join(script_dir, "launch_replica.sh")
 
     # Create commands for controller
-    commands = []
-    gpu_devices = []
-    control_urls = []
-    output_files = []
     if args.log_dir is not None:
         output_dir = args.log_dir
         if not os.path.exists(output_dir):
@@ -646,7 +897,7 @@ def main():
     control_url = None
     if args.url is not None:
         ip, port = args.url.split(":")
-        if ip == get_local_ip():
+        if ip in get_local_ip():
             # If the IP is the local IP, launch the controller on the local machine
             port = util.find_available_port(int(port))
             logger.info(f"Using local IP: {ip} so launching controller on port {port}")
@@ -679,79 +930,68 @@ def main():
         controller_cmd += f" --port {port}"
         control_url = f"localhost:{port}"
     else:
-        if "cosmos" in cosmos_config.train.train_policy.dataset_name.lower():
+        if "cosmos" in cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", "").lower():
             logger.info("Prepare data for Lepton job, please wait...")
-            util.prepare_cosmos_data(config=cosmos_config)
+            from cosmos_reason1.policy.config import Config as PolicyConfig
+            policy_config = PolicyConfig.from_dict(cosmos_config)
+            util.prepare_cosmos_data(config=policy_config)
 
-    # Prepare the command to launch the controller for all workers
-    global_available_gpus = [available_gpus for _ in range(num_workers)]
-    # Create commands for policy and rollout replicas
-    gpu_idx = 0
-    global_worker_idx = 0
-    global_launch_settings = [[] for _ in range(num_workers)]
-
-    # Assign launch settings for each worker
-    for i in range(n_policy):
-        if gpu_idx + min_n_gpus_policy > len(global_available_gpus[global_worker_idx]):
-            global_launch_settings[global_worker_idx].extend(
-                [commands, gpu_devices, control_urls, output_files]
+    def get_lepton_ip(worker_idx: int) -> str:
+        if "LEPTON_JOB_WORKER_INDEX" in os.environ:
+            # For non-primary workers, connect to the primary worker (index 0) using its hostname
+            prefix = os.environ.get(
+                "LEPTON_JOB_SERVICE_PREFIX", os.environ.get("LEPTON_JOB_NAME")
             )
-            commands = []
-            gpu_devices = []
-            control_urls = []
-            output_files = []
-            gpu_idx = 0
-            global_worker_idx += 1
-
-        gpu_devices.append(
-            ",".join(
-                [
-                    str(g)
-                    for g in global_available_gpus[global_worker_idx][
-                        gpu_idx : gpu_idx + min_n_gpus_policy
-                    ]
-                ]
+            subdomain = os.environ.get("LEPTON_SUBDOMAIN", "")
+            hostname = f"{prefix}-{worker_idx}.{subdomain}"
+        else:
+            raise RuntimeError(
+                "Lepton job worker index not found in environment variables"
             )
-        )
-        commands.append(f"{replica_script} --type policy --ngpus {min_n_gpus_policy}")
-        control_urls.append(control_url)
-        output_files.append(
-            os.path.join(output_dir, f"policy_{i}.log")
-            if output_dir is not None
-            else None
-        )
-        gpu_idx += min_n_gpus_policy
+        return hostname
 
-    for i in range(n_rollouts):
-        if gpu_idx + min_n_gpus_rollout > len(global_available_gpus[global_worker_idx]):
-            global_launch_settings[global_worker_idx].extend(
-                [commands, gpu_devices, control_urls, output_files]
-            )
-            commands = []
-            gpu_devices = []
-            control_urls = []
-            output_files = []
-            gpu_idx = 0
-            global_worker_idx += 1
+    def get_ip_from_list(worker_idx: int) -> str:
+        if args.node_ip_list is not None:
+            logger.info(f"Node IP list provided: {args.node_ip_list}")
+            ip_list = args.node_ip_list.split(";")
+            logger.info(f"Node IP list: {ip_list}")
+            if worker_idx < len(ip_list):
+                return ip_list[worker_idx]
+            else:
+                raise RuntimeError(
+                    f"Worker index {worker_idx} exceeds the length of the IP list"
+                )
+        else:
+            raise RuntimeError("Node IP list not provided")
 
-        gpu_devices.append(
-            ",".join(
-                [str(g) for g in available_gpus[gpu_idx : gpu_idx + min_n_gpus_rollout]]
-            )
-        )
-        commands.append(f"{replica_script} --type rollout --ngpus {min_n_gpus_rollout}")
-        control_urls.append(control_url)
-        output_files.append(
-            os.path.join(output_dir, f"rollout_{i}.log")
-            if output_dir is not None
-            else None
-        )
-        gpu_idx += min_n_gpus_rollout
+    def get_worker_ip(worker_idx: int) -> str:
+        if "LEPTON_JOB_WORKER_INDEX" in os.environ:
+            return get_lepton_ip(worker_idx)
+        elif args.node_ip_list is not None:
+            return get_ip_from_list(worker_idx)
+        else:
+            return get_local_ip()[0]
 
-    if len(commands) > 0:
-        global_launch_settings[global_worker_idx].extend(
-            [commands, gpu_devices, control_urls, output_files]
-        )
+    global_launch_settings = replica_placement(
+        available_gpus,
+        n_policy,
+        n_rollouts,
+        min_n_gpus_policy,
+        min_n_gpus_rollout,
+        replica_script,
+        control_url,
+        output_dir,
+        get_worker_ip=get_worker_ip,
+        rdzv_port=args.rdzv_port,
+    )
+
+    num_workers = len(global_launch_settings)
+    logger.info(f"Number of workers required: {num_workers}")
+    assert (
+        len(available_gpus) * num_workers
+        >= min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts
+    ), f"Not enough GPUs available. Required: {min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts}, Available: {len(available_gpus)}"
+
 
     if (
         "LEPTON_JOB_WORKER_INDEX" in os.environ
@@ -761,18 +1001,16 @@ def main():
     else:
         cur_work_idx = args.worker_idx
 
-    if len(global_launch_settings[cur_work_idx]) == 0:
-        logger.info(
-            f"No launch settings found for worker index {cur_work_idx}, no need launch"
-        )
-        sys.exit(0)
-
-    commands = global_launch_settings[cur_work_idx][0]
-    gpu_devices = global_launch_settings[cur_work_idx][1]
-    control_urls = global_launch_settings[cur_work_idx][2]
-    output_files = global_launch_settings[cur_work_idx][3]
+    if len(global_launch_settings) <= cur_work_idx or len(global_launch_settings[cur_work_idx]) == 0:
+        if controller_cmd is None:
+            logger.info(
+                f"No launch settings found for worker index {cur_work_idx}, no need launch"
+            )
+            sys.exit(0)
 
     processes = []
+
+    controller_id = -1
 
     if controller_cmd is not None:
         controller_process = launch_processes(
@@ -781,40 +1019,69 @@ def main():
             [""],
             [os.path.join(output_dir, "controller.log") if output_dir is not None else None],
         )
+        controller_id = len(processes)
         processes.append(controller_process[0])
 
     logger.info(f"Waiting for controller to be ready at {control_url}")
     wait_for_url_ready(control_url)
     logger.info(f"Controller is ready at {control_url}")
 
-    # Combine all commands
-    logger.info(f"Commands to be executed: {commands}")
-    logger.info(f"GPU devices to be used: {gpu_devices}")
-    logger.info(f"Control URLs to be used: {control_urls}")
-    logger.info(f"Output files: {output_files}")
 
-    # Check if the number of GPU devices matches the number of commands
-    assert (
-        len(gpu_devices) == len(commands)
-    ), f"Number of GPU devices ({len(gpu_devices)}) does not match number of commands ({len(commands)})"
+    if len(global_launch_settings) > cur_work_idx and len(global_launch_settings[cur_work_idx]) != 0:
+        commands = global_launch_settings[cur_work_idx][0]
+        gpu_devices = global_launch_settings[cur_work_idx][1]
+        control_urls = global_launch_settings[cur_work_idx][2]
+        output_files = global_launch_settings[cur_work_idx][3]
 
-    # Launch all processes
-    processes.extend(launch_processes(commands, gpu_devices, control_urls, output_files))
+        # Combine all commands
+        logger.info(f"Commands to be executed: {commands}")
+        logger.info(f"GPU devices to be used: {gpu_devices}")
+        logger.info(f"Control URLs to be used: {control_urls}")
+        logger.info(f"Output files: {output_files}")
 
-    # Wait for all processes to complete
-    for i, process in enumerate(processes, 1):
-        try:
-            stdout, stderr = process.communicate()
-            if process.returncode == 0:
-                logger.info(f"Process {i} completed successfully")
-                if stdout is not None:
-                    logger.info(f"Output: {stdout.strip()}")
-            else:
-                logger.info(f"Process {i} failed with return code {process.returncode}")
-                if stderr is not None:
-                    logger.info(f"Error: {stderr.strip()}")
-        except Exception as e:
-            logger.error(f"Error waiting for process {i}: {e}")
+        # Check if the number of GPU devices matches the number of commands
+        assert (
+            len(gpu_devices) == len(commands)
+        ), f"Number of GPU devices ({len(gpu_devices)}) does not match number of commands ({len(commands)})"
+
+        # Launch all processes
+        processes.extend(launch_processes(commands, gpu_devices, control_urls, output_files))
+
+    # Wait for all processes to complete without blocking
+    while len(processes) > 0:
+        for i, process in enumerate(processes):
+            try:
+                # Check if process has finished without blocking
+                if process.poll() is not None:
+                    returncode = process.returncode
+                    if returncode == 0:
+                        logger.info(f"Process {i} completed successfully")
+                    else:
+                        logger.error(f"Process {i} failed with return code {returncode}")
+                        # Terminate all remaining processes
+                        if controller_id == -1 or i == controller_id:
+                            for p in processes:
+                                try:
+                                    p.kill()
+                                except Exception as e:
+                                    logger.error(f"Error kill process {p}: {e}")
+                            logger.error("Terminated all processes due to failure")
+                            sys.exit(1)  # Exit with error code 1 if any process failed
+                    # Remove completed process from list
+                    processes.remove(process)
+            except Exception as e:
+                logger.error(f"Error monitoring process {i}: {e}")
+                # Terminate all remaining processes
+                if controller_id == -1 or i == controller_id:
+                    for p in processes:
+                        try:
+                            p.kill()
+                        except Exception as e:
+                            logger.error(f"Error kill process {p}: {e}")
+                    logger.error("Terminated all processes due to error")
+                    sys.exit(1)
+        # Small sleep to prevent busy waiting
+        time.sleep(0.1)
 
 
 if __name__ == "__main__":

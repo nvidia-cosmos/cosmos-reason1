@@ -26,7 +26,7 @@ import json
 
 logging.basicConfig(level=logging.INFO)
 
-def compute_nodes(n_gpu_per_replica: int, n_replicas: int, role: Literal["policy", "rollout"]) -> List[NodeLaunchMetadata]:
+def compute_nodes(n_gpu_per_node: int, n_gpu_per_replica: int, n_replicas: int, role: Literal["policy", "rollout"]) -> List[NodeLaunchMetadata]:
     '''
     Compute the number of nodes required for a given number of GPUs per replica and the number of replicas.
 
@@ -39,29 +39,34 @@ def compute_nodes(n_gpu_per_replica: int, n_replicas: int, role: Literal["policy
     rendezvous_port = 29345
 
     node_launch_metadata = []
-    if n_gpu_per_replica >= 8:
-        assert n_gpu_per_replica % 8 == 0, "Number of GPUs per policy must be a multiple of 8"
-        n_policy_nodes = n_replicas * (n_gpu_per_replica // 8)
+    if n_gpu_per_replica >= n_gpu_per_node:
+        assert n_gpu_per_replica % n_gpu_per_node == 0, f"Number of GPUs per policy must be a multiple of {n_gpu_per_node}"
+        n_policy_nodes = n_replicas * (n_gpu_per_replica // n_gpu_per_node)
 
         rendezvous_node = 0
         for i_node in range(n_policy_nodes):
-            if i_node % (n_gpu_per_replica // 8) == 0:
+            if i_node % (n_gpu_per_replica // n_gpu_per_node) == 0:
                 rendezvous_node = i_node
             
             replica_launch_meta = [
                 # Only one replica per node, no colocation or rendezvous conflicts
                 ReplicaLaunchMetadata(
+                    nnode=n_gpu_per_replica // n_gpu_per_node,
                     role=role,
                     rendezvous_node=rendezvous_node,
                     rendezvous_port=rendezvous_port,
-                    visible_gpus=list(range(0, 8))
+                    visible_gpus=list(range(0, n_gpu_per_node))
                 )
             ]
             node_launch_metadata.append(NodeLaunchMetadata(colocation=replica_launch_meta))
     else:
-        assert n_gpu_per_replica in [1, 2, 4], "Number of GPUs per policy must be 1, 2, or 4"
-        n_policy_nodes = math.ceil(n_replicas * n_gpu_per_replica / 8)
-        n_collocation = 8 // n_gpu_per_replica
+        possible_gpu_per_replica = []
+        for divisor in range(1, n_gpu_per_node):
+            if n_gpu_per_node % divisor == 0:
+                possible_gpu_per_replica.append(divisor)
+
+        assert n_gpu_per_replica in possible_gpu_per_replica, f"Number of GPUs per policy must be one of {possible_gpu_per_replica}, got {n_gpu_per_replica}."
+        n_policy_nodes = math.ceil(n_replicas * n_gpu_per_replica / n_gpu_per_node)
 
         replica_counter = 0
         for i_node in range(n_policy_nodes):
@@ -69,6 +74,7 @@ def compute_nodes(n_gpu_per_replica: int, n_replicas: int, role: Literal["policy
             local_replica_counter = 0
             while replica_counter < n_replicas:
                 replica_launch_meta.append(ReplicaLaunchMetadata(
+                    nnode=1,
                     role=role,
                     rendezvous_node=i_node, # Always on the same node
                     rendezvous_port=rendezvous_port + replica_counter, # To avoid conflicts with other replicas on the same node
@@ -78,7 +84,7 @@ def compute_nodes(n_gpu_per_replica: int, n_replicas: int, role: Literal["policy
                 local_replica_counter += 1
                 if replica_counter == n_replicas:
                     break
-                elif local_replica_counter * n_gpu_per_replica >= 8:
+                elif local_replica_counter * n_gpu_per_replica >= n_gpu_per_node:
                     # Dispatch left to next node
                     break
             node_launch_metadata.append(NodeLaunchMetadata(colocation=replica_launch_meta))
@@ -89,6 +95,7 @@ def compute_nodes(n_gpu_per_replica: int, n_replicas: int, role: Literal["policy
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-name", type=str, default="cosmos_job")
+    parser.add_argument("--ngpu-per-node", type=int, default=8, help="Number of GPUs per compute node.")
     parser.add_argument("--ngpu-per-policy", type=int, required=True, help="Number of GPUs per policy replica, must be compatible with parallelism config in the controller config file")
     parser.add_argument("--ngpu-per-rollout", type=int, required=True, help="Number of GPUs per rollout replica, must be compatible with parallelism config in the controller config file")
     parser.add_argument("--n-policy-replicas", type=int, default=1, help="Number of policy replicas to launch")
@@ -101,8 +108,8 @@ def main():
     parser.add_argument("--cosmos-container", type=str, required=True, help="Path to the cosmos container")
     args = parser.parse_args()
 
-    policy_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_policy, args.n_policy_replicas, "policy")
-    rollout_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_rollout, args.n_rollout_replicas, "rollout")
+    policy_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_node, args.ngpu_per_policy, args.n_policy_replicas, "policy")
+    rollout_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_node, args.ngpu_per_rollout, args.n_rollout_replicas, "rollout")
     
     n_policy_nodes = len(policy_node_launch_metadata)
     n_rollout_nodes = len(rollout_node_launch_metadata)

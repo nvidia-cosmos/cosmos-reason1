@@ -25,10 +25,11 @@ from typing import Tuple, List, Optional, Callable, Union
 from transformers import AutoConfig
 import torch.distributed._symmetric_memory as symm_mem
 from cosmos_reason1.utils.util import (
-    read_json_file,
     resolve_model_path,
     IdentityLayer,
     clear_weight_name,
+    sync_model_vocab,
+    retry,
 )
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.policy.model.qwen3_moe.weight_converter import (
@@ -840,7 +841,7 @@ class Qwen3MoE(nn.Module, BaseModel):
             info_inly (bool): Only collect the tensor infomation without actual data loading.
         """
         # Load all safetensors from `model_path`
-        model_type = AutoConfig.from_pretrained(model_name_or_path).model_type
+        model_type = retry(AutoConfig.from_pretrained)(model_name_or_path).model_type
         model_path = resolve_model_path(model_name_or_path)
         safetensors_files = [
             f for f in os.listdir(model_path) if f.endswith(".safetensors")
@@ -982,11 +983,9 @@ class Qwen3MoE(nn.Module, BaseModel):
     def get_nparams_and_flops(self, seq_len: int) -> tuple[int, int]:
         return self._get_nparams_and_flops_fn(seq_len)
 
-    def weight_sync_transform_by_key(
-        self, dest_name: str
+    def weight_sync_transform_by_key_internal(
+        self, dest_name: str, self_state_dict
     ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
-        self_state_dict = self.state_dict()
-        self_state_dict = {clear_weight_name(k): v for k, v in self_state_dict.items()}
         if dest_name.startswith("model."):
             dest_name = dest_name.replace("model.", "")
         assert dest_name in self_state_dict, f"Unsupported weight: {dest_name}"
@@ -1000,7 +999,9 @@ class Qwen3MoE(nn.Module, BaseModel):
         ) -> torch.Tensor:
             assert weak_self is not None, "Model has been destroyed"
             self = weak_self()
-            target_tensor = self.state_dict()[dest_name]
+            state_dict = self.state_dict()
+            state_dict = {clear_weight_name(k): v for k, v in state_dict.items()}
+            target_tensor = state_dict[dest_name]
             is_dist_tensor = isinstance(target_tensor, torch.distributed.tensor.DTensor)
             # if it is up_proj or down_proj, gate_proj, we need to transpose the tensor back to the original shape
             if dest_name.endswith(
@@ -1027,6 +1028,25 @@ class Qwen3MoE(nn.Module, BaseModel):
             else f()
         )
 
+    def weight_sync_transform_by_key(
+        self, dest_name: str
+    ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
+        self_state_dict = self.state_dict()
+        self_state_dict = {clear_weight_name(k): v for k, v in self_state_dict.items()}
+        return self.weight_sync_transform_by_key_internal(dest_name, self_state_dict)
+
+    @cached_property
+    def weight_sync_transforms(self) -> List[Tuple[str, Tuple[int], torch.Tensor]]:
+        self_state_dict = self.state_dict()
+        self_state_dict = {clear_weight_name(k): v for k, v in self_state_dict.items()}
+        transforms = []
+        for dest_name, shape in self.sorted_params:
+            local_view = self.weight_sync_transform_by_key_internal(
+                dest_name, self_state_dict
+            )
+            transforms.append((dest_name, shape, local_view))
+        return transforms
+
     @classmethod
     def from_model_args(cls, model_args: Qwen3MoeArgs) -> "Qwen3MoE":
         """
@@ -1043,7 +1063,10 @@ class Qwen3MoE(nn.Module, BaseModel):
 
     @classmethod
     def from_pretrained(
-        cls, model_name_or_path: str, max_position_embeddings: Optional[int] = None
+        cls,
+        hf_config: AutoConfig,
+        model_name_or_path: str,
+        max_position_embeddings: Optional[int] = None,
     ) -> "Qwen3MoE":
         """
         Initialize a Qwen3MoE model from a pretrained model.
@@ -1056,39 +1079,13 @@ class Qwen3MoE(nn.Module, BaseModel):
 
         """
         try:
-            hf_config = AutoConfig.from_pretrained(model_name_or_path)
             if hf_config.model_type not in cls.supported_model_types():
                 raise ValueError(f"Unsupported model type: {hf_config.model_type}")
 
             if max_position_embeddings is None:
                 max_position_embeddings = hf_config.max_position_embeddings
 
-            # Fetch vocab size from `lm_head`
-            # Read `model.safetensors.index.json` to get the `lm_head` layer
-            model_path = resolve_model_path(model_name_or_path)
-            weight_map = read_json_file(
-                os.path.join(model_path, "model.safetensors.index.json")
-            )["weight_map"]
-            if "lm_head.weight" in weight_map:
-                lm_head = weight_map["lm_head.weight"]
-                with safe_open(
-                    os.path.join(model_path, lm_head), framework="pt", device="cpu"
-                ) as f:
-                    tensor_slice = f.get_slice("lm_head.weight")
-                    vocab_size, _ = tensor_slice.get_shape()
-            elif "model.embed_tokens.weight" in weight_map:
-                embed_tokens = weight_map["model.embed_tokens.weight"]
-                with safe_open(
-                    os.path.join(model_path, embed_tokens), framework="pt", device="cpu"
-                ) as f:
-                    tensor_slice = f.get_slice("model.embed_tokens.weight")
-                    vocab_size, _ = tensor_slice.get_shape()
-            else:
-                raise ValueError(
-                    "Could not find `lm_head` or `model.embed_tokens.weight` in the model."
-                )
-            logger.info(f"Vocabulary size: {vocab_size}")
-
+            vocab_size = sync_model_vocab(model_name_or_path)
             rope_scaling = {}
             if hasattr(hf_config, "rope_scaling"):
                 rope_scaling = hf_config.rope_scaling or {}

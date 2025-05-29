@@ -11,8 +11,8 @@
 #SBATCH --error=[[OUTPUT_ROOT_PATH]]/%j/x.err
 
 # Prerequisite of using this slurm script
-# 1. Build the cosmos_reason1._cpp module. Most likely need to use srun to schedule an interactive node, and then run the following commands under the interactive node to build the cosmos_reason1._cpp module in the root ref-rl path.
-#    cd ref-rl
+# 1. Build the cosmos_reason1._cpp module. Most likely need to use srun to schedule an interactive node, and then run the following commands under the interactive node to build the cosmos_reason1._cpp module in the root cosmos-reason1 path.
+#    cd cosmos-reason1
 #    pip install -e .
 # 2. Change the paths in the following ### Needs to Change ### section.
 # After the above two steps, now the configuration of the sript is complete.
@@ -21,7 +21,7 @@
 echo "JOBID $SLURM_JOB_ID"
 echo "Using ${NUM_POLICY_NODES} policy nodes and ${NUM_ROLLOUT_NODES} rollout nodes, TOTAL_NODES: ${TOTAL_NODES}"
 
-MOUNTS="/lustre:/lustre/,[[REPO_ROOT_PATH]]:/opt/ref-rl,${HOME}/.cache/huggingface:/root/.cache/huggingface"
+MOUNTS="/lustre:/lustre/,[[REPO_ROOT_PATH]]:/opt/cosmos-reason1,${HOME}/.cache/huggingface:/root/.cache/huggingface"
 
 export OUTDIR="[[OUTPUT_ROOT_PATH]]/${SLURM_JOB_NAME}"
 mkdir -p ${OUTDIR}
@@ -57,7 +57,7 @@ srun \
     '
     # Start the controller
     export COSMOS_LOG_LEVEL=DEBUG
-    cd /opt/ref-rl
+    cd /opt/cosmos-reason1
     ./tools/launch_controller.sh --port ${CONTROLLER_PORT} --config [[CONFIG_PATH]] --log ${OUTDIR}/${SLURM_JOB_ID}/redis_server.log
     ' \
     &
@@ -69,7 +69,6 @@ srun \
     --nodes="${NUM_POLICY_NODES}" \
     --nodelist="${LOCAL_NODE_LIST}" \
     --container-image [[COSMOS_CONTAINER]] \
-    --no-container-mount-home \
     --container-mounts "${MOUNTS}" \
     --no-container-mount-home \
     --export=ALL \
@@ -77,7 +76,7 @@ srun \
     -e ${OUTDIR}/%j/policy/%t.err \
     bash -c \
     '
-    cd /opt/ref-rl
+    cd /opt/cosmos-reason1
     python ./tools/slurm/cosmos_reason1_slurm_launch.py --type policy
     ' \
     &
@@ -96,7 +95,7 @@ srun \
     -e ${OUTDIR}/%j/rollout/%t.err \
     bash -c \
     '
-    cd /opt/ref-rl
+    cd /opt/cosmos-reason1
     python ./tools/slurm/cosmos_reason1_slurm_launch.py --type rollout
     ' \
     &

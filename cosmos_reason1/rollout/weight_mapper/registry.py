@@ -23,7 +23,7 @@ from cosmos_reason1.utils.parallelism_map import (
     DimRankInfo,
 )
 from abc import ABC
-from cosmos_reason1.utils.constant import COSMOS_WEIGHT_SYNC_CHECK
+from cosmos_reason1.utils.util import seperate_nccl_comm_needed
 
 
 class WeightMapper(ABC):
@@ -69,8 +69,11 @@ class WeightMapper(ABC):
         self,
         global_rank_of_rollout: int,
         inst: Tuple[int, int, Dict[int, DimRankInfo], str, Tuple[int]],
-        communicator_index: int,
+        communicator_index: Dict[int, int],
+        do_weight_sync_check: bool = False,
     ):
+        need_sep_comm = seperate_nccl_comm_needed()
+
         p_rank, r_rank, tensor_split_strategys, dest_name, shape = inst
         assert r_rank == global_rank_of_rollout
 
@@ -78,7 +81,7 @@ class WeightMapper(ABC):
 
         view = slice_tensor_with_strategies(target_tensor, tensor_split_strategys)
 
-        if COSMOS_WEIGHT_SYNC_CHECK:
+        if do_weight_sync_check:
             cloned_target_tensor = target_tensor.clone()
             # clear the current view
             view.zero_()
@@ -90,13 +93,18 @@ class WeightMapper(ABC):
             # new a temp tensor
             recv_tensor = torch.empty_like(view)
 
-        _C.nccl_recv(recv_tensor, p_rank, communicator_index)
+        # logger.info(
+        #     f"[Rollout] rank {global_rank_of_rollout} recv tensor: {dest_name} from rank {p_rank} with shape: {view.shape} out of {target_tensor.shape} with dtype {view.dtype} on device {view.device}"
+        # )
+        _C.nccl_recv(
+            recv_tensor, 0 if need_sep_comm else p_rank, communicator_index[p_rank]
+        )
 
         # inplace copy
         if not view.is_contiguous():
             view.copy_(recv_tensor)
 
-        if COSMOS_WEIGHT_SYNC_CHECK:
+        if do_weight_sync_check:
             # If the weight sync between Policy and Rollout is correct, the
             # `target_tensor` would have no change.
             # TODO: (lms) When we support quantization in rollout side,

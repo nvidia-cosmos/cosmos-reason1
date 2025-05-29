@@ -16,7 +16,8 @@ StrEnum
 redis
 msgpack
 qwen_vl_utils
-flash-attn==2.7.3
+flash-attn==2.7.4.post1
 setuptools==79.0.1
 pynvml
 torchao
+boto3

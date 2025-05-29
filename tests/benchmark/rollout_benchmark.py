@@ -124,8 +124,8 @@ def main(args: argparse.Namespace):
     rollout_engine = vLLMRollout(
         config,
         tokenizer=tokenizer,
-        hf_config_path=config.policy.model_name_or_path,
         seed=seed,
+        load_format="auto",
     )
 
     all_processed_tokens = 0
