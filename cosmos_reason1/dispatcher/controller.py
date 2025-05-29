@@ -291,9 +291,7 @@ class Controller:
     ):
         if "is_end" in extra_info:
             assert extra_info["is_end"] in [True, "True", "true"]
-            logger.info(
-                f"[Controller] Rollout {extra_info['is_end']} is end, update status."
-            )
+            logger.info(f"[Controller] Rollout {replica_name} is end, update status.")
             self.rollout_status_manager.set_status(replica_name, RolloutStatus.END)
         await self.trigger_replica_end_signal()
 
@@ -496,9 +494,7 @@ class Controller:
             not self.policy_init_done
             and len(valid_replicas) >= self.config.policy.parallelism.n_init_replicas
         ):
-            if not self.policy_init_done:
-                self.policy_init_done = True
-
+            self.policy_init_done = True
             # Trigger mesh building (Typically only occurs during initialization)
             if len(valid_replicas) == 1:
                 # Only one policy replica, no need to build mesh
@@ -562,6 +558,80 @@ class Controller:
                 target_replica.name, PolicyStatus.READY
             )
 
+    async def update_rollouts_initialize(
+        self, valid_replicas: List[Replica], target_replica: Replica
+    ):
+        assert target_replica in valid_replicas
+        any_loaded_policy_replica = None
+        for replica in self.policy_replicas.values():
+            if replica.weights_loaded_in_view_of_command:
+                any_loaded_policy_replica = replica
+                break
+        if any_loaded_policy_replica is None:
+            logger.info(
+                "No policy replica was loaded, will be rescheduled after first policy replica is loaded"
+            )
+            return
+        if all(
+            [
+                not replica.weights_loaded_in_view_of_command
+                for replica in valid_replicas
+            ]
+        ):
+            # We will tell rollout replica to check the weight sync correctness
+            # For the first p2r. Check details in the `trigger`.
+            command.PolicyToRolloutUnicastCommand.trigger(
+                src_replica=any_loaded_policy_replica,
+                dst_replica=target_replica,
+                src_replica_size=self.policy_atoms_in_replica,
+                dst_replica_size=self.rollout_atoms_in_replica,
+                redis_handler=self.redis_controller,
+                optimize_step=any_loaded_policy_replica.weight_step,
+                status_manager=self.rollout_status_manager,
+            )
+            self.rollout_status_manager.set_status(
+                target_replica.name, RolloutStatus.READY
+            )
+        if len(valid_replicas) >= self.config.rollout.parallelism.n_init_replicas:
+            was_already_initialized = self.rollout_init_done
+            self.rollout_init_done = True
+            if len(valid_replicas) > 1:
+                # Trigger Mesh building
+                ranks = command.BuildMeshCommand.trigger(
+                    valid_replicas, redis_handler=self.redis_controller
+                )
+                self.rollout_status_manager.set_ranks(ranks)
+                if not was_already_initialized:
+                    # Trigger RolloutToRolloutBroadcastCommand only once after all initial rollout replicas are loaded
+                    any_loaded_rollout_replica = None
+                    for replica in valid_replicas:
+                        if replica.weights_loaded_in_view_of_command:
+                            any_loaded_rollout_replica = replica
+                            break
+                    assert any_loaded_rollout_replica is not None
+                    command.RolloutToRolloutBroadcastCommand.trigger(
+                        src_replica=any_loaded_rollout_replica,
+                        dst_replicas=valid_replicas,
+                        redis_handler=self.redis_controller,
+                        optimize_step=any_loaded_rollout_replica.weight_step,
+                        status_manager=self.rollout_status_manager,
+                    )
+                    for replica in valid_replicas:
+                        if any_loaded_rollout_replica.name != replica.name:
+                            self.rollout_status_manager.set_status(
+                                replica.name, RolloutStatus.READY
+                            )
+                else:
+                    # The new rollout replicas will be broadcasted in the next round of weight broadcast
+                    pass
+            else:
+                # Only one rollout replica, no need to build mesh
+                self.rollout_status_manager.set_ranks({target_replica.name: 0})
+        else:
+            logger.info(
+                f"Waiting for {self.config.rollout.parallelism.n_init_replicas - len(valid_replicas)} more replicas to arrive"
+            )
+
     async def weight_ready(self, replica_name: str):
         if replica_name not in self.policy_replicas:
             raise Exception(f"Replica {replica_name} not found")
@@ -576,14 +646,15 @@ class Controller:
         assert (
             initialized_replica.name == replica_name
         ), "The replica that is responsible for weight initialization is not the same as the one that sent the weight ready command"
-        await self.update_rollouts_weights(
-            initialized_replica, initialized_replica.weight_step
-        )
-        for rollout_replica in self.rollout_replicas.values():
-            if rollout_replica.all_atoms_arrived:
-                self.rollout_status_manager.set_status(
-                    rollout_replica.name, RolloutStatus.READY
-                )
+        valid_rollout_replicas = [
+            replica
+            for replica in self.rollout_replicas.values()
+            if replica.all_atoms_arrived
+        ]
+        if len(valid_rollout_replicas) > 0:
+            await self.update_rollouts_initialize(
+                valid_rollout_replicas, valid_rollout_replicas[0]
+            )
         await self.update_policies_initialize(
             [
                 replica
@@ -744,6 +815,31 @@ class Controller:
             self.rollout_init_done = False
 
     async def post_register(self, atom: Atom, role: Role):
+        # Update the desired number of replicas for policy and rollout if needed
+        if role == Role.POLICY and not self.policy_init_done:
+            if (
+                len(self.policy_replicas)
+                > self.config.policy.parallelism.n_init_replicas
+            ):
+                self.config.policy.parallelism.n_init_replicas = len(
+                    self.policy_replicas
+                )
+                logger.info(
+                    f"[Controller] Update policy n_init_replicas to {self.config.policy.parallelism.n_init_replicas} replicas"
+                )
+        elif role == Role.ROLLOUT and not self.rollout_init_done:
+            if (
+                len(self.rollout_replicas)
+                > self.config.rollout.parallelism.n_init_replicas
+            ):
+                self.config.rollout.parallelism.n_init_replicas = len(
+                    self.rollout_replicas
+                )
+                logger.info(
+                    f"[Controller] Update rollout n_init_replicas to {self.config.rollout.parallelism.n_init_replicas} replicas"
+                )
+
+        # Check if all atoms of the replica have arrived
         if atom.replica.all_atoms_arrived:
             logger.info(
                 f"[Controller] All atoms of Replica {atom.replica.name} has been set."
@@ -785,82 +881,6 @@ class Controller:
                 for replica in self.rollout_replicas.values():
                     if replica.all_atoms_arrived:
                         valid_replicas.append(replica)
-
-                if len(valid_replicas) == 1:
-                    any_loaded_policy_replica = None
-                    for replica in self.policy_replicas.values():
-                        if replica.weights_loaded_in_view_of_command:
-                            any_loaded_policy_replica = replica
-                            break
-                    if any_loaded_policy_replica is not None:
-                        # We will tell rollout replica to check the weight sync correctness
-                        # For the first p2r. Check details in the `trigger`.
-                        command.PolicyToRolloutUnicastCommand.trigger(
-                            src_replica=any_loaded_policy_replica,
-                            dst_replica=atom.replica,
-                            src_replica_size=self.policy_atoms_in_replica,
-                            dst_replica_size=self.rollout_atoms_in_replica,
-                            redis_handler=self.redis_controller,
-                            optimize_step=any_loaded_policy_replica.weight_step,
-                            status_manager=self.rollout_status_manager,
-                        )
-                        self.rollout_status_manager.set_status(
-                            atom.replica.name, RolloutStatus.READY
-                        )
-                    else:
-                        logger.info(
-                            "No policy replica was loaded, will be rescheduled after first policy replica is loaded"
-                        )
-                if (
-                    len(valid_replicas)
-                    >= self.config.rollout.parallelism.n_init_replicas
-                ):
-                    # Rollout replicas all arrived, set the timestamp for them as the initialization timestamp
-                    # For hearbeat check.
-                    for replica in valid_replicas:
-                        self.set_replica_timestamp(replica.name, int(time.time()))
-
-                    was_already_initialized = self.rollout_init_done
-                    self.rollout_init_done = True
-                    if len(valid_replicas) > 1:
-                        # Trigger Mesh building
-                        ranks = command.BuildMeshCommand.trigger(
-                            valid_replicas, redis_handler=self.redis_controller
-                        )
-                        self.rollout_status_manager.set_ranks(ranks)
-                        if not was_already_initialized:
-                            # Trigger RolloutToRolloutBroadcastCommand only once after all initial rollout replicas are loaded
-                            any_loaded_rollout_replica = None
-                            for replica in valid_replicas:
-                                if replica.weights_loaded_in_view_of_command:
-                                    any_loaded_rollout_replica = replica
-                                    break
-                            if any_loaded_rollout_replica is not None:
-                                command.RolloutToRolloutBroadcastCommand.trigger(
-                                    src_replica=any_loaded_rollout_replica,
-                                    dst_replicas=valid_replicas,
-                                    redis_handler=self.redis_controller,
-                                    optimize_step=any_loaded_rollout_replica.weight_step,
-                                    status_manager=self.rollout_status_manager,
-                                )
-                                for replica in valid_replicas:
-                                    if any_loaded_rollout_replica.name != replica.name:
-                                        self.rollout_status_manager.set_status(
-                                            replica.name, RolloutStatus.READY
-                                        )
-                            else:
-                                logger.info(
-                                    "No rollout replica was loaded, will be rescheduled after first policy replica is loaded"
-                                )
-                        else:
-                            # The new rollout replicas will be broadcasted in the next round of weight broadcast
-                            pass
-                    else:
-                        # Only one rollout replica, no need to build mesh
-                        self.rollout_status_manager.set_ranks({atom.replica.name: 0})
-                else:
-                    logger.info(
-                        f"Waiting for {self.config.rollout.parallelism.n_init_replicas - len(valid_replicas)} more replicas to arrive"
-                    )
+                await self.update_rollouts_initialize(valid_replicas, atom.replica)
             else:
                 raise Exception(f"[Controller] Unknown role during register: {role}")

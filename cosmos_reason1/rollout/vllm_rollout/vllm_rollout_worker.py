@@ -90,6 +90,15 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         assert (
             self.cosmos_config.rollout.parallelism.dp_shard_size > 0
         ), "[Rollout] dp_shard_size should be greater than 0."
+        # Initialize the communication to controller.
+        self.init_comm()
+        # event reserved for shutdown.
+        self.shutdown_background_task_event = threading.Event()
+        # Start the heartbeat thread to keep the connection alive.
+        self.heartbeat_thread = self.start_heartbeat(
+            self.shutdown_background_task_event
+        )
+
         self.tokenizer = util.retry(AutoTokenizer.from_pretrained)(
             config.policy.model_name_or_path
         )
@@ -119,9 +128,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         # cache for NCCL communicators for P2R.
         self.policy_to_rollout_nccl_communicators = {}
 
-        # event reserved for shutdown.
-        self.shutdown_background_task_event = threading.Event()
-
         self.batch_size = self.cosmos_config.rollout.batch_size
 
         self.background_thread: threading.Thread | None = None
@@ -143,13 +149,9 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
         atexit.register(self.handle_shutdown)
 
-        # Must init the network to the controller at the end.
-        self.init_comm()
         self.init_redis()
         self.prompt_end_event = threading.Event()
-        self.heartbeat_thread = self.start_heartbeat(
-            self.shutdown_background_task_event
-        )
+        self.end_signal_sent = threading.Event()
 
         self.inference_stream = torch.cuda.Stream()
 
@@ -451,6 +453,9 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                     f"[Rollout] Receive prompt end, preparing exiting for {self.replica_name}."
                 )
                 self.prompt_end_event.set()
+                assert (
+                    prompts is None
+                ), "[Rollout] If is_end is True, prompts should be None."
 
             if not self._prompt_queue.full() and prompts is not None:
                 # if queue is full, we just abandon this prompt.
@@ -492,13 +497,14 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             if not self.weight_synced_event.is_set():
                 continue
             self.request_new_prompts()
-
+            if self.end_signal_sent.is_set():
+                assert (
+                    self._prompt_queue.empty() and self.prompt_end_event.is_set()
+                ), "[Rollout] If end_signal_sent is set, prompt queue should be empty and prompt end event should be set."
+                continue
             if self._prompt_queue.empty():
                 if self.prompt_end_event.is_set():
                     # if we have no prompt and the prompt end event is set, we can stop the worker.
-                    logger.info(
-                        f"[Rollout] Receive prompt end event, exiting for {self.replica_name}."
-                    )
                     if self.parallel_dims.tp_coord[0] == 0 and (
                         self.parallel_dims.pp_coord[0]
                         == self.parallel_dims.pp_coord[1] - 1
@@ -528,7 +534,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                             logger.error(
                                 f"[Rollout] Failed in post rollout completion to controller: {str(e)}"
                             )
-                    break
+                    self.end_signal_sent.set()
                 continue
             logger.debug(f"[Rollout] generate start for rank {self.global_rank}")
             completions, prompts = self.generate()

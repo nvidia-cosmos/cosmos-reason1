@@ -353,7 +353,8 @@ class RolloutStatusManager:
         assert (
             status != RolloutStatus.UNINITIALIZED
         ), "rollout status should not be UNINITIALIZED when already created"
-        self.status[replica_name] = status
+        if self.status[replica_name] != RolloutStatus.END:
+            self.status[replica_name] = status
 
     def get_status(self, replica_name: str):
         if replica_name not in self.status:
