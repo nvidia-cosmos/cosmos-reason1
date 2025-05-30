@@ -31,6 +31,7 @@ from cosmos_reason1.dispatcher.command import (
     BuildMeshCommand,
     PolicyToRolloutUnicastCommand,
     RolloutToRolloutBroadcastCommand,
+    StopCommand,
     Command,
     CommandType,
 )
@@ -46,6 +47,7 @@ from cosmos_reason1.utils.parallelism_map import (
     ParallelTopoMapperGroup,
 )
 from cosmos_reason1.rollout.weight_mapper import get_weight_mapper
+from cosmos_reason1.utils.network_util import make_request_with_retry
 import cosmos_reason1.utils.util as util
 from functools import partial
 from cosmos_reason1.utils import constant
@@ -90,8 +92,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         assert (
             self.cosmos_config.rollout.parallelism.dp_shard_size > 0
         ), "[Rollout] dp_shard_size should be greater than 0."
-        # Initialize the communication to controller.
-        self.init_comm()
         # event reserved for shutdown.
         self.shutdown_background_task_event = threading.Event()
         # Start the heartbeat thread to keep the connection alive.
@@ -149,7 +149,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
         atexit.register(self.handle_shutdown)
 
-        self.init_redis()
         self.prompt_end_event = threading.Event()
         self.end_signal_sent = threading.Event()
 
@@ -170,6 +169,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         """
         return self.rollout.get_underlying_model()
 
+    @RolloutWorkerBase.register_rollout_command_handler(BuildMeshCommand)
     def build_global_mesh(self, build_mesh_command: BuildMeshCommand):
         logger.info(f"[Rollout] Building global mesh for {self.replica_name}")
 
@@ -195,7 +195,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             nccl_group_id = _C.create_nccl_uid()
             base64_nccl_group_id = list_to_b64(nccl_group_id)
             try:
-                util.make_request_with_retry(
+                make_request_with_retry(
                     partial(
                         requests.post,
                         json={
@@ -236,7 +236,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         nccl_group_id = None
         # all ranks not zero in replica 0 or all ranks of other replicas need to query the group_id from controller
         try:
-            r = util.make_request_with_retry(
+            r = make_request_with_retry(
                 partial(
                     requests.post,
                     json={"unique_pair_name": unique_id_key},
@@ -252,6 +252,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         nccl_group_id = b64_to_list(base64_nccl_group_id)
         return nccl_group_id
 
+    @RolloutWorkerBase.register_rollout_command_handler(PolicyToRolloutUnicastCommand)
     @torch.no_grad()
     def sync_weight_from_policy(self, command: PolicyToRolloutUnicastCommand):
         """
@@ -346,6 +347,9 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
             self.weight_synced_event.set()
 
+    @RolloutWorkerBase.register_rollout_command_handler(
+        RolloutToRolloutBroadcastCommand
+    )
     def broadcast_to_all_rollout_replica(
         self, broadcast_command: RolloutToRolloutBroadcastCommand
     ) -> None:
@@ -376,6 +380,10 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 cnt += 1
 
             self.weight_synced_event.set()
+
+    @RolloutWorkerBase.register_rollout_command_handler(StopCommand)
+    def stop_rollout(self, command: StopCommand):
+        self.shutdown_background_task_event.set()
 
     def query_command_from_controller(self):
         """Background task to check commands from the controller"""
@@ -419,7 +427,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         try:
             if not self._prompt_queue.full():
                 # blocking request
-                prompt_meta = util.make_request_with_retry(
+                prompt_meta = make_request_with_retry(
                     partial(
                         requests.get,
                         params={"n": self.batch_size},
@@ -453,9 +461,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                     f"[Rollout] Receive prompt end, preparing exiting for {self.replica_name}."
                 )
                 self.prompt_end_event.set()
-                assert (
-                    prompts is None
-                ), "[Rollout] If is_end is True, prompts should be None."
 
             if not self._prompt_queue.full() and prompts is not None:
                 # if queue is full, we just abandon this prompt.
@@ -471,21 +476,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         current_command = dist_utils.broadcast_object_cpu(current_command)
 
         if current_command is not None:
-            # this means we have a command to process, process the command
-            command_type = current_command.command_type
-            if command_type == CommandType.BUILD_MESH:
-                self.build_global_mesh(current_command)
-            elif command_type == CommandType.POLICY_TO_ROLLOUT_UNICAST:
-                self.sync_weight_from_policy(current_command)
-            elif command_type == CommandType.ROLLOUT_TO_ROLLOUT_BROADCAST:
-                self.broadcast_to_all_rollout_replica(current_command)
-            elif command_type == CommandType.STOP:
-                self.shutdown_background_task_event.set()
-            elif command_type == CommandType.WEIGHT_RESUME:
-                raise RuntimeError(
-                    "[Rollout] For rollout worker, we should not have the {CommandType.WEIGHT_RESUME} passed in."
+            handler = self.get_rollout_command_handler(type(current_command))
+            if handler is None:
+                raise Exception(
+                    f"No such command supoorted in rollout {current_command}"
                 )
-
+            handler(self, current_command)
             logger.debug(
                 f"[Rollout] Command executed: {current_command._serialize()} for rank: {self.global_rank}"
             )
@@ -522,7 +518,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                             logger.info(
                                 f"[Rollout] Posting prompt end event to controller: {response}"
                             )
-                            util.make_request_with_retry(
+                            make_request_with_retry(
                                 partial(
                                     requests.post,
                                     json=response.model_dump(),
@@ -556,7 +552,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                         completions=completions,
                     )
                     try:
-                        util.make_request_with_retry(
+                        make_request_with_retry(
                             partial(
                                 requests.post,
                                 json=response.model_dump(),

@@ -23,6 +23,7 @@ from cosmos_reason1.utils.distributed import (
 )
 import sys
 import os
+from cosmos_reason1.utils.modelscope import update_config_if_modelscope
 
 try:
     # Prevent vllm from changing NCCL env
@@ -77,6 +78,8 @@ if __name__ == "__main__":
 
     init_distributed(cpu_enabled=False)
     parallel_dims.build_mesh(device_type="cuda")
+    cosmos_rollout_config = update_config_if_modelscope(cosmos_rollout_config)
+
     try:
         rollout_worker = vLLMRolloutWorker(cosmos_rollout_config, parallel_dims)
         rollout_worker.work()

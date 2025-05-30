@@ -24,6 +24,7 @@ from cosmos_reason1.utils.distributed import (
 from cosmos_reason1.policy.trainer.sft_trainer import SFTTrainer
 from cosmos_reason1.policy.trainer.grpo_trainer import GRPOTrainer
 from cosmos_reason1.policy.config import Config as PolicyConfig
+from cosmos_reason1.utils.modelscope import update_config_if_modelscope
 
 
 def run_train():
@@ -52,6 +53,7 @@ def run_train():
             )
 
     policy_type = cosmos_config.train.train_policy.type
+    cosmos_config = update_config_if_modelscope(cosmos_config)
 
     try:
         if policy_type == "grpo":

@@ -29,7 +29,7 @@ import tarfile
 import ctypes
 from msgpack import ExtType
 from tqdm import tqdm
-from typing import List, Dict, Any, Callable, Union
+from typing import List, Dict, Any
 import torch
 import pynvml
 import cv2
@@ -45,9 +45,7 @@ from huggingface_hub import (
 from transformers import AutoProcessor, AutoConfig
 from qwen_vl_utils import process_vision_info
 import time
-import random
 import functools
-from cosmos_reason1.utils.constant import COSMOS_HTTP_RETRY_CONFIG
 from cosmos_reason1.utils.logging import logger
 from safetensors import safe_open
 
@@ -360,6 +358,21 @@ def _extract_tgz_file(tgz_file, output_dir):
         tar.extractall(path=output_dir)
 
 
+def basename_from_modelpath(path: str) -> str:
+    path = path.strip().strip("/")
+    if len(path.split("/")) > 2:
+        path = "/".join(path.split("/")[-2:])
+    return path
+
+
+def if_use_modelscope(path: str) -> bool:
+    modelscope_cache_dir = os.environ.get(
+        "MODELSCOPE_CACHE",
+        os.path.join(os.path.expanduser("~"), ".cache/modelscope_cache/dataset"),
+    )
+    return path.startswith(modelscope_cache_dir)
+
+
 def prepare_cosmos_data(config):
     fps = config.train.train_policy.fps
     max_pixels = config.train.train_policy.max_pixels
@@ -367,10 +380,12 @@ def prepare_cosmos_data(config):
     cache_dir = os.environ.get(
         "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
     )
+    dataset_name = basename_from_modelpath(config.train.train_policy.dataset_name)
+    use_modelscope = if_use_modelscope(config.train.train_policy.dataset_name)
     dataset_dir = os.path.join(
         cache_dir,
         "datasets",
-        config.train.train_policy.dataset_name,
+        dataset_name,
         config.train.train_policy.dataset_subset,
     )
     video_clips_dir = os.path.join(dataset_dir, "video_clips")
@@ -411,26 +426,45 @@ def prepare_cosmos_data(config):
         rf"^{re.escape(config.train.train_policy.dataset_subset)}/clips/.*\.tar\.gz$"
     )
     file_pattern = f"{config.train.train_policy.dataset_subset}/clips/*.tar.gz"
-    remote_files = list_repo_files(
-        repo_id=config.train.train_policy.dataset_name,
-        repo_type="dataset",
-        revision=config.train.train_policy.dataset_revision or None,
-    )
+    if use_modelscope:
+        assert os.path.exists(config.train.train_policy.dataset_name)
+        # list all files in the local directory config.train.train_policy.dataset_name
+        import glob
 
-    tgz_files = [f for f in remote_files if re_pattern.match(f)]
-    if tgz_files:
-        downloaded_snapshot_directory_cache = retry(snapshot_download)(
-            repo_id=config.train.train_policy.dataset_name,
-            allow_patterns=[file_pattern],
+        remote_files = [
+            f.replace(config.train.train_policy.dataset_name + "/", "")
+            for f in glob.glob(
+                f"{config.train.train_policy.dataset_name}/**/*.tar.gz", recursive=True
+            )
+        ]
+    else:
+        remote_files = list_repo_files(
+            repo_id=dataset_name,
             repo_type="dataset",
             revision=config.train.train_policy.dataset_revision or None,
         )
 
-        downloaded_clips_dir_path = os.path.join(
-            downloaded_snapshot_directory_cache,
-            config.train.train_policy.dataset_subset,
-            "clips",
-        )
+    tgz_files = [f for f in remote_files if re_pattern.match(f)]
+    if tgz_files:
+        if use_modelscope:
+            downloaded_clips_dir_path = os.path.join(
+                config.train.train_policy.dataset_name,
+                config.train.train_policy.dataset_subset,
+                "clips",
+            )
+        else:
+            downloaded_snapshot_directory_cache = retry(snapshot_download)(
+                dataset_name,
+                allow_patterns=[file_pattern],
+                repo_type="dataset",
+                revision=config.train.train_policy.dataset_revision or None,
+            )
+
+            downloaded_clips_dir_path = os.path.join(
+                downloaded_snapshot_directory_cache,
+                config.train.train_policy.dataset_subset,
+                "clips",
+            )
         assert os.path.exists(
             downloaded_clips_dir_path
         ), f"Can not find clips directory at {downloaded_clips_dir_path}"
@@ -470,12 +504,17 @@ def prepare_cosmos_data(config):
             clip_filename = os.path.join(
                 config.train.train_policy.dataset_subset, "clips.tar.gz"
             )
-            clip_tgz = hf_hub_download(
-                repo_id=config.train.train_policy.dataset_name,
-                revision=config.train.train_policy.dataset_revision or None,
-                repo_type="dataset",
-                filename=clip_filename,
-            )
+            if use_modelscope:
+                clip_tgz = os.path.join(
+                    config.train.train_policy.dataset_name, clip_filename
+                )
+            else:
+                clip_tgz = hf_hub_download(
+                    repo_id=dataset_name,
+                    revision=config.train.train_policy.dataset_revision or None,
+                    repo_type="dataset",
+                    filename=clip_filename,
+                )
             _extract_tgz_file(clip_tgz, video_clips_dir)
 
     if config.train.train_policy.dataset_subset == "av":
@@ -713,98 +752,6 @@ def msgunpack_c_long(code, data):
         val = int.from_bytes(data, "big", signed=True)
         return int(val)
     return ExtType(code, data)
-
-
-def status_check_for_response(response):
-    """
-    Handle the status code for the response.
-    Raises an exception if the status code is not 200.
-    """
-    response.raise_for_status()
-
-
-def make_request_with_retry(
-    requests: Union[Callable, List[Callable]],
-    urls: List[str] = None,
-    response_parser: Callable = status_check_for_response,
-    max_retries: int = COSMOS_HTTP_RETRY_CONFIG.max_retries,
-    retries_per_delay: int = COSMOS_HTTP_RETRY_CONFIG.retries_per_delay,
-    initial_delay: float = COSMOS_HTTP_RETRY_CONFIG.initial_delay,
-    max_delay: float = COSMOS_HTTP_RETRY_CONFIG.max_delay,
-    backoff_factor: float = COSMOS_HTTP_RETRY_CONFIG.backoff_factor,
-) -> Any:
-    """
-    Make an HTTP GET request with exponential backoff retry logic.
-
-    Args:
-        requests (List[Callable]): The functions to make the request in an alternative way
-        urls (List[str]): List of host URLs to try
-        response_parser (Callable): Function to parse the response
-        max_retries (int): Maximum number of retry attempts
-        retries_per_delay (int): Number of retries to attempt at each delay level
-        initial_delay (float): Initial delay between retries in seconds
-        max_delay (float): Maximum delay between retries in seconds
-        backoff_factor (float): Factor to increase delay between retries
-
-    Returns:
-        Any: The response object from the successful request or redis client request.
-
-    Raises:
-        Exception: If all retry attempts fail
-    """
-    delay = initial_delay
-    last_exception = None
-    total_attempts = 0
-    url_index = 0
-    request_idx = 0
-
-    if isinstance(requests, Callable):
-        requests = [requests]
-
-    while total_attempts < max_retries:
-        # Try multiple times at the current delay level
-        total_retries_cur_delay = 0
-        while total_retries_cur_delay < retries_per_delay:
-            try:
-                request = requests[request_idx]
-                if urls is not None:
-                    url = urls[url_index]
-                    r = request(url)
-                else:
-                    url = None
-                    r = request()
-                if response_parser is not None:
-                    response_parser(r)
-                return r
-
-            except Exception as e:
-                last_exception = e
-                url_index += 1
-                if url_index >= (1 if urls is None else len(urls)):
-                    url_index = 0
-                    request_idx += 1
-                    if request_idx >= len(requests):
-                        request_idx = 0
-                        total_retries_cur_delay += 1
-                        total_attempts += 1
-                logger.debug(
-                    f"Request failed: {e}. Attempt {total_attempts} of {max_retries} for {request} on {url}."
-                )
-                if total_attempts >= max_retries:
-                    break
-
-                if request_idx != 0 or url_index != 0:
-                    jitter = (1.0 + random.random()) * initial_delay
-                    time.sleep(jitter)
-                    continue
-                # Add some jitter to prevent thundering herd
-                jitter = (1.0 + random.random()) * delay
-                time.sleep(jitter)
-
-        # Increase delay for next round of retries
-        delay = min(delay * backoff_factor, max_delay)
-
-    raise last_exception or Exception("All retry attempts failed")
 
 
 def sync_model_vocab(

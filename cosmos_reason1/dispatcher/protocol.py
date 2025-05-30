@@ -68,10 +68,22 @@ class HeartbeatRequest(BaseModel):
     replica_name: str
 
 
+class SetProfileRequest(HeartbeatRequest):
+    pass
+
+
+class SetTracePathRequest(HeartbeatRequest):
+    trace_path: str
+    global_rank: int
+
+
 class RegisterRequest(BaseModel):
     replica_name: str
     role: str
     mesh_names: List[str]
+    global_rank: int
+    host_ip: str
+    host_name: str
     ranks: List[int]
     group_size: List[int]
 

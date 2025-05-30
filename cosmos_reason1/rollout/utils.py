@@ -20,6 +20,7 @@ from transformers import AutoProcessor
 from cosmos_reason1.policy.config import GrpoConfig
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.utils.logging import logger
+from cosmos_reason1.utils.util import basename_from_modelpath
 
 
 def _disable_qwen_vl_utils_logger():
@@ -51,7 +52,7 @@ def prepare_vl_dataset(
     video_clips_path = os.path.join(
         root_path,
         "datasets",
-        grpo_config.dataset_name,
+        basename_from_modelpath(grpo_config.dataset_name),
         grpo_config.dataset_subset,
         "video_clips",
     )

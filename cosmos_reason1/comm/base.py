@@ -15,22 +15,55 @@
 
 import torch.distributed as dist
 import uuid
+from typing import Dict, Callable, Type, Optional
 from cosmos_reason1.utils.logging import logger
 import cosmos_reason1.utils.constant as constant
 import cosmos_reason1.utils.distributed as dist_utils
 import requests
-from typing import Dict
 from cosmos_reason1.dispatcher.protocol import MESH_NAMES
 import copy
 import time
 import atexit
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
 import threading
-from cosmos_reason1.utils.util import make_request_with_retry
+from cosmos_reason1.utils.network_util import make_request_with_retry
 from functools import partial
+from cosmos_reason1.dispatcher.command import CommandRegistry, Command
+from cosmos_reason1.utils.network_util import get_local_ip
 
 
 class CommMixin:
+    policy_command_handler_registry = CommandRegistry()
+    rollout_command_handler_registry = CommandRegistry()
+
+    @classmethod
+    def register_policy_command_handler(cls, command_type: Type[Command]):
+        def decorator(func):
+            cls.policy_command_handler_registry.register(command_type, func)
+            return func
+
+        return decorator
+
+    @classmethod
+    def register_rollout_command_handler(cls, command_type: Type[Command]):
+        def decorator(func):
+            cls.rollout_command_handler_registry.register(command_type, func)
+            return func
+
+        return decorator
+
+    @classmethod
+    def get_policy_command_handler(
+        cls, command_type: Type[Command]
+    ) -> Optional[Callable]:
+        return cls.policy_command_handler_registry.get_command_handler(command_type)
+
+    @classmethod
+    def get_rollout_command_handler(
+        cls, command_type: Type[Command]
+    ) -> Optional[Callable]:
+        return cls.rollout_command_handler_registry.get_command_handler(command_type)
+
     def init_comm(self):
         self.replica_name = str(dist_utils.broadcast_object_cpu(uuid.uuid4()))
         logger.info(
@@ -63,12 +96,20 @@ class CommMixin:
                 group_size.append(1)
 
         try:
+            host_info_tuple = get_local_ip()
+            if host_info_tuple is None:
+                raise Exception("Failed to get local IP address")
+            host_ip, host_name = host_info_tuple
+
             payload = {
                 "replica_name": self.replica_name,
                 "role": self.role,
                 "mesh_names": target_mesh_names,
                 "ranks": ranks,
                 "group_size": group_size,
+                "global_rank": self.global_rank,
+                "host_ip": host_ip,
+                "host_name": host_name,
             }
             make_request_with_retry(
                 partial(

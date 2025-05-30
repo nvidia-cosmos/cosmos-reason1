@@ -25,7 +25,7 @@ import torch.nn.functional as F
 import os
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
-from cosmos_reason1.utils.util import compute_mfu
+from cosmos_reason1.utils.util import compute_mfu, basename_from_modelpath
 import cosmos_reason1.utils.distributed as dist_util
 import json
 import time
@@ -66,7 +66,8 @@ from typing import List, Callable
 import types
 from functools import partial
 import msgpack
-from cosmos_reason1.utils.util import make_request_with_retry, seperate_nccl_comm_needed
+from cosmos_reason1.utils.network_util import make_request_with_retry
+from cosmos_reason1.utils.util import seperate_nccl_comm_needed
 from cosmos_reason1.utils import constant
 
 
@@ -177,7 +178,7 @@ class GRPOTrainer(Trainer):
                 video_clips_path = os.path.join(
                     self.cosmos_cache_dir,
                     "datasets",
-                    self.grpo_config.dataset_name,
+                    basename_from_modelpath(self.grpo_config.dataset_name),
                     self.grpo_config.dataset_subset,
                     "video_clips",
                 )
@@ -281,72 +282,71 @@ class GRPOTrainer(Trainer):
         is_mesh_builds = [isinstance(x, BuildMeshCommand) for x in commands]
         return all(is_mesh_builds)
 
-    def execute_build_mesh(self, command: Command):
-        if isinstance(command, BuildMeshCommand):
-            if len(command.replica_name_to_rank) == 1:
-                self.mesh_ready = True
-                self.replica_name_to_rank = command.replica_name_to_rank
-                return True
+    @Trainer.register_policy_command_handler(BuildMeshCommand)
+    def execute_build_mesh(self, command: BuildMeshCommand):
+        if len(command.replica_name_to_rank) == 1:
+            self.mesh_ready = True
+            self.replica_name_to_rank = command.replica_name_to_rank
+            return True
+        else:
+            if not self.check_inter_policy_all_ready():
+                return False
+            assert self.replica_name in command.replica_name_to_rank
+            rank = command.replica_name_to_rank[self.replica_name]
+            mesh_key = self.get_group_unique_key(command.replica_name_to_rank)
+            nccl_group_id = None
+            if rank == 0:
+                # initialize nccl handle for building mesh among policies
+                # only replica_rank == 0 have the right to generate nccl id.
+                nccl_group_id = cosmos_c.create_nccl_uid()
+                base64_nccl_group_id = list_to_b64(nccl_group_id)
+                try:
+                    make_request_with_retry(
+                        partial(
+                            requests.post,
+                            json={
+                                "unique_pair_name": mesh_key,
+                                "handle_base64": base64_nccl_group_id,
+                            },
+                        ),
+                        self.get_alternative_urls("api/nccl/comm_initiator"),
+                        max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"[Policy] Failed in post nccl group_id to controller after retries {e}."
+                    )
             else:
-                if not self.check_inter_policy_all_ready():
-                    return False
-                assert self.replica_name in command.replica_name_to_rank
-                rank = command.replica_name_to_rank[self.replica_name]
-                mesh_key = self.get_group_unique_key(command.replica_name_to_rank)
-                nccl_group_id = None
-                if rank == 0:
-                    # initialize nccl handle for building mesh among policies
-                    # only replica_rank == 0 have the right to generate nccl id.
-                    nccl_group_id = cosmos_c.create_nccl_uid()
-                    base64_nccl_group_id = list_to_b64(nccl_group_id)
-                    try:
-                        make_request_with_retry(
-                            partial(
-                                requests.post,
-                                json={
-                                    "unique_pair_name": mesh_key,
-                                    "handle_base64": base64_nccl_group_id,
-                                },
-                            ),
-                            self.get_alternative_urls("api/nccl/comm_initiator"),
-                            max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
-                        )
-                    except Exception as e:
-                        raise RuntimeError(
-                            f"[Policy] Failed in post nccl group_id to controller after retries {e}."
-                        )
-                else:
-                    # other replicas should query the nccl group id from controller
-                    # all ranks need to wait for the rollout replica 0 finished the group_id post
-                    # and then they can get the group_id from controller
-                    # But we don't have something like dist.barrier(), so just while True loop to query it like synchronize.
-                    # all ranks not zero in replica 0 or all ranks of other replicas need to query the group_id from controller
-                    try:
-                        r = make_request_with_retry(
-                            partial(
-                                requests.post,
-                                json={"unique_pair_name": mesh_key},
-                            ),
-                            self.get_alternative_urls("api/nccl/comm_acceptor"),
-                            max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
-                        )
-                    except Exception as e:
-                        raise RuntimeError(
-                            f"[Policy] Failed in query nccl group_id from controller after retries {e}."
-                        )
-                    base64_nccl_group_id = r.json()["handle_base64"]
-                    nccl_group_id = b64_to_list(base64_nccl_group_id)
-                self.inter_policy_nccl = cosmos_c.create_nccl_comm(
-                    nccl_group_id, rank, len(command.replica_name_to_rank)
-                )
-                logger.info(
-                    f"[Policy] Created inter policy nccl comm {self.inter_policy_nccl} for rank {rank} with total {len(command.replica_name_to_rank)} ranks."
-                )
-                # Also need delete old nccl handler
-                self.mesh_ready = True
-                self.replica_name_to_rank = command.replica_name_to_rank
-                return True
-        return False
+                # other replicas should query the nccl group id from controller
+                # all ranks need to wait for the rollout replica 0 finished the group_id post
+                # and then they can get the group_id from controller
+                # But we don't have something like dist.barrier(), so just while True loop to query it like synchronize.
+                # all ranks not zero in replica 0 or all ranks of other replicas need to query the group_id from controller
+                try:
+                    r = make_request_with_retry(
+                        partial(
+                            requests.post,
+                            json={"unique_pair_name": mesh_key},
+                        ),
+                        self.get_alternative_urls("api/nccl/comm_acceptor"),
+                        max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
+                    )
+                except Exception as e:
+                    raise RuntimeError(
+                        f"[Policy] Failed in query nccl group_id from controller after retries {e}."
+                    )
+                base64_nccl_group_id = r.json()["handle_base64"]
+                nccl_group_id = b64_to_list(base64_nccl_group_id)
+            self.inter_policy_nccl = cosmos_c.create_nccl_comm(
+                nccl_group_id, rank, len(command.replica_name_to_rank)
+            )
+            logger.info(
+                f"[Policy] Created inter policy nccl comm {self.inter_policy_nccl} for rank {rank} with total {len(command.replica_name_to_rank)} ranks."
+            )
+            # Also need delete old nccl handler
+            self.mesh_ready = True
+            self.replica_name_to_rank = command.replica_name_to_rank
+            return True
 
     def wrap_to_cuda_tensor(self, key, obj, in_place=False):
         """
@@ -490,6 +490,7 @@ class GRPOTrainer(Trainer):
             self.ckpt_manager.set_rng_state(rng_state)
         return len_params
 
+    @Trainer.register_policy_command_handler(PolicyToPolicyBroadcastCommand)
     def execute_policy_to_policy_broadcast(
         self, command: PolicyToPolicyBroadcastCommand
     ):
@@ -517,6 +518,7 @@ class GRPOTrainer(Trainer):
         )
         return True
 
+    @Trainer.register_policy_command_handler(PolicyToPolicyUnicastCommand)
     def execute_policy_to_policy_unicast(self, command: PolicyToPolicyUnicastCommand):
         assert self.mesh_ready
         send = self.replica_name == command.src_replica_name
@@ -588,6 +590,7 @@ class GRPOTrainer(Trainer):
                     prepared_tensor_to_rollout[dest_name] = view
         return prepared_tensor_to_rollout
 
+    @Trainer.register_policy_command_handler(PolicyToRolloutUnicastCommand)
     def execute_policy_to_rollout_unicast(self, command: PolicyToRolloutUnicastCommand):
         need_sep_comm = seperate_nccl_comm_needed()
 
@@ -739,6 +742,7 @@ class GRPOTrainer(Trainer):
         )
         return True
 
+    @Trainer.register_policy_command_handler(WeightResumeCommand)
     def execute_weight_resume(self, command: WeightResumeCommand = None):
         if self.config.train.resume:
             try:
@@ -800,7 +804,11 @@ class GRPOTrainer(Trainer):
                     f"[Policy] Failed in in send train ack to controller after retries {e}."
                 )
 
+    @Trainer.register_policy_command_handler(DataFetchCommand)
     def execute_data_fetch(self, command: DataFetchCommand):
+        if command.do_profile:
+            self.profiler.start()
+
         assert self.replica_name == command.replica_name
         self.batch_for_this_step = command.items_count
         self.train_step = command.global_step
@@ -810,6 +818,7 @@ class GRPOTrainer(Trainer):
         logger.debug(f"[Policy] Train ack sent for global step {command.global_step}.")
         return True
 
+    @Trainer.register_policy_command_handler(AllReduceCommand)
     def execute_all_reduce(self, command: AllReduceCommand = None):
         """
         # Add nccl allreduce operations for all parameters and necessary states.
@@ -863,31 +872,21 @@ class GRPOTrainer(Trainer):
                 logger.error(e)
                 raise e
 
+    @Trainer.register_policy_command_handler(StopCommand)
     def execute_stop(self, command):
         logger.info("[Policy] Stop command received. Exiting...")
+
         self.handle_shutdown()
+
         return True
 
     def execute_command(self, command: Command):
         logger.debug(f"[Policy] Process command {command._serialize()}")
 
-        if isinstance(command, BuildMeshCommand):
-            command_done = self.execute_build_mesh(command)
-        elif isinstance(command, WeightResumeCommand):
-            command_done = self.execute_weight_resume(command)
-        elif isinstance(command, PolicyToRolloutUnicastCommand):
-            command_done = self.execute_policy_to_rollout_unicast(command)
-        elif isinstance(command, PolicyToPolicyBroadcastCommand):
-            command_done = self.execute_policy_to_policy_broadcast(command)
-        elif isinstance(command, PolicyToPolicyUnicastCommand):
-            command_done = self.execute_policy_to_policy_unicast(command)
-        elif isinstance(command, DataFetchCommand):
-            command_done = self.execute_data_fetch(command)
-        elif isinstance(command, StopCommand):
-            command_done = self.execute_stop(command)
-        else:
+        handler = self.get_policy_command_handler(type(command))
+        if handler is None:
             raise Exception(f"No such command supoorted in policy {command}")
-
+        command_done = handler(self, command)
         logger.debug(
             f"[Policy] Command {command._serialize()} executed: {command_done}"
         )
@@ -1569,8 +1568,8 @@ class GRPOTrainer(Trainer):
                     f"[Policy] Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
                 )
                 self.export_safetensors(
-                    os.path.join(
-                        self.config.train.output_dir,
+                    output_dir=self.config.train.output_dir,
+                    rel_path=os.path.join(
                         "safetensors",
                         f"step_{self.train_step}",
                     ),
@@ -1588,6 +1587,9 @@ class GRPOTrainer(Trainer):
                 is_final=self.train_step == self.total_steps,
             )
             self.save_manager.save_check(step=self.train_step)
+
+        # For profiling
+        self.profiler.step()
 
     @property
     def pp_loss_fn(self):

@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 import math
 from cosmos_reason1.dispatcher.protocol import Role, MESH_NAMES, RegisterRequest
@@ -121,19 +121,40 @@ class Atom:
     replica_name: str Name of the replica that this atom belongs to
     ranks: List[int] Rank of each dimension in the order of MESH_NAMES
     group_size: List[int] Size of each dimension in the order of MESH_NAMES
+    global_rank: int global rank of the atom in this replica.
+    host_ip: str IP address of the host machine that this atom belongs to.
+    host_name: str Name of the host machine that this atom belongs to.
+    trace_path: str Path to the trace file of this atom/rank that stores. May be s3 or local path.
     """
 
     replica_name: str
     ranks: List[int]
+    global_rank: int
+    host_ip: str
+    host_name: str
+    trace_path: Optional[str]
     group_size: List[int]
     rollout_: asyncio.Queue[Rollout]
 
-    def __init__(self, ranks: List[int], group_size: List[int], replica_name: str):
+    def __init__(
+        self,
+        global_rank: int,
+        host_ip: str,
+        host_name: str,
+        trace_path: str,
+        ranks: List[int],
+        group_size: List[int],
+        replica_name: str,
+    ):
         self.ranks = ranks
         self.group_size = group_size
         self.replica_name = replica_name
         self.rollout_queue: asyncio.Queue[Rollout] = asyncio.Queue()
         self._replica = None
+        self.global_rank = global_rank
+        self.host_ip = host_ip
+        self.host_name = host_name
+        self.trace_path = trace_path
 
     @property
     def replica(self) -> "Replica":
@@ -161,6 +182,10 @@ class Atom:
     @classmethod
     def from_register_request(cls, request: RegisterRequest) -> "Atom":
         return cls(
+            global_rank=request.global_rank,
+            host_ip=request.host_ip,
+            host_name=request.host_name,
+            trace_path=None,
             ranks=request.ranks,
             group_size=request.group_size,
             replica_name=request.replica_name,
@@ -187,7 +212,7 @@ class Atom:
         ), f"Ranks must have the same length as MESH_NAMES, got {len(self.ranks)} and {len(MESH_NAMES)}"
 
     def __str__(self):
-        return "_".join([str(rank) for rank in self.ranks])
+        return f"{self.replica_name}_{self.global_rank}"
 
 
 @dataclass
@@ -213,6 +238,7 @@ class Replica:
     in_mesh: bool = False
     pending_rollouts: int = 0
     weight_step: int = -1
+    do_profile: bool = False
 
     def __init__(self, name: str, role: Role, atoms: List[Atom]):
         self.name = name  # Note: name must be unique across all the replicas.
@@ -221,6 +247,8 @@ class Replica:
         self.command_queue = asyncio.Queue()
         self.pending_rollouts = 0
         self.weight_step = -1
+        # Whether to profile in this replica.
+        self.do_profile = False
 
     def get_atom(self, ranks: List[int]) -> Atom:
         assert (
@@ -296,11 +324,15 @@ class Replica:
         redis_handler.publish_rollout(msgpack.packb(rollout.__dict__), self.name)
         self.pending_rollouts += 1
 
-    async def find_atom(
-        self, pp_rank: int, dp_shard_rank: int, cp_rank: int, tp_rank: int
-    ) -> Atom:
-        key = "_".join([str(pp_rank), str(dp_shard_rank), str(cp_rank), str(tp_rank)])
+    async def find_atom(self, global_rank: int) -> Atom:
+        key = f"{self.name}_{global_rank}"
         return self.atoms.get(key)
+
+    async def set_trace_path(self, trace_path: str, global_rank: int):
+        atom = await self.find_atom(global_rank)
+        logger.info(f"[Controller]: Set trace path of atom {atom} to {trace_path}")
+        atom.trace_path = trace_path
+        return str(atom)
 
     def __eq__(self, other):
         return isinstance(other, Replica) and self.name == other.name

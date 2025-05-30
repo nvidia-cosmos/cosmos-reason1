@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
+import os
 import vllm
 from vllm import SamplingParams
 
@@ -102,6 +102,9 @@ class vLLMRollout(RolloutBase):
         assert (
             tp_size * pp_size == rollout_parallelism.world_size
         ), "[Rollout] For tensor parallel, the tp_size * pp_size must be equal to world size."
+
+        # disable VLLM_DISABLE_COMPILE_CACHE
+        os.environ["VLLM_DISABLE_COMPILE_CACHE"] = "1"
 
         self.rollout_engine = LLM(
             model=model_path,

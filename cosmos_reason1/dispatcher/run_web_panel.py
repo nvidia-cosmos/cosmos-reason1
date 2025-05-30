@@ -35,6 +35,8 @@ from cosmos_reason1.dispatcher.protocol import (
     TrainAckRequest,
     HeartbeatRequest,
     WeightReadyRequest,
+    SetProfileRequest,
+    SetTracePathRequest,
 )
 from cosmos_reason1.policy.config import Config as CosmosConfig
 import cosmos_reason1.utils.util as util
@@ -46,7 +48,8 @@ import time
 from cosmos_reason1.utils.constant import COSMOS_ROLLOUT_SCAN_INTERVAL
 import asyncio
 from contextlib import asynccontextmanager
-from cosmos_reason1.utils.distributed import get_eth_ips
+from cosmos_reason1.utils.network_util import get_eth_ips
+from cosmos_reason1.utils.modelscope import update_config_if_modelscope
 
 
 def create_error_response(
@@ -162,6 +165,23 @@ async def register(request: RegisterRequest):
 
         traceback.print_exc()
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
+
+
+@app.post("/api/set_profile")
+async def set_profile(request: SetProfileRequest):
+    msg = await controller.set_profile(request.replica_name)
+    return msg
+
+
+@app.post("/api/set_trace_path")
+async def set_trace_path(request: SetTracePathRequest):
+    atom = await controller.set_trace_path(
+        request.replica_name, request.trace_path, request.global_rank
+    )
+    if atom is not None:
+        return {"message": f"Trace path set for atom: {atom}"}
+    else:
+        return {"message": "Ignore the trace path request!"}
 
 
 @app.post("/api/unregister")
@@ -401,6 +421,7 @@ def main():
         # Need SFTDataConfig and GrpoConfig for from_dict
 
         loaded_config = CosmosConfig.from_dict(config_dict)
+        loaded_config = update_config_if_modelscope(loaded_config)
         # Use redis port from config if available, otherwise use arg/default
         if hasattr(loaded_config, "redis") and loaded_config.redis:
             try:
