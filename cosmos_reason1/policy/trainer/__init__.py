@@ -23,6 +23,7 @@ from cosmos_reason1.dispatcher.protocol import Role
 import json
 import os
 import torch
+import threading
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.checkpoint import (
     upload_folder_to_s3,
@@ -37,6 +38,7 @@ from huggingface_hub import create_repo, upload_folder, whoami
 from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
 from typing import Dict
 import cosmos_reason1.utils.util as util
+from cosmos_reason1.utils.profiler import CosmosProfiler
 
 
 class Trainer(CommMixin):
@@ -100,6 +102,13 @@ class Trainer(CommMixin):
             raise e
 
         self.ckpt_manager = CheckpointMananger(config, self.global_rank)
+        # profiler is initialized after the init_comm()
+        self.profiler = CosmosProfiler(
+            config,
+            parallel_dims,
+            replica_name=self.replica_name,
+            alternative_urls=self.get_alternative_urls("api/set_trace_path"),
+        )
         self.save_manager = SaveManager(config, self.global_rank)
         # TODO(cjx): add `CompiledAutograd` support
         self.context = train_context(False)
@@ -115,8 +124,13 @@ class Trainer(CommMixin):
         raise NotImplementedError("pp_loss_fn must be provided by subclass")
 
     def export_safetensors(
-        self, path: str, trainable_only: bool = False, is_final=False
+        self,
+        output_dir: str,
+        rel_path: str,
+        trainable_only: bool = False,
+        is_final=False,
     ):
+        path = os.path.join(output_dir, rel_path)
         if self.parallel_dims.dp_replicate_coord[0] > 0:
             return
 
@@ -266,17 +280,23 @@ class Trainer(CommMixin):
                 upload_hf(path, repo_id)
             # upload the model to s3
             if self.config.train.ckpt.upload_s3:
-                if (self.config.train.ckpt.upload_s3 == "final" and is_final) or (
-                    self.config.train.ckpt.upload_s3 == "all"
-                ):
-                    logger.info(
-                        f"Uploading the model to s3: {self.config.train.ckpt.s3_bucket}..."
-                    )
+                if is_final:
+                    # syncronizely upload the final model to s3
                     upload_folder_to_s3(
-                        self.config.train.ckpt.s3_bucket,
-                        self.config.train.ckpt.s3_prefix,
                         path,
+                        self.config.train.ckpt.s3_bucket,
+                        os.path.join(self.config.train.ckpt.s3_prefix, rel_path),
                     )
+                elif self.config.train.ckpt.upload_s3 == "all":
+                    # asynchronously upload the model to s3
+                    threading.Thread(
+                        target=upload_folder_to_s3,
+                        args=(
+                            path,
+                            self.config.train.ckpt.s3_bucket,
+                            os.path.join(self.config.train.ckpt.s3_prefix, rel_path),
+                        ),
+                    ).start()
 
         torch.distributed.barrier()
         if self.global_rank == 0:

@@ -252,6 +252,38 @@ class Controller:
     def query_reference_answer(self, prompt_idx: int) -> str:
         return self.dataset.train_set.query_reference_answer(prompt_idx)
 
+    async def set_profile(self, replica_name: str):
+        if replica_name not in self.policy_replicas:
+            logger.warning(
+                f"[Controller] Replica {replica_name} not found in policy replicas. The profile request takes no effect."
+            )
+            return {
+                "message": "Replica not found in policy replicas. The profile request takes no effect."
+            }
+        if self.policy_replicas[replica_name].do_profile:
+            logger.warning(
+                f"[Controller] Replica {replica_name} is already in profile mode. The profile request takes no effect."
+            )
+            return {
+                "message": "Replica is already in profile mode. The profile request takes no effect."
+            }
+        else:
+            self.policy_replicas[replica_name].do_profile = True
+            logger.info(f"[Controller] Set profile mode for replica {replica_name}.")
+            return {"message": f"Set replica {replica_name} to profile mode."}
+
+    async def set_trace_path(
+        self, replica_name: str, trace_path: str, global_rank: int
+    ):
+        if replica_name not in self.policy_replicas:
+            logger.warning(
+                f"[Controller] Replica {replica_name} not found in policy replicas. The trace path request takes no effect."
+            )
+            return None
+        return await self.policy_replicas[replica_name].set_trace_path(
+            trace_path, global_rank
+        )
+
     async def trigger_data_fetch_and_training(self):
         sorted_replicas = [
             replica

@@ -23,7 +23,7 @@ from cosmos_reason1.policy.config import (
     SFTDataConfig,
     config_hash,
 )
-from cosmos_reason1.utils.util import compute_mfu
+from cosmos_reason1.utils.util import compute_mfu, basename_from_modelpath
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
 import time
@@ -252,7 +252,7 @@ class SFTDataset(Dataset):
             video_clips_path = os.path.join(
                 cache_dir,
                 "datasets",
-                self.config.dataset_name,
+                basename_from_modelpath(self.config.dataset_name),
                 self.config.dataset_subset,
                 "video_clips",
             )
@@ -684,6 +684,8 @@ class SFTTrainer(Trainer):
         return val_avg_loss
 
     def train(self):
+        self.profiler.start()
+
         for batch in self.train_data_loader:
             start_time = time.time()
             for k, v in batch.items():
@@ -815,6 +817,9 @@ class SFTTrainer(Trainer):
                     f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5e}"
                 )
 
+            # For profiling
+            self.profiler.step()
+
             val_score = None
             # validation
             if (
@@ -836,8 +841,8 @@ class SFTTrainer(Trainer):
                         f"[Policy] Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
                     )
                     self.export_safetensors(
-                        os.path.join(
-                            self.config.train.output_dir,
+                        output_dir=self.config.train.output_dir,
+                        rel_path=os.path.join(
                             "safetensors",
                             f"step_{self.train_step}",
                         ),
@@ -862,14 +867,15 @@ class SFTTrainer(Trainer):
                 f"[Policy] Saving final huggingface checkpoint to {self.config.train.output_dir}..."
             )
             self.export_safetensors(
-                os.path.join(
-                    self.config.train.output_dir,
+                output_dir=self.config.train.output_dir,
+                rel_path=os.path.join(
                     "safetensors",
                     f"step_{self.train_step}",
                 ),
                 trainable_only=False,
                 is_final=True,
             )
+
         logger.info(
             f"[Policy] Training finished at step {self.train_step}/{self.total_steps}, saving final cosmos checkpoint..."
         )

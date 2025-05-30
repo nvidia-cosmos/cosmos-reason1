@@ -84,6 +84,7 @@ If you want to upload to huggingface, make sure your HF_TOKEN mentioned above ha
 
 If you want to upload to s3, you need to add the following variables to your environment:
 ```bash
+export AWS_ENDPOINT_URL='your-endpoint-url' # Optional
 export AWS_ACCESS_KEY_ID='your-access-key'
 export AWS_SECRET_ACCESS_KEY='your-secret-key'
 export AWS_DEFAULT_REGION='your-s3-region'

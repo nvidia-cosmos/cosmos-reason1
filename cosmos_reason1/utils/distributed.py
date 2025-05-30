@@ -14,14 +14,10 @@
 # limitations under the License.
 
 # Standard library imports
-import array
-import fcntl
 import math
 import os
 import re
-import socket
 import time
-import struct
 from datetime import timedelta
 from typing import Dict, Iterable, Optional, Union
 from functools import partial
@@ -42,7 +38,7 @@ from torch.distributed.tensor.parallel import ParallelStyle
 # Local imports
 import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.util import make_request_with_retry
+from cosmos_reason1.utils.network_util import make_request_with_retry
 from cosmos_reason1.utils import constant
 
 
@@ -239,131 +235,6 @@ def dist_max(x: torch.Tensor, mesh: DeviceMesh) -> float:
 
 def dist_mean(x: torch.Tensor, mesh: DeviceMesh) -> float:
     return _dist_reduce(x, reduceOp=c10d.ReduceOp.AVG.name, mesh=mesh)
-
-
-def get_ip_address(ifname):
-    """
-    Returns the IPv4 address assigned to the given interface.
-
-    Args:
-        ifname (str): The interface name (e.g., "eth0").
-
-    Returns:
-        str or None: The IPv4 address as a string if found, else None.
-    """
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        # 0x8915 is SIOCGIFADDR; pack interface name (limited to 15 chars)
-        ip_bytes = fcntl.ioctl(
-            s.fileno(), 0x8915, struct.pack("256s", ifname[:15].encode("utf-8"))
-        )
-        ip = socket.inet_ntoa(ip_bytes[20:24])
-        return ip
-    except OSError:
-        return None
-
-
-def get_mellanox_ips():
-    """
-    Scans for Mellanox Ethernet interfaces (vendor "0x15b3", "0x1d0f") in /sys/class/net and returns
-    their associated IPv4 addresses.
-
-    Returns:
-        list of dict: Each dict contains keys 'eth' (interface name) and 'ip' (IPv4 address).
-    """
-    result = []
-    net_dir = "/sys/class/net"
-
-    if not os.path.isdir(net_dir):
-        return result
-
-    for iface in os.listdir(net_dir):
-        vendor_path = os.path.join(net_dir, iface, "device", "vendor")
-        if not os.path.isfile(vendor_path):
-            continue
-        try:
-            with open(vendor_path, "r") as vf:
-                vendor = vf.read().strip()
-        except Exception:
-            continue
-
-        # Amazon: 0x1d0f
-        # Mellanox: 0x15b3
-        if vendor not in ["0x1d0f", "0x15b3"]:
-            continue
-
-        # Get the IPv4 address for this interface.
-        ip = get_ip_address(iface)
-        if ip is not None:
-            result.append({"eth": iface, "ip": ip})
-    return result
-
-
-def get_all_ipv4_addresses():
-    """
-    Returns all IPv4 addresses for interfaces on the system, excluding 127.0.0.1.
-
-    Uses the SIOCGIFCONF ioctl call to fetch all interfaces.
-
-    Returns:
-        list of dict: Each dict contains 'eth' (interface name) and 'ip' (IPv4 address).
-    """
-    ip_list = []
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-    # Allocate buffer for maximum number of interfaces.
-    max_interfaces = 128
-    bytes_size = max_interfaces * 32
-    names = array.array("B", b"\0" * bytes_size)
-
-    # SIOCGIFCONF to get list of interfaces.
-    try:
-        outbytes = struct.unpack(
-            "iL",
-            fcntl.ioctl(
-                s.fileno(),
-                0x8912,  # SIOCGIFCONF
-                struct.pack("iL", bytes_size, names.buffer_info()[0]),
-            ),
-        )[0]
-    except Exception:
-        logger.error("Failed to get all IPv4 addresses")
-        return ip_list
-
-    namestr = names.tobytes()
-
-    # Each entry is typically 40 bytes.
-    for i in range(0, outbytes, 40):
-        iface_name = namestr[i : i + 16].split(b"\0", 1)[0].decode("utf-8")
-        ip_addr = socket.inet_ntoa(namestr[i + 20 : i + 24])
-        if ip_addr != "127.0.0.1":
-            ip_list.append({"eth": iface_name, "ip": ip_addr})
-    return ip_list
-
-
-def get_eth_ips():
-    """
-    Determines whether the Infiniband driver is active.
-
-    - If /sys/class/infiniband exists, returns the IP addresses bound to Mellanox Ethernet interfaces.
-    - Otherwise, returns all IPv4 addresses on the system except 127.0.0.1.
-
-    Returns:
-        list of dict: Each dictionary contains 'eth' (interface name) and 'ip' (IPv4 address).
-    """
-    infiniband_dir = "/sys/class/infiniband"
-
-    ip_info = []
-
-    if os.path.isdir(infiniband_dir):
-        # Infiniband is active; return Mellanox interface IPs.
-        ip_info = get_mellanox_ips()
-
-    if not ip_info:
-        # Infiniband not found; return all IPv4 addresses (excluding loopback).
-        ip_info = get_all_ipv4_addresses()
-
-    return [x["ip"] for x in ip_info]
 
 
 class ReplicateParallel(ParallelStyle):

@@ -400,6 +400,26 @@ class GrpoConfig:
 
 
 @dataclass
+class ProfilerConfig:
+    enable_profiler: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable profiler for training",
+        },
+    )
+    active_steps: int = field(
+        default=1, metadata={"help": "The number of steps that profiler traces."}
+    )
+
+    rank_filter: List[int] = field(
+        default_factory=list,
+        metadata={
+            "help": "The ranks that profiler traces.",
+        },
+    )
+
+
+@dataclass
 class TrainingConfig:
     train_policy: Union[SFTDataConfig, GrpoConfig] = field(
         default_factory=SFTDataConfig
@@ -710,6 +730,7 @@ class Config:
     rollout: RolloutConfig = field(default_factory=RolloutConfig)
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    profiler: ProfilerConfig = field(default_factory=ProfilerConfig)
     redis: str = skip_ui_field(
         default="",
         metadata={

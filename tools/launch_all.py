@@ -927,8 +927,12 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
     controller_cmd = None
     tmpfile_toml = None
     if control_url is None:
-        cosmos_config["policy"]["parallelism"]["n_init_replicas"] = n_policy
-        cosmos_config["rollout"]["parallelism"]["n_init_replicas"] = n_rollouts
+        if "policy" in cosmos_config and "parallelism" in cosmos_config["policy"]:
+            # Only available for RL.
+            cosmos_config["policy"]["parallelism"]["n_init_replicas"] = n_policy
+        if "rollout" in cosmos_config and "parallelism" in cosmos_config["rollout"]:
+            # Only available for RL.
+            cosmos_config["rollout"]["parallelism"]["n_init_replicas"] = n_rollouts
         # Create a temporary file and write to it
         with tempfile.NamedTemporaryFile(mode='w+', suffix=".toml", delete=False) as tmpfile:
             toml.dump(cosmos_config, tmpfile)
@@ -942,6 +946,8 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
             logger.info("Prepare data for Lepton job, please wait...")
             from cosmos_reason1.policy.config import Config as PolicyConfig
             policy_config = PolicyConfig.from_dict(cosmos_config)
+            from cosmos_reason1.utils.modelscope import update_config_if_modelscope
+            policy_config = update_config_if_modelscope(policy_config)
             util.prepare_cosmos_data(config=policy_config)
 
     def get_lepton_ip(worker_idx: int) -> str:

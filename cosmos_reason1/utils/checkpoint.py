@@ -23,22 +23,40 @@ import shutil
 import numpy as np
 import concurrent.futures as futures
 from dataclasses import asdict
+from botocore.exceptions import ClientError
+from botocore.config import Config as BotoConfig
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.policy.config import Config as CosmosConfig
+
+
+def upload_file_to_s3(
+    local_file_path: str,
+    bucket_name: str,
+    s3_file_path: str,
+):
+    config = BotoConfig(retries={"max_attempts": 10, "mode": "standard"})
+    s3_client = boto3.client("s3", config=config)
+    try:
+        s3_client.head_bucket(Bucket=bucket_name)
+    except ClientError:
+        print(f"Bucket {bucket_name} does not exist, creating it now.")
+        s3_client.create_bucket(Bucket=bucket_name)
+    s3_client.upload_file(local_file_path, bucket_name, s3_file_path)
+    logger.info(f"Uploaded {local_file_path} to s3://{bucket_name}/{s3_file_path}")
 
 
 def upload_folder_to_s3(
     local_folder: str,
     bucket_name: str,
     s3_folder: str,
-    aws_access_key_id: str = None,
-    aws_secret_access_key: str = None,
 ):
-    s3_client = boto3.client(
-        "s3",
-        aws_access_key_id=aws_access_key_id,
-        aws_secret_access_key=aws_secret_access_key,
-    )
+    config = BotoConfig(retries={"max_attempts": 10, "mode": "standard"})
+    s3_client = boto3.client("s3", config=config)
+    try:
+        s3_client.head_bucket(Bucket=bucket_name)
+    except ClientError:
+        print(f"Bucket {bucket_name} does not exist, creating it now.")
+        s3_client.create_bucket(Bucket=bucket_name)
     for root, _, files in os.walk(local_folder):
         for file in files:
             local_file_path = os.path.join(root, file)
@@ -56,6 +74,10 @@ class CheckpointMananger:
         self.global_rank = global_rank
         self.save_mode = config.train.ckpt.save_mode
         self.ckpt_output_dir = os.path.join(config.train.output_dir, "checkpoints")
+        if self.config.train.ckpt.upload_s3:
+            self.ckpt_s3_output_dir = os.path.join(
+                config.train.ckpt.s3_prefix, "checkpoints"
+            )
         if self.config.train.ckpt.enable_checkpoint:
             if not os.path.exists(self.ckpt_output_dir):
                 os.makedirs(self.ckpt_output_dir, exist_ok=True)
@@ -112,24 +134,30 @@ class CheckpointMananger:
             **kwargs: Additional information to save, e.g., is_final.
         """
 
-        def _save_upload(state_dict, path, is_final=False):
-            torch.save(state_dict, path)
+        def _save_upload(state_dict, local_rel_path, is_final=False):
+            local_abs_path = os.path.join(self.ckpt_output_dir, local_rel_path)
+            torch.save(state_dict, local_abs_path)
             if self.config.train.ckpt.upload_s3:
                 if (self.config.train.ckpt.upload_s3 == "final" and is_final) or (
                     self.config.train.ckpt.upload_s3 == "all"
                 ):
-                    upload_folder_to_s3(
-                        local_folder=os.path.dirname(path),
+                    s3_path = os.path.join(self.ckpt_s3_output_dir, local_rel_path)
+                    upload_file_to_s3(
+                        local_file_path=local_abs_path,
                         bucket_name=self.config.train.ckpt.s3_bucket,
-                        s3_folder=self.config.train.ckpt.s3_prefix,
+                        s3_file_path=s3_path,
                     )
 
         is_final = kwargs.get("is_final", False)
-        cur_step_ckpt_dir = os.path.join(self.ckpt_output_dir, f"step_{step}", "policy")
-        os.makedirs(cur_step_ckpt_dir, exist_ok=True)
+        cur_step_ckpt_dir = os.path.join(f"step_{step}", "policy")
+        os.makedirs(
+            os.path.join(self.ckpt_output_dir, cur_step_ckpt_dir), exist_ok=True
+        )
 
         # construct the extra info dict
-        with open(os.path.join(cur_step_ckpt_dir, "cosmos_config"), "w") as f:
+        with open(
+            os.path.join(self.ckpt_output_dir, cur_step_ckpt_dir, "cosmos_config"), "w"
+        ) as f:
             f.write(json.dumps(asdict(self.config), indent=4))
         extra_info = {"rng_state": self.get_rng_state()}
         for key, value in kwargs.items():
@@ -199,6 +227,10 @@ class CheckpointMananger:
                     is_final,
                 )
             )
+            if is_final:
+                # wait for all futures to complete before returning for final save
+                futures.wait(self.pre_save_futures)
+                self.pre_save_futures = []
         else:  # sync
             _save_upload(model.state_dict(), model_ckpt_path, is_final)
             _save_upload(optimizer.state_dict(), optimizer_ckpt_path, is_final)
@@ -206,7 +238,7 @@ class CheckpointMananger:
             _save_upload(extra_info, extra_info_ckpt_path, is_final)
 
         logger.info(
-            f"[Policy] Step: {step}, checkpoint saved successfully at {cur_step_ckpt_dir}."
+            f"[Policy] Step: {step}, checkpoint saved successfully at {os.path.join(self.ckpt_output_dir, cur_step_ckpt_dir)}."
         )
 
     def load_checkpoint(

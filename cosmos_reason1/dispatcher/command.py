@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Type, Callable
 import copy
 import uuid
 from abc import ABC
@@ -96,6 +96,7 @@ class Command(ABC):
                 dict_v["items_count"],
                 dict_v["global_step"],
                 dict_v["total_steps"],
+                dict_v["do_profile"],
                 dict_v["uuid"],
             )
         elif dict_v["command_type"] == CommandType.ALL_REDUCE:
@@ -350,6 +351,7 @@ class DataFetchCommand(Command):
         items_count: int,
         global_step: int,
         total_steps: int,
+        do_profile: bool,
         uuid: str,
     ):
         super().__init__(uuid, CommandScope.LOCAL, CommandType.DATA_FETCH)
@@ -357,11 +359,13 @@ class DataFetchCommand(Command):
         self.items_count = items_count
         self.global_step = global_step
         self.total_steps = total_steps
+        self.do_profile = do_profile
 
     replica_name: Optional[str] = None
     items_count: Optional[int] = None
     global_step: Optional[int] = None
     total_steps: Optional[int] = None
+    do_profile: Optional[bool] = None
 
     @classmethod
     def trigger(
@@ -372,7 +376,14 @@ class DataFetchCommand(Command):
         total_steps: int,
         redis_handler: RedisStreamHandler,
     ):
-        cmd = cls(replica.name, items_count, global_step, total_steps, cls.new_uuid())
+        cmd = cls(
+            replica.name,
+            items_count,
+            global_step,
+            total_steps,
+            replica.do_profile,
+            cls.new_uuid(),
+        )
         redis_handler.publish_command(cmd.pack(), replica.name)
 
 
@@ -395,3 +406,17 @@ class AllReduceCommand(Command):
         cmd = cls(replica_name_to_rank, cls.new_uuid())
         for replica_name, _ in replica_name_to_rank.items():
             redis_handler.publish_command(cmd.pack(), replica_name)
+
+
+class CommandRegistry:
+    def __init__(self):
+        self.registry: Dict[Type[Command], Callable] = {}
+
+    def register(self, key: Type[Command], func: Callable):
+        if key not in self.registry:
+            self.registry[key] = func
+        else:
+            raise ValueError(f"Command handler for {key} already registered")
+
+    def get_command_handler(self, key: Type[Command]) -> Optional[Callable]:
+        return self.registry.get(key, None)

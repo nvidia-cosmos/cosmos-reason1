@@ -21,7 +21,7 @@ from cosmos_reason1.utils.constant import (
     COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
 )
 from typing import List
-from cosmos_reason1.utils.util import make_request_with_retry
+from cosmos_reason1.utils.network_util import make_request_with_retry
 from functools import partial
 from cosmos_reason1.utils.logging import logger
 import enum

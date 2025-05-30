@@ -33,3 +33,7 @@ class RolloutWorkerBase(CommMixin):
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
         self.device = torch.device(f"cuda:{self.local_rank}")
         torch.cuda.set_device(self.device)
+
+        # Initialize the communication to controller.
+        self.init_comm()
+        self.init_redis()
