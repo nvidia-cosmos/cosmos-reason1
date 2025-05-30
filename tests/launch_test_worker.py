@@ -124,12 +124,16 @@ class TestPolicy:
         self.replica_name = name
         self.rollouts_comm = rollouts_comm
         self.policy_to_rollout_insts = None
-        self.sync_weight_stream = torch.cuda.Stream()
         self.map_w_from_policy_to_rollout = self.model.sharded_tensors
         self.model.sorted_params = self.model.sorted_sharded_params
+        self.p2r_nccl_uuids = rollouts_comm
+        self.train_stream = torch.cuda.Stream()
 
     def execute_policy_to_rollout_unicast(self, command: PolicyToRolloutUnicastCommand):
         pass
+
+    def precollect_parameters_for_sync(self):
+        return {}
 
 
 class TestRollout:
@@ -161,7 +165,6 @@ class TestRollout:
             self.model.model_path,
         )
         self.weight_mapper = self.parallel_mapper.weight_mapper
-        self.weight_sync_stream = torch.cuda.Stream()
         compatibale_map = self.model.sharded_tensors
         compatibale_list = self.model.sorted_sharded_params
         operate_compatibale_map = {
@@ -180,6 +183,7 @@ class TestRollout:
             custom_generate_compatible_map, self.weight_mapper
         )
         self.weight_synced_event = threading.Event()
+        self.inference_stream = torch.cuda.Stream()
 
     def get_underlying_model(self):
         return None
@@ -230,7 +234,7 @@ def run_policy_send_to_rollout(shm_name, shm_size, rank):
             GRPOTrainer.execute_policy_to_rollout_unicast, policy
         )
         policy.execute_policy_to_rollout_unicast(command)
-        policy.sync_weight_stream.synchronize()
+        policy.train_stream.synchronize()
 
     finally:
         # Detach from shared memory
@@ -271,7 +275,7 @@ def run_rollout_recv_from_policy(shm_name, shm_size, rank):
             vLLMRolloutWorker.sync_weight_from_policy, rollout
         )
         rollout.sync_weight_from_policy(command)
-        rollout.weight_sync_stream.synchronize()
+        rollout.inference_stream.synchronize()
 
         for k, v in rollout.operate_compatibale_map.items():
             torch.allclose(v, rollout.ref_compatibale_map[k])
@@ -342,6 +346,8 @@ def policy_to_policy_sync_common(
         Trainer.init_comm = dummy
         CommMixin.init_redis = dummy
         CommMixin.start_heartbeat = dummy
+        CommMixin.replica_name = policy_name
+        CommMixin.remote_hosts = ["localhost:0"]
         policy = GRPOTrainer(cosmos_config, parallel_dims)
         policy.model_load_from_hf()
         policy.replica_name = policy_name
