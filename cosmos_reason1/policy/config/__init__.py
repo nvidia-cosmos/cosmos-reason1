@@ -96,22 +96,6 @@ class SFTDataConfig:
             "help": "Number of batches loaded in advance by each worker.",
         },
     )
-    enable_validation: bool = field(
-        default=False,
-        metadata={"help": "Enable validation during training."},
-    )
-    validation_freq: int = field(
-        default=20,
-        metadata={
-            "help": "Validation frequency during training, in terms of training steps",
-        },
-    )
-    validation_batch_per_replica: int = field(
-        default=24,
-        metadata={
-            "help": "The batch size for validation per iteration in one replica.",
-        },
-    )
     conversation_column_name: str = field(
         default="conversations",  # "conversation",
         metadata={"help": "Column name for formated conversation json"},
@@ -507,6 +491,23 @@ class TrainingConfig:
         default=8,
         metadata={
             "help": "The batch size for training per iteration in one replica, this is the local batch size for each gradient accumulation step",
+        },
+    )
+
+    enable_validation: bool = field(
+        default=False,
+        metadata={"help": "Enable validation during training."},
+    )
+    validation_freq: int = field(
+        default=20,
+        metadata={
+            "help": "Validation frequency during training, in terms of training steps",
+        },
+    )
+    validation_batch_per_replica: int = field(
+        default=24,
+        metadata={
+            "help": "The batch size for validation per iteration in one replica.",
         },
     )
 

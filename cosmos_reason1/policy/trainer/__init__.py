@@ -86,7 +86,7 @@ class Trainer(CommMixin):
         try:
             # Apply parallelism to the model
             parallelize_fn, _ = model.parallelize_fn
-            self.pp_scheduler = parallelize_fn(
+            self.pp_scheduler, self.pp_scheduler_val = parallelize_fn(
                 model, parallel_dims, config, pp_loss_fn=self.pp_loss_fn
             )
             model.to_empty(device=self.device)

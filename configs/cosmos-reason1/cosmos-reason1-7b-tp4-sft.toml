@@ -20,6 +20,9 @@ fsdp_offload = false
 fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 4
 sync_weight_interval = 1
+enable_validation = true
+validation_freq = 30
+validation_batch_per_replica = 2
 
 [policy]
 model_name_or_path = "nvidia/Cosmos-Reason1-7B"
@@ -40,9 +43,6 @@ dataset_test_size = 100
 enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
-enable_validation = true
-validation_freq = 30
-validation_batch_per_replica = 2
 conversation_column_name = "conversations"
 vision_asset_column_name = "video"
 fps = 1

@@ -300,7 +300,9 @@ class SaveManager:
         self.best_score = float("inf") if "loss" in metric else -float("inf")
 
     def save_check(self, step: int, **kwargs):
-        if self.global_rank == 0:
+        pp_enabled = kwargs.get("pp_enabled", False)
+        pp_last_stage = kwargs.get("pp_last_stage", False)
+        if (self.global_rank == 0 and not pp_enabled) or (pp_enabled and pp_last_stage):
             heapq.heappush(self.saved_steps, step)
             # remove the old checkpoints
             if len(self.saved_steps) > self.max_keep:
@@ -330,7 +332,9 @@ class SaveManager:
                     if os.path.islink(best_ckpt_dir):
                         os.unlink(best_ckpt_dir)
                     os.symlink(f"step_{step}", best_ckpt_dir)
-                    logger.info(f"Best checkpoint updated to step_{step}")
+                    logger.info(
+                        f"Best checkpoint updated to step_{step} with score: {val_score}"
+                    )
                     if self.config.train.ckpt.export_safetensors:
                         best_safetensors_dir = os.path.join(
                             self.config.train.output_dir, "safetensors", "best"

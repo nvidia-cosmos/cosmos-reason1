@@ -37,6 +37,7 @@ from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.patch import PipelineStage, Schedule1F1B
+from torch.distributed.pipelining.schedules import ScheduleGPipe
 from typing import Callable, Optional
 from cosmos_reason1.utils.distributed import ReplicateParallel
 
@@ -138,15 +139,43 @@ def parallelize(
             == 0
         ), "train_batch / pp_micro_batch_size must be divisible by pp_size"
         assert pp_loss_fn is not None, "pp_loss_fn must be provided"
+        n_microbatches = (
+            config.train.train_batch_per_replica
+            // config.policy.parallelism.pp_micro_batch_size
+        )
+        if config.train.enable_validation:
+            assert (
+                config.train.validation_batch_per_replica
+                % config.policy.parallelism.pp_micro_batch_size
+                == 0
+            ), "validation_batch must be divisible by pp_micro_batch_size"
+            assert (
+                (
+                    config.train.validation_batch_per_replica
+                    // config.policy.parallelism.pp_micro_batch_size
+                )
+                % pp_size
+                == 0
+            ), "validation_batch / pp_micro_batch_size must be divisible by pp_size"
+            n_val_microbatches = (
+                config.train.validation_batch_per_replica
+                // config.policy.parallelism.pp_micro_batch_size
+            )
         schedule = Schedule1F1B(
             stage=stage,
-            n_microbatches=config.train.train_batch_per_replica
-            // config.policy.parallelism.pp_micro_batch_size,
+            n_microbatches=n_microbatches,
             loss_fn=pp_loss_fn,
         )
-        return schedule
+        if config.train.enable_validation:
+            val_schedule = ScheduleGPipe(
+                stage=stage,
+                n_microbatches=n_val_microbatches,
+            )
+            return schedule, val_schedule
+        else:
+            return schedule, None
     else:
-        return None
+        return None, None
 
 
 def apply_tp_ep(

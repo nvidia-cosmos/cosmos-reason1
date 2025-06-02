@@ -540,7 +540,7 @@ class SFTTrainer(Trainer):
         self.model.train()
 
         # Enlarge the compile cache size for validation
-        if config.train.compile and config.train.train_policy.enable_validation:
+        if config.train.compile and config.train.enable_validation:
             torch._dynamo.config.cache_size_limit = 64
 
         self.dp_rank, self.dp_world_size = 0, 1
@@ -584,7 +584,7 @@ class SFTTrainer(Trainer):
         )
         self.val_data_loader = DataLoader(
             val_dataset,
-            batch_size=config.train.train_policy.validation_batch_per_replica,  # Use the same batch size as training
+            batch_size=config.train.validation_batch_per_replica,
             num_workers=config.train.train_policy.dataloader_num_workers,
             prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
             sampler=val_sampler,
@@ -649,26 +649,23 @@ class SFTTrainer(Trainer):
                         )
                         pp_first_stage = self.parallel_dims.pp_coord[0] == 0
 
-                        # Pipeline Parallel forward / backward inside step() call
-                        val_targets, val_losses = (
-                            (val_labels, []) if pp_last_stage else (None, None)
-                        )
                         if pp_first_stage:
-                            self.pp_scheduler.step(
+                            self.pp_scheduler_val.step(
                                 **val_batch, position_ids=val_position_ids
                             )
                         else:
-                            # FWD + BWD if it is 1F1B-like scheduler
-                            self.pp_scheduler.step(
-                                position_ids=val_position_ids,
-                                target=val_targets,
-                                losses=val_losses,
+                            pp_out = self.pp_scheduler_val.step(
+                                position_ids=val_position_ids
                             )
-                        val_loss = (
-                            torch.mean(torch.stack(val_losses)).to(self.device)
-                            if pp_last_stage
-                            else torch.tensor([-1.0], device=self.device)
-                        )
+
+                        if pp_last_stage:
+                            val_logits = pp_out[:, :-1].contiguous()
+                            val_loss = self.loss_fn(
+                                val_logits.view(-1, val_logits.size(-1)),
+                                val_labels[:, 1:].contiguous().view(-1),
+                            )
+                        else:
+                            val_loss = torch.tensor([-1.0], device=self.device)
                     else:
                         val_logits = self.model(
                             **val_batch, position_ids=val_position_ids
@@ -685,6 +682,7 @@ class SFTTrainer(Trainer):
 
     def train(self):
         self.profiler.start()
+        pp_last_stage = False
 
         for batch in self.train_data_loader:
             start_time = time.time()
@@ -823,9 +821,8 @@ class SFTTrainer(Trainer):
             val_score = None
             # validation
             if (
-                self.config.train.train_policy.enable_validation
-                and self.train_step % self.config.train.train_policy.validation_freq
-                == 0
+                self.config.train.enable_validation
+                and self.train_step % self.config.train.validation_freq == 0
             ):
                 val_score = self.validate()
 
@@ -856,9 +853,13 @@ class SFTTrainer(Trainer):
                     optimizer=self.optimizers,
                     scheduler=self.lr_schedulers,
                     step=self.train_step,
-                    val_score=val_score,
                 )
-                self.save_manager.save_check(step=self.train_step, val_score=val_score)
+                self.save_manager.save_check(
+                    step=self.train_step,
+                    val_score=val_score,
+                    pp_enabled=self.parallel_dims.pp_enabled,
+                    pp_last_stage=pp_last_stage,
+                )
 
         # process the final step
         val_score = self.validate()
@@ -884,10 +885,14 @@ class SFTTrainer(Trainer):
             optimizer=self.optimizers,
             scheduler=self.lr_schedulers,
             step=self.train_step,
-            val_score=val_score,
             is_final=True,
         )
-        self.save_manager.save_check(step=self.train_step, val_score=val_score)
+        self.save_manager.save_check(
+            step=self.train_step,
+            val_score=val_score,
+            pp_enabled=self.parallel_dims.pp_enabled,
+            pp_last_stage=pp_last_stage,
+        )
 
     @property
     def pp_loss_fn(self):
