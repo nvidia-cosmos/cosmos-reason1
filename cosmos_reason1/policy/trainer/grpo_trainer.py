@@ -585,7 +585,7 @@ class GRPOTrainer(Trainer):
                     if need_sep_comm
                     else (self.world_size + command.dst_replica_size),
                 )
-                logger.info(
+                logger.debug(
                     f"[Policy] Create policy to rollout nccl comm: {comm_id[r_rank]} for {mesh_key}"
                 )
                 self.rollouts_comm[mesh_key] = comm_id[r_rank]

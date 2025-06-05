@@ -460,7 +460,9 @@ class HighAvailabilitylNccl:
                 self.comm_idx = -1
 
     def __execute_build_mesh(self, cmd: BuildMeshCommand) -> bool:
-        logger.info(f"{self.__log_prefix()} build mesh with {cmd.replica_name_to_rank}")
+        logger.debug(
+            f"{self.__log_prefix()} build mesh with {cmd.replica_name_to_rank}"
+        )
 
         if len(cmd.replica_name_to_rank) == 1:
             self.replica_name_to_rank = cmd.replica_name_to_rank
