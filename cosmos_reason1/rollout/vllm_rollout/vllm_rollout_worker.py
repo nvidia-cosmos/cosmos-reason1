@@ -24,7 +24,7 @@ from cosmos_reason1.utils.constant import (
 from cosmos_reason1.utils.util import list_to_b64, b64_to_list
 import cosmos_reason1.utils.distributed as dist_utils
 import torch
-from transformers import AutoTokenizer, AutoConfig
+from transformers import AutoConfig
 from cosmos_reason1.rollout.vllm_rollout.vllm_rollout import vLLMRollout
 from cosmos_reason1.dispatcher.protocol import RolloutRequest
 from cosmos_reason1.dispatcher.command import (
@@ -51,6 +51,12 @@ from cosmos_reason1.utils.network_util import make_request_with_retry
 import cosmos_reason1.utils.util as util
 from functools import partial
 from cosmos_reason1.utils import constant
+from cosmos_reason1.utils.api_suffix import (
+    COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX,
+    COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX,
+    COSMOS_API_NEXT_PROMPT_SUFFIX,
+    COSMOS_API_ROLLOUT_SUFFIX,
+)
 
 """
 Keep in mind that torch distributed is not thread safe. So try to keep the usage in the same thread.
@@ -80,17 +86,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
     def __init__(self, config: CosmosConfig, parallel_dims: ParallelDims) -> None:
         super(vLLMRolloutWorker, self).__init__(config, parallel_dims)
-        self.cosmos_config = config
-        if self.cosmos_config.rollout.parallelism.dp_shard_size == -1:
-            self.cosmos_config.rollout.parallelism.dp_shard_size = (
-                parallel_dims.dp_shard
-            )
+        self.config = config
+        if self.config.rollout.parallelism.dp_shard_size == -1:
+            self.config.rollout.parallelism.dp_shard_size = parallel_dims.dp_shard
+        assert self.config.rollout.parallelism.dp_shard_size == parallel_dims.dp_shard
         assert (
-            self.cosmos_config.rollout.parallelism.dp_shard_size
-            == parallel_dims.dp_shard
-        )
-        assert (
-            self.cosmos_config.rollout.parallelism.dp_shard_size > 0
+            self.config.rollout.parallelism.dp_shard_size > 0
         ), "[Rollout] dp_shard_size should be greater than 0."
         # event reserved for shutdown.
         self.shutdown_background_task_event = threading.Event()
@@ -99,9 +100,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             self.shutdown_background_task_event
         )
 
-        self.tokenizer = util.retry(AutoTokenizer.from_pretrained)(
-            config.policy.model_name_or_path
-        )
         if self.tokenizer.pad_token_id is None:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         # CommandQueue queried from controller.
@@ -110,10 +108,10 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             maxsize=COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE
         )
 
-        self.seed = self.cosmos_config.rollout.seed
+        self.seed = self.config.rollout.seed
 
         self.rollout: vLLMRollout = vLLMRollout(
-            self.cosmos_config,
+            self.config,
             tokenizer=self.tokenizer,
             seed=self.seed,
             load_format="dummy",
@@ -128,20 +126,18 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         # cache for NCCL communicators for P2R.
         self.policy_to_rollout_nccl_communicators = {}
 
-        self.batch_size = self.cosmos_config.rollout.batch_size
+        self.batch_size = self.config.rollout.batch_size
 
         self.background_thread: threading.Thread | None = None
 
         # For Polocy to Rollout weight mapping
         self.parallel_mapper = None
         hf_config = util.retry(AutoConfig.from_pretrained)(
-            self.cosmos_config.policy.model_name_or_path
+            self.config.policy.model_name_or_path
         )
         model_type = hf_config.model_type
         weight_mapper_cls = get_weight_mapper(model_type)
-        self.weight_mapper = weight_mapper_cls(
-            self.cosmos_config.policy.model_name_or_path
-        )
+        self.weight_mapper = weight_mapper_cls(self.config.policy.model_name_or_path)
         self.model_type = model_type
         self.model_config = hf_config
 
@@ -203,7 +199,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                             "handle_base64": base64_nccl_group_id,
                         },
                     ),
-                    self.get_alternative_urls("api/nccl/comm_initiator"),
+                    self.get_alternative_urls(COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
             except Exception as e:
@@ -241,7 +237,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                     requests.post,
                     json={"unique_pair_name": unique_id_key},
                 ),
-                self.get_alternative_urls("api/nccl/comm_acceptor"),
+                self.get_alternative_urls(COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX),
                 max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
             )
         except Exception as e:
@@ -265,12 +261,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             return
         if self.parallel_mapper is None:
             self.parallel_mapper = ParallelTopoMapperGroup(
-                self.cosmos_config.policy.parallelism,
-                self.cosmos_config.rollout.parallelism,
+                self.config.policy.parallelism,
+                self.config.rollout.parallelism,
                 command.src_replica_size,
                 self.world_size,
                 self.model_config,
-                self.cosmos_config.policy.model_name_or_path,
+                self.config.policy.model_name_or_path,
             )
 
         # get the nccl_unique_id from the controller
@@ -412,17 +408,18 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 raise e
 
     def generate(self) -> Tuple[List[List[str]], List[Tuple[int, str]]]:
-        prompt_id_and_str_list: List[Tuple[int, str]] = self._prompt_queue.get()
+        prompt_id_and_payload_list: List[Tuple[int, str]] = self._prompt_queue.get()
 
         completions_per_prompt: List[List[str]] = self.rollout.rollout_generation(
-            prompt_id_and_str_list=prompt_id_and_str_list,
+            prompt_id_and_payload_list=prompt_id_and_payload_list,
             stream=self.inference_stream,
+            data_packer=self.data_packer,
         )
-        return completions_per_prompt, prompt_id_and_str_list
+        return completions_per_prompt, prompt_id_and_payload_list
 
     def query_prompt(self) -> Tuple[List[Tuple[int, str]], bool]:
         assert self.global_rank == 0
-        prompt_id_and_str_list = None
+        prompt_id_and_payload_list = None
         is_end = False
         try:
             if not self._prompt_queue.full():
@@ -432,21 +429,21 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                         requests.get,
                         params={"n": self.batch_size},
                     ),
-                    self.get_alternative_urls("api/next_prompt"),
+                    self.get_alternative_urls(COSMOS_API_NEXT_PROMPT_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
                 prompt_meta = prompt_meta.json()
-                payload = prompt_meta["prompt_id_and_str_list"]
+                payload = prompt_meta["prompt_id_and_payload_list"]
                 if len(payload) > 0:
-                    prompt_id_and_str_list = payload
+                    prompt_id_and_payload_list = payload
                 is_end = prompt_meta.get("is_end", is_end)
             else:
-                prompt_id_and_str_list = None
+                prompt_id_and_payload_list = None
         except Exception as e:
             logger.error(f"[Rollout]Failed in query prompts from controller: {str(e)}")
-            prompt_id_and_str_list = None
+            prompt_id_and_payload_list = None
 
-        return prompt_id_and_str_list, is_end
+        return prompt_id_and_payload_list, is_end
 
     def request_new_prompts(self):
         if not self.prompt_end_event.is_set():
@@ -508,7 +505,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                         response = RolloutRequest(
                             src_replica_name=self.replica_name,
                             prompt_idxs=[],
-                            prompt_strs=[],
+                            payloads=[],
                             completions=[],
                             extra_info={
                                 "is_end": True,
@@ -523,7 +520,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                                     requests.post,
                                     json=response.model_dump(),
                                 ),
-                                self.get_alternative_urls("api/rollout"),
+                                self.get_alternative_urls(COSMOS_API_ROLLOUT_SUFFIX),
                                 max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                             )
                         except Exception as e:
@@ -543,12 +540,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 if completions is not None:
                     # only the first tp rank in the rollout replica will post the completion to the controller.
                     prompt_idxs = [prompt[0] for prompt in prompts]
-                    prompt_strs = [prompt[1] for prompt in prompts]
+                    payloads = [prompt[1] for prompt in prompts]
 
                     response = RolloutRequest(
                         src_replica_name=self.replica_name,
                         prompt_idxs=prompt_idxs,
-                        prompt_strs=prompt_strs,
+                        payloads=payloads,
                         completions=completions,
                     )
                     try:
@@ -557,7 +554,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                                 requests.post,
                                 json=response.model_dump(),
                             ),
-                            self.get_alternative_urls("api/rollout"),
+                            self.get_alternative_urls(COSMOS_API_ROLLOUT_SUFFIX),
                             max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                         )
                     except Exception as e:

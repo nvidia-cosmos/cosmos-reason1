@@ -64,6 +64,7 @@ class PolicyStatusManager:
     policy_to_rank: Dict[str, int]
     heartbeat_timestamp: Dict[str, int]
     life_status: Dict[str, LifeStatus]
+    ncclerror_timestamp: Dict[str, int]
 
     def __init__(self):
         self.status = {}
@@ -75,6 +76,7 @@ class PolicyStatusManager:
         self.optimize_step = {}
         self.heartbeat_timestamp = {}
         self.life_status = {}
+        self.ncclerror_timestamp = {}
         self.deleted = {}
 
     def set_train_batch_per_replica(self, train_batch_per_replica: int):
@@ -258,6 +260,24 @@ class PolicyStatusManager:
         if len(self.optimize_step) == 0:
             return 0
         return min(self.optimize_step.values())
+
+    def set_ncclerror(self, replica_name: str, timestamp: int):
+        """
+        Set the timeout ack of the policy.
+        """
+        self.ncclerror_timestamp[replica_name] = timestamp
+
+    def clear_ncclerror(self):
+        """
+        Clear the timeout ack of the policy.
+        """
+        self.ncclerror_timestamp.clear()
+
+    def get_all_policy_report_ncclerror(self) -> Dict[str, int]:
+        """
+        Get all the timeout ack of the policies.
+        """
+        return self.ncclerror_timestamp
 
 
 class RolloutStatus(StrEnum):

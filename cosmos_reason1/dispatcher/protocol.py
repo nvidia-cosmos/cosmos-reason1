@@ -46,6 +46,9 @@ class TrainAckRequest(BaseModel):
     replica_name: str
     iteration_count: int
 
+    # For profiling
+    profile_finished: bool = False
+
 
 class WeightReadyRequest(BaseModel):
     replica_name: str
@@ -54,7 +57,7 @@ class WeightReadyRequest(BaseModel):
 class RolloutRequest(BaseModel):
     src_replica_name: str
     prompt_idxs: List[int]
-    prompt_strs: List[str]
+    payloads: List[Any]
     completions: List[List[str]]
     extra_info: Optional[Dict[str, Any]] = None
     reference_answer: Optional[str] = None
@@ -69,7 +72,14 @@ class HeartbeatRequest(BaseModel):
 
 
 class SetProfileRequest(HeartbeatRequest):
-    pass
+    active_steps: int = 1
+    rank_filter: List[int] = [
+        0,
+    ]
+    record_shape: bool = False
+    profile_memory: bool = False
+    with_stack: bool = False
+    with_modules: bool = False
 
 
 class SetTracePathRequest(HeartbeatRequest):
@@ -122,3 +132,8 @@ class RegisterRequest(BaseModel):
         self.ranks = new_ranks
         self.group_size = new_group_size
         return self
+
+
+class NcclErrRequest(BaseModel):
+    replica_name: str
+    error: str

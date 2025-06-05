@@ -17,7 +17,7 @@ import pytest
 import torch
 import torch.multiprocessing as mp
 import cosmos_reason1._cpp as cosmos_c
-from cosmos_reason1.utils.distributed import NCCL_REDUCE_OPS
+from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
 
 
 def setup_nccl_comm(rank, world_size, nccl_uid):
@@ -155,7 +155,7 @@ def run_allreduce(rank, world_size, nccl_uid, dtypes):
         tensor = torch.ones(tensor_size, dtype=dtype, device=f"cuda:{rank}") * (
             rank + 1
         )
-        op = NCCL_REDUCE_OPS.get("sum")
+        op = HighAvailabilitylNccl.NCCL_REDUCE_OPS.get("sum")
         # Perform allreduce (sum)
         cosmos_c.nccl_allreduce(tensor, tensor, op, comm_idx)
 

@@ -115,7 +115,7 @@ def run_train():
     parallel_dims = ParallelDims.from_config(
         parallesim_config=cosmos_config.policy.parallelism
     )
-    init_distributed(cpu_enabled=cosmos_config.train.fsdp_offload)
+    init_distributed()
     parallel_dims.build_mesh(device_type="cuda")
 
     if cosmos_config.logging.enable_logging:

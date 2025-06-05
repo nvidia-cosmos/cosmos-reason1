@@ -14,15 +14,26 @@
 # limitations under the License.
 
 from enum import IntEnum
+from pathlib import Path
+import os
+
+CACHE_DIR = Path(
+    os.environ.get("COSMOS_CACHE_DIR", Path.home() / ".cache" / "cosmos_reason1")
+)
 
 COSMOS_TCP_STORE_TIMEOUT = 10000
 COSMOS_ROLLOUT_TRAJECTORY_SIZE = 30
 
-COSMOS_HEARTBEAT_TIMEOUT = 5 * 60  # 5 minutes
+# Heartbeat used to make sure the main thread is alive.
+# Mostly, Heartbeat report is non-blocking in a separate thread,
+# so we can use a shorter timeout threshold.
+COSMOS_HEARTBEAT_TIMEOUT = 200  # 200 seconds
+COSMOS_HEARTBEAT_SEND_INTERVAL = 60  # 60 seconds
+
 COSMOS_ROLLOUT_SCAN_INTERVAL = 10  # 10 seconds
 COSMOS_ROLLOUT_STEP_INTERVAL = 100  # 100 steps
 COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE = 50  # 50 prompts
-COSMOS_HEARTBEAT_SEND_INTERVAL = 60  # 60 seconds
+COSMOS_NCCL_ERROR_CLEAN_REPLICA_DELAY = 10  # 10 seconds
 
 
 class CosmosHttpRetryConfig:

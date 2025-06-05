@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.18)
 project(cosmos_cpp)
 
+cmake_policy(SET CMP0146 OLD)
+
 # Find required packages
 find_package(CUDA REQUIRED)
 find_package(Python3 COMPONENTS Interpreter Development REQUIRED)

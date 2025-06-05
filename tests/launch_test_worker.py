@@ -27,7 +27,9 @@ import toml
 import threading
 from cosmos_reason1.policy.trainer.grpo_trainer import GRPOTrainer
 from cosmos_reason1.policy.trainer import Trainer
+from cosmos_reason1.policy.trainer.sft_trainer import SFTTrainer
 from cosmos_reason1.rollout.vllm_rollout.vllm_rollout_worker import vLLMRolloutWorker
+from cosmos_reason1.rollout.vllm_rollout.vllm_rollout import vLLMRollout
 import types
 from cosmos_reason1.dispatcher.command import (
     PolicyToRolloutUnicastCommand,
@@ -44,6 +46,7 @@ from cosmos_reason1.dispatcher.protocol import Role
 from cosmos_reason1.policy.model.gpt.weight_converter import convert_weight_from_hf
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.comm.base import CommMixin
+from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
 
 POLICY_WORLD_SIZE = 4
 ROLLOUT_WORLD_SIZE = 4
@@ -343,6 +346,38 @@ def policy_to_policy_sync_common(
         def dummy(self, *args, **kwargs):
             pass
 
+        def dummy_init_nccl(self, replica_name, global_rank, controller_hosts):
+            pass
+
+        HighAvailabilitylNccl.__init__ = dummy_init_nccl
+
+        class FakeNCCL:
+            def __init__(self, comm_idx):
+                self.comm_idx = comm_idx
+
+            def get_rank(self, replica_name: str):
+                if replica_name in replica_name_to_rank:
+                    return replica_name_to_rank[replica_name]
+                else:
+                    raise ValueError(
+                        f"Replica name {replica_name} not found in mapping."
+                    )
+
+            def broadcast(self, tensor: torch.Tensor, src_replica: str):
+                src_rank = self.get_rank(src_replica)
+                cosmos_c.nccl_broadcast(tensor, src_rank, self.comm_idx)
+
+            def send(self, tensor: torch.Tensor, dst_replica: str):
+                dst_rank = self.get_rank(dst_replica)
+                cosmos_c.nccl_send(tensor, dst_rank, self.comm_idx)
+
+            def recv(self, tensor: torch.Tensor, src_replica: str):
+                src_rank = self.get_rank(src_replica)
+                cosmos_c.nccl_recv(tensor, src_rank, self.comm_idx)
+
+            def shutdown(self):
+                pass
+
         Trainer.init_comm = dummy
         CommMixin.init_redis = dummy
         CommMixin.start_heartbeat = dummy
@@ -351,7 +386,7 @@ def policy_to_policy_sync_common(
         policy = GRPOTrainer(cosmos_config, parallel_dims)
         policy.model_load_from_hf()
         policy.replica_name = policy_name
-        policy.inter_policy_nccl = comm_idx
+        policy.inter_policy_nccl = FakeNCCL(comm_idx)
         policy.mesh_ready = True
         policy.replica_name_to_rank = replica_name_to_rank
 
@@ -454,19 +489,93 @@ def run_policy_broadcast_to_policy(shm_names, shm_size, rank, total_rep, self_re
     )
 
 
+def run_dummy_policy():
+    """Run as a dummy policy process for testing"""
+    from cosmos_reason1.policy.train import run_train
+
+    def dummy_train(self):
+        pass
+
+    def dummy_model_load_from_hf(self):
+        self.model_ready = True
+
+    def dummy_execute_policy_to_rollout_unicast(self, command):
+        return True
+
+    GRPOTrainer.train = dummy_train
+    GRPOTrainer.model_load_from_hf = dummy_model_load_from_hf
+
+    def get_policy_command_handler(cls, command_type):
+        if command_type == PolicyToRolloutUnicastCommand:
+            return dummy_execute_policy_to_rollout_unicast
+        return cls.policy_command_handler_registry.get_command_handler(command_type)
+
+    GRPOTrainer.get_policy_command_handler = get_policy_command_handler
+    SFTTrainer.train = dummy_train
+    run_train()
+
+
+def run_dummy_rollout():
+    """Run as a dummy rollout process for testing purposes"""
+    from cosmos_reason1.rollout.rollout_entrance import run_rollout
+
+    def dummy_sync_weight_from_policy(self, command):
+        self.weight_synced_event.set()
+
+    def generate(self):
+        prompt_id_and_payload_list = self._prompt_queue.get()
+        payloads = [x[1] for x in prompt_id_and_payload_list]
+        completions_per_prompt = [[x] for x in payloads]
+        return completions_per_prompt, prompt_id_and_payload_list
+
+    def get_rollout_command_handler(cls, command_type):
+        if command_type == PolicyToRolloutUnicastCommand:
+            return dummy_sync_weight_from_policy
+        return cls.rollout_command_handler_registry.get_command_handler(command_type)
+
+    vLLMRolloutWorker.generate = generate
+    vLLMRolloutWorker.get_rollout_command_handler = get_rollout_command_handler
+
+    def dummy_init(self, config, tokenizer, **kwargs):
+        class Llm_engine:
+            def step(self, *args, **kwargs):
+                pass
+
+        class Rollout_engine:
+            llm_engine = Llm_engine()
+
+        self.rollout_engine = Rollout_engine()
+
+    vLLMRollout.__init__ = dummy_init
+    run_rollout()
+
+
+def dummy_controller():
+    """Run as a dummy controller process for testing purposes"""
+
+
 def main():
+    # Get shared memory name and size from command line arguments
+    shm_name = sys.argv[1]
+    shm_size = int(sys.argv[2])
+    mode = sys.argv[3]
+
+    if mode == "dummy_policy":
+        # Dummy policy process for testing
+        run_dummy_policy()
+        exit(0)
+    elif mode == "dummy_rollout":
+        # Dummy rollout process for testing
+        run_dummy_rollout()
+        exit(0)
+
     # Initialize distributed environment
-    init_distributed(True)
+    init_distributed()
     local_rank = int(os.environ.get("LOCAL_RANK", 0))
     device = torch.device(f"cuda:{local_rank}")
     torch.cuda.set_device(device)
     rank = dist.get_rank()
     world_size = dist.get_world_size()
-
-    # Get shared memory name and size from command line arguments
-    shm_name = sys.argv[1]
-    shm_size = int(sys.argv[2])
-    mode = sys.argv[3]
     print(f"Rank {rank} started with mode {mode} {torch.cuda.current_device()}")
 
     if mode == "policy_send_to_rollout":

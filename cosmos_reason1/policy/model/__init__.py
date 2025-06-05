@@ -26,6 +26,16 @@ import torch
 supported_cls_list = [GPT, Qwen2_5_VLConditionalModel, Qwen3MoE]
 
 
+def get_data_packer(config: CosmosConfig):
+    hf_config = util.retry(AutoConfig.from_pretrained)(
+        config.policy.model_name_or_path, trust_remote_code=True
+    )
+    for model_cls in supported_cls_list:
+        if hf_config.model_type in model_cls.supported_model_types():
+            return model_cls.data_packer()
+    raise ValueError(f"Model {config.policy.model_name_or_path} not supported.")
+
+
 def build_model(config: CosmosConfig):
     model_name_or_path = config.policy.model_name_or_path
     model = None

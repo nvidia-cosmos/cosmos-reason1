@@ -125,7 +125,7 @@ The SFT training can improve the model's capability on certain tasks with a simi
 In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
 
 ```shell
-python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml
+python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml --launcher ./tools/dataset/cosmos_sft.py
 ```
 
 After training finishes, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
@@ -176,35 +176,34 @@ The RL training can improve the model's reasoning capability on certain tasks wi
 In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
-python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml
+python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml --launcher ./tools/dataset/cosmos_grpo.py
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 
-### Customized Reward Function
+## Customized Dataset & Model
 
-1. Register a new reward function with signature `(to_be_evaluated: str, reference: Union[str, None], *args, **kwargs) -> float`.
-```python
-from cosmos_reason1.dispatcher.algo.reward import register_reward_fn
+Each supported model has its own pre-defined arguments like `input_ids`, `attention_mask`, etc. Unfortunately, these can vary between models. To address this, we have defined a [DataPacker](../cosmos_reason1/dispatcher/data/packer/base.py) to:
 
-def custom_reward_fn(to_be_evaluated: str, reference: Union[str, None], *args, **kwargs) -> float:
-    ...
+1. Define the data scheme/protocol for datasets.
+2. Convert dataset items into the required raw input for the rollout engine (e.g., vLLM).
+3. Convert dataset items into the required raw input for policy models.
 
-register_reward_fn("your_reward_fn_name", custom_reward_fn, override_toml=True)
-```
+We have unified this process in [decoder_only_llm_data_packer.py](../cosmos_reason1/dispatcher/data/packer/decoder_only_llm_data_packer.py) so that all decoder-only LLMs share the same data flow. For both SFT and RL scenarios, it accepts either:
+- `raw text prompt`, to be converted into `input_ids` by both rollout and policy models.
+- `conversation` format, which is parsed by the default chat template:
+  ```json
+  [
+      {
+          "role": "system",
+          "content": "You are an AI math expert, you will be given a question and required to answer."
+      }
+      ...
+  ]
+  ```
 
-if `override_toml` is set to `True`, the reward function will be registered and used no matter what is specified in the toml file.
+For more details, such as custom reward functions, check the [gsm8k_grpo.py](../tools/dataset/gsm8k_grpo.py) custom dataset example.
 
-2. (Optional) If `override_toml` is set to `False`, make sure to specify the reward function manually in the toml file:
-```toml
-[train.train_policy]
-reward_fn = ["custom_reward_fn1", "custom_reward_fn2"...]
-```
-
-3. Specify customized controller launcher so that your registration get executed before controller launch.
-  `export COSMOS_CONTROLLER_LAUNCHER=PATH_TO_LAUNCHER` 
-
-Check [custom_reward_launcher.py](../tools/examples/custom_reward_launcher.py) for detail.
-
+For custom model support, see [qwen2_5_vlm_data_packer.py](../cosmos_reason1/dispatcher/data/packer/qwen2_5_vlm_data_packer.py) and [cosmos_grpo.py](../tools/dataset/cosmos_grpo.py).
 
 ## 🚀 Inference
 You may refer to the `inference.py` code snippet adopted from the [Qwen2.5-VL repo](https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md#inference-locally) to run inference with the Cosmos-Reason1 model.

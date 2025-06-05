@@ -18,11 +18,14 @@ import math
 import os
 import re
 import time
+import threading
+from queue import Queue, Empty
 from datetime import timedelta
-from typing import Dict, Iterable, Optional, Union
+from typing import Dict, Iterable, Optional, Union, Callable
 from functools import partial
 from contextlib import contextmanager
 from importlib.metadata import version
+from urllib.parse import urljoin
 
 # Third party imports
 import requests
@@ -34,22 +37,30 @@ from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import DTensor, Replicate, distribute_module, Placement
 from torch.distributed.tensor.parallel import ParallelStyle
 
-
 # Local imports
 import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.network_util import make_request_with_retry
-from cosmos_reason1.utils import constant
+from cosmos_reason1.utils import constant, network_util
+from cosmos_reason1.utils.util import list_to_b64, b64_to_list, do_once
+from cosmos_reason1.dispatcher.command import Command, BuildMeshCommand
+from cosmos_reason1.utils.api_suffix import (
+    COSMOS_API_META_SUFFIX,
+    COSMOS_API_NCCL_COMM_ERROR_SUFFIX,
+)
 
 
-def init_distributed(cpu_enabled: bool):
-    world_size = os.environ.get("WORLD_SIZE", 1)
+def init_distributed(cpu_enabled: bool = True):
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
     if world_size == 1:
         return
-    torch.distributed.init_process_group(
-        backend="cuda:nccl,cpu:gloo",
-        timeout=timedelta(seconds=600),
-    )
+    elif torch.distributed.is_initialized():
+        return
+    else:
+        torch.distributed.init_process_group(
+            backend="cuda:nccl,cpu:gloo",
+            timeout=timedelta(seconds=600),
+        )
 
 
 def get_controller_metadata() -> Dict:
@@ -69,7 +80,8 @@ def get_controller_metadata() -> Dict:
         ):
             raise ValueError(f"Invalid remote host: {remote_ip}:{remote_port}")
     remote_hosts = [
-        f"http://{remote_ip}:{remote_port}/api/meta" for remote_ip in remote_ips
+        f"http://{remote_ip}:{remote_port}{COSMOS_API_META_SUFFIX}"
+        for remote_ip in remote_ips
     ]
     try:
         r = make_request_with_retry(
@@ -84,6 +96,7 @@ def get_controller_metadata() -> Dict:
     remote_eth_ips = metadata.get("config", {}).get("eth_ips", [])
     if remote_eth_ips:
         remote_ips = remote_ips + remote_eth_ips.split(";")
+
     return remote_ips, remote_port, metadata
 
 
@@ -92,30 +105,19 @@ def destroy_distributed():
         torch.distributed.destroy_process_group()
 
 
-NCCL_REDUCE_OPS = {
-    "sum": 0,
-    "prod": 1,
-    "max": 2,
-    "min": 3,
-    "avg": 4,
-}
-
-
 @torch.no_grad()
 def gradient_reduce_across_dp_replicas_(
     parameters: Union[torch.Tensor, Iterable[torch.Tensor]],
-    comm_idx: int,
+    comm: "HighAvailabilitylNccl",
 ) -> torch.Tensor:
     """
     Reduce a tensor across data parallel replicas.
+    TODO, we need make sure this function is atomic.
 
     Args:
         parameters: an iterable of Tensors or a single Tensor that will reduce gradients.
         comm_idx (int): The nccl communicator id for the reduction.
     """
-    if comm_idx < 0:
-        # comm not initialized, skip reduction
-        return
 
     grads = [p.grad for p in parameters if p.grad is not None]
 
@@ -136,14 +138,16 @@ def gradient_reduce_across_dp_replicas_(
         buckets[g.dtype].append(g.flatten())
 
     # move all grad into one bucket
-    nranks = cosmos_c.get_nccl_comm_count(comm_idx)
+    comm.wait_comm_ready()
+    nranks = comm.world_size()
 
-    op = NCCL_REDUCE_OPS.get("sum")
     for bucket in buckets.values():
         tmp_buffer = torch.cat(bucket, dim=0).contiguous()
         # we need scale grad by 1/nranks to keep grad is mean at sample level
         tmp_buffer = tmp_buffer / nranks
-        cosmos_c.nccl_allreduce(tmp_buffer, tmp_buffer, op, comm_idx)
+
+        # TODO a risk here, when comm is rebuilt, the reduce result will be wrong.
+        comm.allreduce(tmp_buffer, tmp_buffer, "sum")
 
         # copy the result back to original grad
         offset = 0
@@ -321,9 +325,14 @@ def nccl_timeout_watchdog(wait_stream=False):
     """
     nccl_v = version("nvidia-nccl-cu12")
     if nccl_v < "2.26.2":
-        logger.warning(
-            "NCCL version is less than 2.26.2, which is known to hang in some cases, please upgrade to a newer version"
-        )
+
+        @do_once
+        def warn_nccl_version():
+            logger.warning(
+                "NCCL version is less than 2.26.2, which is known to hang in some cases, please upgrade to a newer version"
+            )
+
+        warn_nccl_version()
 
     start_time = time.time()
     threshold_ms = cosmos_c.nccl_timeout_in_ms()
@@ -346,3 +355,456 @@ def nccl_timeout_watchdog(wait_stream=False):
                         f"NCCL operation took {time.time() - start_time} seconds, which is longer than the threshold {threshold_ms} ms"
                     )
         cosmos_c.watchdog_exit(abort=error_raised)
+
+
+class HighAvailabilitylNccl:
+    NCCL_REDUCE_OPS = {
+        "sum": 0,
+        "prod": 1,
+        "max": 2,
+        "min": 3,
+        "avg": 4,
+    }
+
+    DESTROY_CMD = "destroy"
+
+    def __init__(
+        self, replica_name: str, global_rank: int, controller_hosts: list[str]
+    ):
+        self.replica_name = replica_name
+        self.global_rank = global_rank
+        self.remote_hosts = controller_hosts
+        # max retry times for nccl op after nccl comm is rebuilt
+        self.max_retry = 3
+
+        # The nccl group info
+        self.comm_idx: int = -1
+        self.nccl_comm_count_map = {}
+        self.replica_name_to_rank: Dict[str, int] = {}
+
+        # For background thread
+        self.shutdown_event = threading.Event()
+        self.is_single_peer = threading.Event()
+        self.is_single_peer.clear()
+        self.is_comm_ready = threading.Event()
+        self.is_comm_ready.clear()
+        self.cmd_queue = Queue()
+        self.build_mesh_thread = threading.Thread(
+            target=self.__run_background_thread,
+            daemon=True,
+            name=f"HA_NCCL-{self.replica_name}-#{self.global_rank}",
+        )
+        self.build_mesh_thread.start()
+
+    def __get_alternative_urls(self, suffix: str):
+        # Get the alternative URLs for the given suffix
+        urls = []
+        for remote_host in self.remote_hosts:
+            urls.append(urljoin(remote_host, suffix))
+        return urls
+
+    def __get_mesh_unique_key(self, replica_name_to_rank: Dict[str, int]):
+        return (
+            "_".join(
+                [
+                    k
+                    for k, _ in sorted(
+                        replica_name_to_rank.items(), key=lambda item: item[1]
+                    )
+                ]
+            )
+            + "_"
+            + str(self.global_rank)
+        )
+
+    def __log_prefix(self):
+        if self.replica_name in self.replica_name_to_rank:
+            return f"[HA_NCCL][global_rank {self.global_rank}, replica_rank {self.replica_name_to_rank[self.replica_name]}] {self.replica_name}"
+        else:
+            return f"[HA_NCCL][global_rank {self.global_rank}] {self.replica_name}"
+
+    def __run_background_thread(self):
+        # new thread will reset current device to 0, we fix it here.
+        local_rank = int(os.environ.get("LOCAL_RANK", 0))
+        torch.cuda.set_device(local_rank)
+
+        while not self.shutdown_event.is_set():
+            try:
+                # non-blocking get the command from the queue
+                cmd = self.cmd_queue.get(timeout=1)
+            except Empty:
+                continue
+
+            # 1. destory nccl comm immediately when receive any command
+            # need_abort = True if cmd == self.DESTROY_CMD else False
+            self.__execute_destroy_nccl_comm(abort=True)
+
+            # 2. build nccl comm if it is a buildmesh command
+            if isinstance(cmd, BuildMeshCommand):
+                # first, destroy the nccl comm if it exists, then build the new nccl comm
+                self.__execute_build_mesh(cmd)
+
+    def __execute_destroy_nccl_comm(self, abort: bool = False):
+        self.is_comm_ready.clear()
+        if self.comm_idx != -1:
+            logger.info(f"{self.__log_prefix()} destroy nccl comm_idx: {self.comm_idx}")
+            try:
+                # most time, we don't need to abort the nccl comm, because the nccl comm is aborted by watchdog
+                # but if `nccl_timeout_watchdog` not used, we need to abort the nccl comm manually
+                if abort:
+                    cosmos_c.nccl_abort(self.comm_idx)
+                    # cosmos_c.destory_nccl_comm(self.comm_idx)
+            except Exception as e:
+                logger.error(f"{self.__log_prefix()} Failed in destroy nccl comm: {e}")
+            finally:
+                self.comm_idx = -1
+
+    def __execute_build_mesh(self, cmd: BuildMeshCommand) -> bool:
+        logger.info(f"{self.__log_prefix()} build mesh with {cmd.replica_name_to_rank}")
+
+        if len(cmd.replica_name_to_rank) == 1:
+            self.replica_name_to_rank = cmd.replica_name_to_rank
+            self.is_single_peer.set()
+            self.is_comm_ready.set()
+            return
+
+        # continue to build nccl comm
+        assert self.replica_name in cmd.replica_name_to_rank
+        rank = cmd.replica_name_to_rank[self.replica_name]
+        nccl_group_id = None
+        if rank == 0:
+            # initialize nccl handle for building mesh among policies
+            # only replica_rank == 0 have the right to generate nccl id.
+            nccl_group_id = cosmos_c.create_nccl_uid()
+            base64_nccl_group_id = list_to_b64(nccl_group_id)
+            logger.debug(
+                f"{self.__log_prefix()} post nccl group_id to controller: {self.__get_mesh_unique_key(cmd.replica_name_to_rank)}"
+            )
+            try:
+                make_request_with_retry(
+                    partial(
+                        requests.post,
+                        json={
+                            "unique_pair_name": self.__get_mesh_unique_key(
+                                cmd.replica_name_to_rank
+                            ),
+                            "handle_base64": base64_nccl_group_id,
+                        },
+                    ),
+                    self.__get_alternative_urls("api/nccl/comm_initiator"),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"{self.__log_prefix()} failed in post nccl group_id to controller after retries {e}."
+                )
+        else:
+            # other replicas should query the nccl group id from controller
+            # all ranks need to wait for the rollout replica 0 finished the group_id post
+            # and then they can get the group_id from controller
+            # But we don't have something like dist.barrier(), so just while True loop to query it like synchronize.
+            # all ranks not zero in replica 0 or all ranks of other replicas need to query the group_id from controller
+            try:
+                r = make_request_with_retry(
+                    partial(
+                        requests.post,
+                        json={
+                            "unique_pair_name": self.__get_mesh_unique_key(
+                                cmd.replica_name_to_rank
+                            )
+                        },
+                    ),
+                    self.__get_alternative_urls("api/nccl/comm_acceptor"),
+                    max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"{self.__log_prefix()} failed in query nccl group_id from controller after retries {e}."
+                )
+            base64_nccl_group_id = r.json()["handle_base64"]
+            nccl_group_id = b64_to_list(base64_nccl_group_id)
+
+        # create nccl comm, any error will be reported to the controller
+        try:
+            self.comm_idx = cosmos_c.create_nccl_comm(
+                nccl_group_id, rank, len(cmd.replica_name_to_rank)
+            )
+        except Exception as e:
+            # report the error to the controller
+            make_request_with_retry(
+                partial(
+                    requests.post,
+                    json={"replica_name": self.replica_name, "error": str(e)},
+                ),
+                self.__get_alternative_urls(COSMOS_API_NCCL_COMM_ERROR_SUFFIX),
+                max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+            )
+
+            logger.error(
+                f"{self.__log_prefix()} failed in create nccl comm , report to controller: {e}"
+            )
+            self.__execute_destroy_nccl_comm(abort=True)
+            return
+
+        # Also need delete old nccl handler
+        self.replica_name_to_rank = cmd.replica_name_to_rank
+        self.is_single_peer.clear()
+        self.is_comm_ready.set()
+        logger.info(
+            f"{self.__log_prefix()} created nccl_comm for replica_rank {rank} with total {len(cmd.replica_name_to_rank)} ranks."
+        )
+
+    def __do_nccl_op_with_retry(self, func: Callable, *args, **kwargs):
+        if self.is_single_peer.is_set():
+            # single peer, no need to do nccl op
+            return
+
+        for i in range(self.max_retry):
+            try:
+                self.wait_comm_ready()
+
+                with nccl_timeout_watchdog(wait_stream=True):
+                    func(comm_idx=self.comm_idx, *args, **kwargs)
+
+                # if success, break the loop
+                break
+            except Exception as e:
+                # mark the communicator is not ready
+                self.is_comm_ready.clear()
+
+                # report the error to the controller
+                # the communicator will destroy before buildmesh
+                make_request_with_retry(
+                    partial(
+                        requests.post,
+                        json={"replica_name": self.replica_name, "error": str(e)},
+                    ),
+                    self.__get_alternative_urls(COSMOS_API_NCCL_COMM_ERROR_SUFFIX),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+                logger.error(
+                    f"{self.__log_prefix()} recovering nccl op '{func.__name__}' with args {args} and kwargs {kwargs} after {i} retries: {e}"
+                )
+
+    def destroy_nccl_comm(self):
+        self.cmd_queue.put(self.DESTROY_CMD)
+
+    def push_cmd(self, cmd: BuildMeshCommand):
+        self.cmd_queue.put(cmd)
+
+    def shutdown(self):
+        self.shutdown_event.set()
+        self.build_mesh_thread.join()
+
+    def is_ready(self):
+        """
+        Check if the nccl comm is ready.
+        This is non-blocking check, user should ensure the nccl op won't be skipped.
+        """
+        return self.is_comm_ready.is_set()
+
+    def wait_comm_ready(self, timeout: float = 0):
+        """
+        Wait for the nccl comm to be ready.
+
+        Args:
+            timeout (float): The timeout in seconds.
+        """
+        start_time = time.time()
+
+        if timeout == 0:
+            while not self.is_comm_ready.is_set():
+                time.sleep(0.1)
+        else:
+            done = self.is_comm_ready.wait(timeout=timeout)
+            if not done:
+                raise TimeoutError(
+                    f"{self.__log_prefix()} wait for nccl comm ready timeout, current time: {time.time()}, start time: {start_time}, timeout: {timeout}"
+                )
+
+    def world_size(self):
+        """
+        Get the world size of the nccl comm.
+        """
+        if self.is_single_peer.is_set():
+            return 1
+
+        if not self.is_ready():
+            raise RuntimeError(
+                f"{self.__log_prefix()} nccl comm is not ready, please wait for the nccl comm to be ready"
+            )
+
+        try:
+            # TODO(zjx): there will be a risk, if the nccl comm destroyed while get_nccl_comm_count,
+            ws = cosmos_c.get_nccl_comm_count(self.comm_idx)
+        except Exception as e:
+            ws = -1
+            logger.warning(
+                f"{self.__log_prefix()} failed in get nccl comm count: {e}, please try again after the nccl comm is ready"
+            )
+
+        return ws
+
+    def get_replica_rank(self, replica_name: str):
+        self.wait_comm_ready()
+        return self.replica_name_to_rank[replica_name]
+
+    def broadcast(self, tensor: torch.Tensor, src_replica: str):
+        src_rank = self.get_replica_rank(src_replica)
+        self.__do_nccl_op_with_retry(cosmos_c.nccl_broadcast, tensor, src_rank)
+
+    def allreduce(self, sendbuff: torch.Tensor, recvbuff: torch.Tensor, op: str):
+        op = self.NCCL_REDUCE_OPS[op]
+        self.__do_nccl_op_with_retry(cosmos_c.nccl_allreduce, sendbuff, recvbuff, op)
+
+    def send(self, tensor: torch.Tensor, dst_replica: str):
+        dst_rank = self.get_replica_rank(dst_replica)
+        self.__do_nccl_op_with_retry(cosmos_c.nccl_send, tensor, dst_rank)
+
+    def recv(self, tensor: torch.Tensor, src_replica: str):
+        src_rank = self.get_replica_rank(src_replica)
+        self.__do_nccl_op_with_retry(cosmos_c.nccl_recv, tensor, src_rank)
+
+
+def prevent_vllm_from_setting_nccl_env():
+    init_distributed()
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    if local_rank == 0:
+        try:
+            # ../vllm/env_override.py
+            vllm_env_override_path = os.path.join(
+                os.path.dirname(os.path.dirname(torch.__file__)), "vllm/env_override.py"
+            )
+            if os.path.exists(vllm_env_override_path):
+                # Replace `os.environ['NCCL_CUMEM_ENABLE'] = '0' with `pass`
+                with open(vllm_env_override_path, "r") as f:
+                    lines = f.readlines()
+                    lines = [
+                        line.replace("os.environ['NCCL_CUMEM_ENABLE'] = '0'", "pass")
+                        for line in lines
+                    ]
+                with open(vllm_env_override_path, "w") as f:
+                    f.writelines(lines)
+                logger.info(
+                    f"Modified {vllm_env_override_path} to disable NCCL env override"
+                )
+        except Exception as e:
+            logger.error(f"Failed to prevent vllm from setting NCCL env: {e}")
+    if world_size > 1:
+        torch.distributed.barrier()
+
+
+class DistKVStore:
+    def __init__(self, group: dist.ProcessGroup, master_rank: int):
+        self.group = group
+        self.local_rank = self.group.rank()
+        self.world_size = self.group.size()
+        self.master_rank = master_rank if -1 < master_rank < self.world_size else 0
+
+        self.lock = threading.Lock()
+
+        self.local_store = None
+        self.__init_local_store()
+
+    def __init_local_store(self):
+        if self.world_size == 1:
+            return
+
+        if self.local_rank == self.master_rank:
+            local_ips = network_util.get_eth_ips()
+            assert len(local_ips) > 0, "No IP addresses found"
+            local_ip = local_ips[0]
+            free_port = network_util.find_available_port(22000)
+
+            max_retry = 300
+            for _ in range(max_retry):
+                try:
+                    # Init TCPStore may fail when multi processes concurrently init TCPStore, so we need to retry to find another available port
+                    self.local_store = dist.TCPStore(
+                        host_name="0.0.0.0",
+                        port=free_port,
+                        world_size=None,
+                        is_master=True,
+                        timeout=timedelta(seconds=constant.COSMOS_TCP_STORE_TIMEOUT),
+                    )
+                    break
+                except Exception:
+                    logger.error(
+                        f"[DistKVStore] Failed to bind port {free_port}, try another"
+                    )
+                    time.sleep(1)
+                    free_port = network_util.find_available_port(20000)
+
+            logger.info(f"Local store started at {local_ip}:{free_port}")
+            dist.broadcast_object_list(
+                [local_ip, free_port],
+                src=self.master_rank,
+                device=torch.device("cpu"),
+                group=self.group,
+            )
+        else:
+            broadcast_object_list = [None, None]
+            dist.broadcast_object_list(
+                broadcast_object_list,
+                src=self.master_rank,
+                device=torch.device("cpu"),
+                group=self.group,
+            )
+            local_ip, local_port = broadcast_object_list
+            assert (
+                local_ip is not None and local_port is not None
+            ), "Failed to broadcast local store info"
+
+            while True:
+                try:
+                    self.local_store = dist.TCPStore(
+                        host_name=local_ip,
+                        port=local_port,
+                        is_master=False,
+                        timeout=timedelta(seconds=constant.COSMOS_TCP_STORE_TIMEOUT),
+                    )
+                    break
+                except Exception as e:
+                    logger.error(f"Failed to connect to local store: {e}")
+                    time.sleep(3)
+                    continue
+
+    def broadcast_command(
+        self, command: Command, src: int = 0, timeout: float = 0
+    ) -> Command:
+        """
+        Broadcast a command to all ranks.
+        """
+        if self.world_size == 1:
+            return command
+
+        __key = "#BROADCAST"
+        __key_dones = [f"{__key}-done-{i}" for i in range(self.world_size)]
+
+        _wait_hook = (
+            partial(self.local_store.wait, timeout=timeout)
+            if timeout > 0
+            else self.local_store.wait
+        )
+
+        if src == self.local_rank:
+            self.local_store.set(__key, command.pack())
+        else:
+            _wait_hook([__key])
+
+        cmd_raw = self.local_store.get(__key)
+        cmd = Command.depack(cmd_raw)
+
+        try:
+            self.local_store.set(__key_dones[self.local_rank], "1")
+            _wait_hook(__key_dones)
+        except Exception as e:
+            logger.error(f"Failed to broadcast command: {e}")
+            raise e
+        finally:
+            self.local_store.delete_key(__key)
+            for _d in __key_dones:
+                self.local_store.delete_key(_d)
+
+        return cmd

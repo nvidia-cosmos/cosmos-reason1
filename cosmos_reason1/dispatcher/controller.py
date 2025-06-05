@@ -13,25 +13,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cosmos_reason1.dispatcher.replica import Atom, Replica, Rollout
-from cosmos_reason1.dispatcher.protocol import Role, MESH_NAMES
-from typing import List, Dict, Tuple, Any
+from typing import List, Dict, Tuple, Any, Optional, Callable
 import copy
 import math
 import torch
-from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.wandb_logger import is_wandb_available, init_wandb
-import cosmos_reason1.utils.util as util
-import cosmos_reason1.utils.constant as constant
-from queue import Queue
-from cosmos_reason1.dispatcher.algo.base import REGISTERED_ALGOs
-from cosmos_reason1.dispatcher.algo.reward import Reward
-from cosmos_reason1.dispatcher.data import CosmosDataset
-from torch.utils.data import DataLoader
-import cosmos_reason1.dispatcher.command as command
+import subprocess
+import atexit
+import sys
+import uuid
 import asyncio
 import time
 import itertools
+import os
+import signal
+import threading
+from queue import Queue
+from cosmos_reason1.dispatcher.replica import Atom, Replica, Rollout
+from cosmos_reason1.dispatcher.protocol import Role, MESH_NAMES
+from cosmos_reason1.utils.logging import logger
+from cosmos_reason1.utils.wandb_logger import is_wandb_available, init_wandb
+import cosmos_reason1.utils.util as util
+import cosmos_reason1.utils.network_util as network_util
+import cosmos_reason1.utils.constant as constant
+from cosmos_reason1.dispatcher.algo.base import REGISTERED_ALGOs
+from cosmos_reason1.dispatcher.algo.reward import Reward
+from cosmos_reason1.dispatcher.data import CosmosDataset, RLPayload
+from torch.utils.data import DataLoader, Dataset
+import cosmos_reason1.dispatcher.command as command
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
 from cosmos_reason1.dispatcher.status import (
     PolicyStatus,
@@ -39,11 +47,11 @@ from cosmos_reason1.dispatcher.status import (
     RolloutStatus,
     RolloutStatusManager,
 )
-from cosmos_reason1.policy.config import Config
-import os
-import signal
-import threading
+from cosmos_reason1.policy.config import Config, SubProfilerConfig
+from cosmos_reason1.dispatcher.protocol import SetProfileRequest
 from transformers import AutoTokenizer
+import tempfile
+from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 
 
 class Controller:
@@ -52,15 +60,15 @@ class Controller:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(Controller, cls).__new__(cls)
-            cls._instance.init_dist()
+            cls._instance._init_dist()
         return cls._instance
 
     def __init__(self):
         if not hasattr(self, "policy_replicas"):
-            self.init_dist()
-        self.init_status()
+            self._init_dist()
+        self._init_status()
 
-    def init_status(self):
+    def _init_status(self):
         self.policy_status_manager = PolicyStatusManager()
         self.rollout_status_manager = RolloutStatusManager()
         self.epoch = 0
@@ -69,8 +77,11 @@ class Controller:
         self.stat_completion_tokens_count = 0
         self.stat_n_samples = 0
         self.begin_time = None
+        # nccl error check
+        self.post_ncclerror_policy_invoke_id = 0
+        self.post_ncclerror_rollout_invoke_id = 0
 
-    def init_dist(self):
+    def _init_dist(self):
         self.policy_replicas: Dict[str, Replica] = {}
         self.rollout_replicas: Dict[str, Replica] = {}
         self.config = None
@@ -87,19 +98,26 @@ class Controller:
         self.rollout_init_done = False
         self.shut_down_event = threading.Event()
 
-    def init_redis(self, host: str, port: int):
-        self.redis_controller = RedisStreamHandler(ips=[host], port=port)
-        logger.info(f"[Controller] Init redis at {host}:{port}")
+    def setup(
+        self,
+        config: Config,
+        redis_port: int,
+        redis_logfile_path: str,
+        dataset: Optional[Dataset] = None,
+        reward_fns: Optional[List[Callable]] = None,
+        data_packer: Optional[DataPacker] = None,
+    ):
+        if self.config is not None:
+            raise Exception(
+                "[Controller] Config has been set. Please do not call setup again."
+            )
 
-    def set_config(self, config: Config):
         self.config = config
         task_type = config.train.train_policy.type
-        self.is_cosmos = "cosmos" in config.train.train_policy.dataset_name.lower()
         self.tokenizer = util.retry(AutoTokenizer.from_pretrained)(
             config.policy.model_name_or_path
         )
 
-        # Init wandb
         if config.logging.enable_logging:
             if is_wandb_available():
                 init_wandb(config)
@@ -108,25 +126,35 @@ class Controller:
                     "Wandb is not available. Please install it to use wandb logging features."
                 )
 
-        # Pre-process dataset
-        if self.is_cosmos:
-            util.prepare_cosmos_data(config=config)
-
-        if task_type == "grpo":
-            reward_func = Reward(config, self.tokenizer)
-            logger.info(
-                f"[Controller] Using reward function {config.train.train_policy.reward_function} for GRPO"
+        self.is_rl = task_type != "sft"
+        self.sft_user_dataset = dataset if not self.is_rl else None
+        self.user_data_packer = data_packer
+        if self.is_rl:
+            if dataset is not None:
+                # Do simple sanity check
+                assert isinstance(dataset, Dataset)
+                self.dataset = CosmosDataset(
+                    config=config, train_set=dataset, tokenizer=self.tokenizer
+                )
+                logger.info(
+                    "[Controller] Using provided dataset for training, dataset specification in the toml config will be ignored"
+                )
+            else:
+                self.dataset = CosmosDataset(config=config, tokenizer=self.tokenizer)
+            self.rl_algo = REGISTERED_ALGOs[constant.Algo.GRPO](
+                reward_fn=Reward(
+                    config=config,
+                    tokenier=self.tokenizer,
+                    explicit_reward_fn=reward_fns,
+                )
             )
-            self.rl_algo = REGISTERED_ALGOs[constant.Algo.GRPO](reward_fn=reward_func)
-            # Load GRPO dataset
-            dataset = CosmosDataset(config=config)
-            self.dataset = dataset
             self.train_dataloader = DataLoader(
                 self.dataset.train_set,
-                batch_size=1,
+                batch_size=1,  # batch size is 1 is mandatory
                 shuffle=True,
                 num_workers=config.train.train_policy.dataloader_num_workers,
                 prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
+                collate_fn=RLPayload.collate_fn,
             )
             self.train_dataloader_iter = iter(self.train_dataloader)
             self.policy_status_manager.set_num_data_samples(
@@ -137,6 +165,68 @@ class Controller:
             self.policy_status_manager.set_train_batch_per_replica(
                 config.train.train_batch_per_replica
             )
+        else:
+            self.rl_algo = None
+
+        redis_free_port = util.find_available_port(redis_port)
+        self.config.redis = str(redis_free_port)
+
+        ips = network_util.get_eth_ips()
+        if len(ips) > 0:
+            self.config.eth_ips = ";".join(ips)
+
+        random_db_file_name = f"cosmos_reason1_{str(uuid.uuid4())}.rdb"
+        config_file_path = tempfile.NamedTemporaryFile(
+            delete=False, suffix=".redis_config.conf"
+        )
+        redis_cfg_path = util.write_redis_config(
+            redis_free_port, redis_logfile_path, file_path=config_file_path.name
+        )
+        redis_server_cmd = f'redis-server {redis_cfg_path} --dbfilename {random_db_file_name} --save ""'
+
+        redis_server_proc = subprocess.Popen(
+            redis_server_cmd, shell=True, stdout=sys.stdout, stderr=sys.stderr
+        )
+
+        # Check if the redis server started successfully
+        redis_server_proc.wait()
+        ret_code = redis_server_proc.returncode
+
+        if ret_code is not None and ret_code != 0:
+            raise RuntimeError(
+                f"Failed to start redis server with command: {redis_server_cmd} with return code {ret_code}"
+            )
+        else:
+            logger.info(
+                f"[Controller] Redis server started on port {redis_free_port} with command {redis_server_cmd}"
+            )
+
+        self.redis_controller = RedisStreamHandler(
+            ips=["0.0.0.0"], port=redis_free_port
+        )
+
+        # Register the exit function to be called when the program exits
+        def exit_server(redis_server_proc, redis_free_port):
+            logger.info("Stopping redis server")
+            redis_server_proc.terminate()
+            redis_server_proc.wait()
+
+            redis_terminate_cmd = f"redis-cli -p {redis_free_port} shutdown nosave"
+            redis_terminate = subprocess.Popen(
+                redis_terminate_cmd,
+                shell=True,
+                stdout=sys.stdout,
+                stderr=sys.stderr,
+            )
+            redis_terminate.wait()
+            try:
+                os.unlink(config_file_path.name)
+            except Exception:
+                # best effort to remove the config file
+                pass
+            logger.info("Redis server stopped.")
+
+        atexit.register(exit_server, redis_server_proc, redis_free_port)
 
     async def get_commands(self, replica_name: str) -> List[command.Command]:
         if (
@@ -171,7 +261,7 @@ class Controller:
 
     async def get_batched_prompt(self, n) -> Tuple[List[Tuple[int, str]], bool]:
         # query n prompts from the dataset
-        prompt_id_and_str_list: List[Tuple[int, str]] = []
+        prompt_id_and_payload_list: List[Tuple[int, str]] = []
         is_end = False
 
         # Throttle the generation speed:
@@ -193,12 +283,17 @@ class Controller:
             n = 1
 
         for _ in range(n):
-            prompt = None
+            payload = None
             try:
-                idx, prompt = next(self.train_dataloader_iter)
+                idx, payload = next(self.train_dataloader_iter)
+                assert len(idx) == 1
+                assert len(payload) == 1
+                idx = idx[0]
+                payload = payload[0].payload
+
                 self.controller_step += 1
                 logger.debug(
-                    f"[Controller] Epoch {self.epoch} / {self.config.train.epoch}, Step {self.controller_step}, get prompt at idx {idx}, prompt {prompt}"
+                    f"[Controller] Epoch {self.epoch} / {self.config.train.epoch}, Step {self.controller_step}, get prompt at idx {idx}, payload {payload}"
                 )
             except StopIteration:
                 logger.info(f"[Controller] Epoch {self.epoch} finished.")
@@ -206,53 +301,28 @@ class Controller:
                 if self.epoch < self.config.train.epoch:
                     logger.info(f"[Controller] Epoch {self.epoch} start.")
                     self.train_dataloader_iter = iter(self.train_dataloader)
-                    idx, prompt = next(self.train_dataloader_iter)
+                    idx, payload = next(self.train_dataloader_iter)
+                    assert len(idx) == 1
+                    assert len(payload) == 1
+                    idx = idx[0]
+                    payload = payload[0].payload
                 else:
                     logger.info(
                         "[Controller] All epochs finished, start stopping all replicas."
                     )
                     is_end = True
                     break
-            finally:
-                if prompt is not None:
-                    prompt = (
-                        prompt[0]
-                        if isinstance(prompt, list) or isinstance(prompt, tuple)
-                        else prompt
-                    )
-                    assert isinstance(
-                        prompt, str
-                    ), f"Prompt should be a string, but got {type(prompt)}， {prompt}"
-                    if not self.is_cosmos:
-                        # Convert to templated prompt
-                        conversation = [
-                            {
-                                "role": "user",
-                                "content": prompt,
-                            }
-                        ]
-                        if self.config.train.train_policy.system_prompt:
-                            conversation.insert(
-                                0,
-                                {
-                                    "role": "system",
-                                    "content": self.config.train.train_policy.system_prompt,
-                                },
-                            )
-                        prompt = self.tokenizer.apply_chat_template(
-                            conversation,
-                            tokenize=False,
-                            add_generation_prompt=True,
-                        )
             idx = idx.item() if isinstance(idx, torch.Tensor) else idx
-            prompt_id_and_str_list.append((idx, prompt))
+            prompt_id_and_payload_list.append((idx, payload))
 
-        return prompt_id_and_str_list, is_end
+        return prompt_id_and_payload_list, is_end
 
-    def query_reference_answer(self, prompt_idx: int) -> str:
-        return self.dataset.train_set.query_reference_answer(prompt_idx)
+    def query_reference_answer(self, prompt_idx: int) -> Any:
+        return self.dataset.train_set.get_reference_answer(prompt_idx)
 
-    async def set_profile(self, replica_name: str):
+    async def set_profile(self, request: SetProfileRequest):
+        replica_name = request.replica_name
+
         if replica_name not in self.policy_replicas:
             logger.warning(
                 f"[Controller] Replica {replica_name} not found in policy replicas. The profile request takes no effect."
@@ -260,7 +330,7 @@ class Controller:
             return {
                 "message": "Replica not found in policy replicas. The profile request takes no effect."
             }
-        if self.policy_replicas[replica_name].do_profile:
+        if self.policy_replicas[replica_name].sub_profiler_config.do_profile:
             logger.warning(
                 f"[Controller] Replica {replica_name} is already in profile mode. The profile request takes no effect."
             )
@@ -268,7 +338,14 @@ class Controller:
                 "message": "Replica is already in profile mode. The profile request takes no effect."
             }
         else:
-            self.policy_replicas[replica_name].do_profile = True
+            kwargs_dict = request.model_dump()
+            # remove the replica_name from the kwargs_dict
+            kwargs_dict.pop("replica_name")
+            # add do_profile to the kwargs_dict
+            kwargs_dict["do_profile"] = True
+            self.policy_replicas[replica_name].sub_profiler_config = SubProfilerConfig(
+                **kwargs_dict
+            )
             logger.info(f"[Controller] Set profile mode for replica {replica_name}.")
             return {"message": f"Set replica {replica_name} to profile mode."}
 
@@ -357,7 +434,7 @@ class Controller:
                     await replica.put_rollout(
                         Rollout(
                             prompt_idx=-1,
-                            prompt="",
+                            payload="",
                             completion="",
                             extra_info={"is_end": True},
                             reward=0.0,
@@ -380,7 +457,7 @@ class Controller:
             replica_name in self.policy_replicas
             or replica_name in self.rollout_replicas
         ):
-            logger.error(
+            logger.warning(
                 f"[Controller] Replica {replica_name} not found in both policy and rollout."
             )
             return
@@ -437,7 +514,6 @@ class Controller:
         if self.begin_time is None:
             self.begin_time = time.time()
         for rollout in itertools.chain(valid_rollouts, invalid_rollouts):
-            self.stat_prompt_tokens_count += len(self.tokenizer.encode(rollout.prompt))
             self.stat_completion_tokens_count += len(
                 self.tokenizer.encode(rollout.completion)
             )
@@ -450,7 +526,7 @@ class Controller:
 
         elapsed_time_in_seconds = time.time() - self.begin_time
         logger.info(
-            f"[Controller] Stat: {self.stat_n_samples} samples, {self.stat_prompt_tokens_count} prompt tokens, {self.stat_completion_tokens_count} completion tokens, {pending_count} pending rollouts, {elapsed_time_in_seconds} seconds elapsed"
+            f"[Controller] Stat: {self.stat_n_samples} samples, {self.stat_completion_tokens_count} completion tokens, {pending_count} pending rollouts, {elapsed_time_in_seconds} seconds elapsed"
         )
 
     async def put_rollout(self, rollout: Rollout):
@@ -528,38 +604,30 @@ class Controller:
         ):
             self.policy_init_done = True
             # Trigger mesh building (Typically only occurs during initialization)
-            if len(valid_replicas) == 1:
-                # Only one policy replica, no need to build mesh
-                logger.info("Only one policy replica required, no need build mesh.")
-                self.policy_status_manager.set_status(
-                    target_replica.name, PolicyStatus.READY
-                )
-                self.policy_status_manager.set_ranks({target_replica.name: 0})
-            else:
-                # 1. Trigger mesh building
-                replicas_to_rank = command.BuildMeshCommand.trigger(
-                    valid_replicas, redis_handler=self.redis_controller
-                )
-                self.policy_status_manager.set_ranks(replicas_to_rank)
 
-                # 2. Trigger weight/optimizer state synchronization
-                initialized_replica = None
-                for replica in valid_replicas:
-                    if replica.weights_loaded_in_view_of_command:
-                        initialized_replica = replica
-                        break
-                assert (
-                    initialized_replica is not None
-                ), "No replica was selected to load weights"
-                command.PolicyToPolicyBroadcastCommand.trigger(
-                    src_replica=initialized_replica,
-                    dst_replicas=valid_replicas,
-                    redis_handler=self.redis_controller,
-                )
-                for replica in valid_replicas:
-                    self.policy_status_manager.set_status(
-                        replica.name, PolicyStatus.READY
-                    )
+            # we need buildmesh, event there is only one replica. (trigger HANccl buildmesh)
+            # 1. Trigger mesh building
+            replicas_to_rank = command.BuildMeshCommand.trigger(
+                valid_replicas, redis_handler=self.redis_controller
+            )
+            self.policy_status_manager.set_ranks(replicas_to_rank)
+
+            # 2. Trigger weight/optimizer state synchronization
+            initialized_replica = None
+            for replica in valid_replicas:
+                if replica.weights_loaded_in_view_of_command:
+                    initialized_replica = replica
+                    break
+            assert (
+                initialized_replica is not None
+            ), "No replica was selected to load weights"
+            command.PolicyToPolicyBroadcastCommand.trigger(
+                src_replica=initialized_replica,
+                dst_replicas=valid_replicas,
+                redis_handler=self.redis_controller,
+            )
+            for replica in valid_replicas:
+                self.policy_status_manager.set_status(replica.name, PolicyStatus.READY)
         elif len(valid_replicas) < self.config.policy.parallelism.n_init_replicas:
             logger.info(
                 f"Waiting for {self.config.policy.parallelism.n_init_replicas - len(valid_replicas)} more replicas to arrive"
@@ -601,7 +669,7 @@ class Controller:
                 break
         if any_loaded_policy_replica is None:
             logger.info(
-                "No policy replica was loaded, will be rescheduled after first policy replica is loaded"
+                "No weight-loaded policy replica exists, will be rescheduled after first policy replica is loaded"
             )
             return
         if all(
@@ -726,7 +794,9 @@ class Controller:
                 status_manager=self.rollout_status_manager,
             )
 
-    async def train_ack(self, replica_name: str, iteration_count: int):
+    async def train_ack(
+        self, replica_name: str, iteration_count: int, profile_finished: bool
+    ):
         if replica_name not in self.policy_replicas:
             raise Exception(f"Replica {replica_name} not found")
 
@@ -739,6 +809,14 @@ class Controller:
                 optimize_step % self.config.train.sync_weight_interval == 0
                 and not self.rollout_status_manager.all_end()
             )
+
+            if profile_finished:
+                # Only reset the do_profile flag if the profile is finished
+                logger.debug(f"[Controller] Unset the profile mode of {replica_name}")
+                self.policy_replicas[
+                    replica_name
+                ].sub_profiler_config.do_profile = False
+
             # All replicas have been reduced, trigger weight sync
             if need_sync_weight:
                 any_loaded_replica = None
@@ -874,7 +952,7 @@ class Controller:
         # Check if all atoms of the replica have arrived
         if atom.replica.all_atoms_arrived:
             logger.info(
-                f"[Controller] All atoms of Replica {atom.replica.name} has been set."
+                f"[Controller] All atoms of {role} Replica {atom.replica.name} has been set."
             )
             if role == Role.POLICY:
                 self.policy_status_manager.set_status(
@@ -916,3 +994,75 @@ class Controller:
                 await self.update_rollouts_initialize(valid_replicas, atom.replica)
             else:
                 raise Exception(f"[Controller] Unknown role during register: {role}")
+
+    async def set_replica_ncclerror(self, replica_name: str, error: str):
+        if replica_name in self.policy_replicas:
+            self.policy_status_manager.set_ncclerror(replica_name, int(time.time()))
+
+            # we use a time window to check nccl report, the last report will invoke post_ncclerror
+            self.post_ncclerror_policy_invoke_id += 1
+            current_invoke_id = self.post_ncclerror_policy_invoke_id
+            await asyncio.sleep(constant.COSMOS_NCCL_ERROR_CLEAN_REPLICA_DELAY)
+            if current_invoke_id == self.post_ncclerror_policy_invoke_id:
+                # only the latest invoke will trigger the nccl error check
+                await self.post_ncclerror(
+                    self.policy_status_manager.get_all_policy_report_ncclerror(),
+                    Role.POLICY,
+                )
+                self.policy_status_manager.clear_ncclerror()
+        elif replica_name in self.rollout_replicas:
+            raise NotImplementedError(
+                f"[Controller] Rollout replica {replica_name} set timeout ack not supported"
+            )
+        else:
+            logger.error(
+                f"[Controller] Replica {replica_name} not found in both policy and rollout."
+            )
+
+    async def post_ncclerror(
+        self, replicas_report_ncclerror: Dict[str, int], role: Role
+    ):
+        """
+        This function is used to clean the hang replicas and trigger the buildmesh command
+        """
+        all_replicas_ = (
+            self.policy_replicas if role == Role.POLICY else self.rollout_replicas
+        )
+        live_replicas = {rn: all_replicas_[rn] for rn in replicas_report_ncclerror}
+        hang_replicas = [
+            replica_name
+            for replica_name in all_replicas_
+            if replica_name not in live_replicas
+        ]
+
+        logger.info(f"[Controller] will clean hang replicas: {hang_replicas}")
+
+        if len(live_replicas) == 1:
+            # if there is only one replica, it's critical status, we should warning user to scale up the replica
+            logger.warning(
+                "[Controller] Only one replica is live, it's critical status, user should scale up the replica ASAP!"
+            )
+
+        # step 1, manual unregister the hang replicas, we only trigger buildmesh command after update the status
+        manager = None
+        if role == Role.POLICY:
+            manager = self.policy_status_manager
+            for hang_replica in hang_replicas:
+                self.policy_replicas.pop(hang_replica)
+                self.policy_status_manager.set_status(
+                    hang_replica, PolicyStatus.DELETED
+                )
+        elif role == Role.ROLLOUT:
+            raise NotImplementedError(
+                f"[Controller] Rollout replica {hang_replica} set timeout ack not supported"
+            )
+        else:
+            raise Exception(f"[Controller] Unknown role during post_ncclerror: {role}")
+
+        # step 2, send buildmesh command to the live replicas
+        if live_replicas:
+            # Trigger Mesh building
+            ranks = command.BuildMeshCommand.trigger(
+                list(live_replicas.values()), redis_handler=self.redis_controller
+            )
+            manager.set_ranks(ranks)

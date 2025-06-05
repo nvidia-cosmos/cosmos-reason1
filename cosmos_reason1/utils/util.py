@@ -17,7 +17,6 @@ import os
 import re
 import ast
 import multiprocessing
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import datasets
 import socket
@@ -27,13 +26,12 @@ import base64
 import struct
 import tarfile
 import ctypes
+from functools import wraps
 from msgpack import ExtType
 from tqdm import tqdm
-from typing import List, Dict, Any
+from typing import List
 import torch
 import pynvml
-import cv2
-import numpy as np
 from contextlib import contextmanager
 from torch.functional import F
 from huggingface_hub import (
@@ -42,12 +40,19 @@ from huggingface_hub import (
     snapshot_download,
     HfFileSystem,
 )
-from transformers import AutoProcessor, AutoConfig
-from qwen_vl_utils import process_vision_info
 import time
 import functools
 from cosmos_reason1.utils.logging import logger
 from safetensors import safe_open
+from cosmos_reason1.utils.constant import CACHE_DIR
+
+
+def create_cached_dir_if_needed():
+    """
+    Creates the local cached dir if it doesn't exist.
+    """
+    if not CACHE_DIR.exists():
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_data_from_disk_or_hf(data_name, data_subset=None, revision=None):
@@ -526,116 +531,6 @@ def prepare_cosmos_data(config):
                     os.rename(os.path.join(root, file), os.path.join(root, new_name))
                     logger.info(f"Renamed {file} to {new_name}")
 
-    if config.train.train_policy.enable_dataset_preprocess:
-        logger.info("Preprocessing dataset...")
-        ## Prepare video tensors
-        # List all clip files in the temporary directory
-        os.makedirs(video_tensors_dir, exist_ok=True)
-        processor = retry(AutoProcessor.from_pretrained)(
-            config.policy.model_name_or_path
-        )
-        config = retry(AutoConfig.from_pretrained)(config.policy.model_name_or_path)
-        image_token_id = config.image_token_id
-        video_token_id = config.video_token_id
-        clip_files = []
-        for root, dirs, files in os.walk(video_clips_dir):
-            for file in files:
-                if file.endswith((".mp4", ".avi", ".mov")):  # Common video extensions
-                    clip_files.append(os.path.join(root, file))
-
-        def process_clip_file(clip):
-            # Fetch original video frame rate
-            if fps == 0:
-                cap = cv2.VideoCapture(clip)
-                if not cap.isOpened():
-                    raise IOError(f"Cannot open {clip}")
-
-                fps_ = cap.get(cv2.CAP_PROP_FPS)
-                cap.release()
-            else:
-                fps_ = fps
-
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "video",
-                            "video": clip,
-                            "fps": fps_,
-                            "max_pixels": max_pixels,
-                        },
-                    ],
-                }
-            ]
-
-            # Preparation for inference
-            text = processor.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            _, video_inputs = process_vision_info(messages)
-            assert len(video_inputs) == 1, "Only one video should be detected"
-            # [T, 3, H, W]
-            video_frame_tensor = video_inputs[0]
-            assert (
-                video_frame_tensor.dim() == 4
-            ), "Video tensor should have 4 dimensions"
-
-            inputs = processor(
-                text=[text],
-                images=None,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            )
-            # Convert video into patched sequence of shape [seq, dim]
-            # This will be the input into visual part of VLM
-            pixels = inputs["pixel_values_videos"]
-            assert pixels.dim() == 2, "Video tensor should have `2` dimensions"
-            assert (
-                pixels.dtype == torch.float32
-            ), "Pixel tensor should be of type `float32`"
-            # [N, 3]
-            grid_thw = inputs["video_grid_thw"]
-            assert grid_thw.dim() == 2, "Grid tensor should have `2` dimensions"
-            assert grid_thw.shape[0] == 1, "Only one video a time"
-            assert (
-                grid_thw.shape[1] == 3
-            ), "Grid tensor should have `3` dimensions for `THW`"
-
-            second_per_grid_ts = inputs.get("second_per_grid_ts")
-            target_filename = os.path.join(
-                video_tensors_dir,
-                f"{os.path.basename(clip).split('.')[0]}.cosmos",
-            )
-            torch.save(
-                {
-                    "pixel_values_videos": pixels,
-                    "video_grid_thw": grid_thw,
-                    "second_per_grid_ts": second_per_grid_ts,
-                    "n_image_tokens": (inputs["input_ids"] == image_token_id)
-                    .sum()
-                    .item(),
-                    "n_video_tokens": (inputs["input_ids"] == video_token_id)
-                    .sum()
-                    .item(),
-                },
-                target_filename,
-            )
-
-        with tqdm(total=len(clip_files), desc="Processing video clips") as pbar:
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                futures = [
-                    executor.submit(process_clip_file, clip) for clip in clip_files
-                ]
-                for future in as_completed(futures):
-                    future.result()
-                    pbar.update(1)
-
-        logger.info(
-            f"\n\n\nSaved {len(clip_files)} processed video tensors to {video_tensors_dir}"
-        )
-
 
 GPU_FLOPS_MAPPING = {
     "NVIDIA H100 80GB HBM3": {
@@ -678,17 +573,17 @@ def get_device_flops(dtype: torch.dtype, num_gpus: int) -> int:
 
 def compute_mfu(
     model: torch.nn.Module,
-    inputs: Dict[str, Any],
+    n_tokens: int,
     iter_time: float,
     num_gpus: int,
     dtype: str,
 ) -> dict:
     """
-    Compute the model FLOPs Utilization (MFU) for a given model and inputs.
+    Compute the model FLOPs Utilization (MFU) for a given model and number of tokens.
 
     Args:
         model (torch.nn.Module): The model for which to compute the MFU.
-        inputs (Dict[str, Any]): The inputs to the model.
+        n_tokens (int): The number of tokens in the inputs.
         iter_time (float): The time taken for the forward pass in seconds.
 
     Returns:
@@ -696,8 +591,7 @@ def compute_mfu(
     """
     result = {}
     # Get the model FLOPs for the iteration
-    seq_len = np.prod(inputs["input_ids"].shape)
-    model_params, model_flops = model.get_nparams_and_flops(seq_len)
+    model_params, model_flops = model.get_nparams_and_flops(n_tokens)
     result["model_flops"] = model_flops
 
     # Get the GPU FLOPs
@@ -836,3 +730,68 @@ def seperate_nccl_comm_needed():
     Check if separate NCCL communications needed to prevent hang.
     """
     return False
+
+
+def write_redis_config(port, logfile, file_path="/opt/redis_config.conf"):
+    """
+    Write the redis config file.
+    redis_config_path: the path to the redis config file.
+    port: the port for Redis to listen on.
+    logfile: the logfile for Redis.
+
+    return the actual path of the redis config file.
+    """
+    config_content = f"""# Redis configuration file example for insecure connections
+
+# Bind to all network interfaces (use with caution)
+bind 0.0.0.0
+
+# Set the port for Redis to listen on (default is {port})
+port {port}
+
+# Disable TLS by setting the tls-port to 0
+tls-port 0
+
+# Disable authentication by commenting out the requirepass directive
+# requirepass yourpassword
+
+# Other configuration settings can remain as default or be customized as needed
+timeout 0
+tcp-keepalive 300
+protected-mode no
+# enable-protected-configs yes
+# enable-debug-command yes
+# enable-module-command yes
+daemonize yes
+supervised no
+loglevel notice
+logfile {logfile}
+databases 16
+save 900 1
+save 300 10
+save 60 10000
+stop-writes-on-bgsave-error yes
+rdbcompression yes
+rdbchecksum yes
+dbfilename dump.rdb
+dir /opt
+"""
+    with open(file_path, "w") as file:
+        file.write(config_content)
+    return file_path
+
+
+def do_once(func):
+    """Decorator to make a function only call once."""
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        key = func.__name__ + str(args) + str(kwargs)
+        if key not in do_once.dones:
+            do_once.dones.add(key)
+            return func(*args, **kwargs)
+
+    return wrapper
+
+
+do_once.dones = set()

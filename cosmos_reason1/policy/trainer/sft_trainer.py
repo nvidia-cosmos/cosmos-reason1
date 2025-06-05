@@ -23,182 +23,128 @@ from cosmos_reason1.policy.config import (
     SFTDataConfig,
     config_hash,
 )
-from cosmos_reason1.utils.util import compute_mfu, basename_from_modelpath
+from cosmos_reason1.utils.util import compute_mfu
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
 import time
 import torch
+import numpy as np
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader, DistributedSampler
 import cosmos_reason1.utils.util as util
 import cosmos_reason1.utils.distributed as dist_util
 import cosmos_reason1.utils.cache as cache
-from transformers import AutoTokenizer, AutoConfig, AutoProcessor
+from transformers import AutoTokenizer
 from datasets import concatenate_datasets
-from qwen_vl_utils import process_vision_info
+from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 import functools
 import os
-import copy
-from typing import Optional
+from typing import Optional, Dict, Any
 from tqdm import tqdm
-import torch.nn.functional as F
 
 
 def collate_fn(
     batch,
     pad_token_id,
+    data_packer: DataPacker,
+    config: CosmosConfig,
     seq_len_multiple=1,
     ignore_label_id=-100,
-    vision_ids=None,
     fixed_length: Optional[int] = None,
 ):
-    max_len = (
-        max([len(x["input_ids"]) for x in batch])
-        if fixed_length is None
-        else fixed_length
-    )
+    # TODO(jiaxin): enable dynamic length for PP
+    if fixed_length is None:
+        max_len = min(
+            config.policy.model_max_length,
+            data_packer.sft_compute_max_len(batch),
+        )
+    else:
+        max_len = fixed_length
+
     if seq_len_multiple > 1:
         max_len = (
             (max_len + seq_len_multiple - 1) // seq_len_multiple * seq_len_multiple
         )
 
-    input_ids = torch.tensor(
-        [
-            x["input_ids"] + [pad_token_id] * (max(0, max_len - len(x["input_ids"])))
-            for x in batch
-        ],
-        dtype=torch.long,
-    )
-    label_ids = torch.tensor(
-        [
-            x["input_ids"] + [ignore_label_id] * (max(0, max_len - len(x["input_ids"])))
-            for x in batch
-        ],
-        dtype=torch.long,
+    model_input: Dict[str, Any] = data_packer.sft_collate_fn(
+        batch,
+        computed_max_len=max_len,
+        pad_token_id=pad_token_id,
+        ignore_label_id=ignore_label_id,
     )
 
-    # No loss on the vision tokens, since they are not language modal
-    if vision_ids is not None:
-        assert isinstance(vision_ids, list)
-        for vision_id in vision_ids:
-            if vision_id is not None:
-                label_ids[label_ids == vision_id] = ignore_label_id
-
-    pixel_values_videos = []
-    video_grid_thw = []
-    second_per_grid_ts = []
-    pixel_values_images = []
-    image_grid_thw = []
-    pixel_values_videos_lengths_per_sample = []
-    pixel_values_images_lengths_per_sample = []
-    for x in batch:
-        if "pixel_values_videos" in x:
-            pixel_values_videos.append(x["pixel_values_videos"])
-            video_grid_thw.append(x["video_grid_thw"])
-            second_per_grid_ts.append(x["second_per_grid_ts"])
-            pixel_values_videos_lengths_per_sample.append(
-                x["pixel_values_videos_lengths_per_sample"]
-            )
-        if "pixel_values_images" in x:
-            pixel_values_images.append(x["pixel_values_images"])
-            image_grid_thw.append(x["image_grid_thw"])
-            pixel_values_images_lengths_per_sample.append(
-                x["pixel_values_images_lengths_per_sample"]
-            )
-
-    if len(pixel_values_videos) > 0:
-        # pixel_values_videos = torch.cat(pixel_values_videos, dim=0)
-        max_len = max([x.shape[0] for x in pixel_values_videos])
-        for i in range(len(pixel_values_videos)):
-            pixel_values_videos[i] = pixel_values_videos[i].unsqueeze(0)
-            assert (
-                pixel_values_videos[i].ndim == 3
-            ), f"pixel_values_videos[i].ndim: {pixel_values_videos[i].ndim}"
-            pixel_values_videos[i] = F.pad(
-                pixel_values_videos[i],
-                (0, 0, 0, max_len - pixel_values_videos[i].shape[1]),
-            )
-        pixel_values_videos = torch.cat(pixel_values_videos, dim=0)
-
-        video_grid_thw = torch.cat(video_grid_thw, dim=0)
-        second_per_grid_ts = torch.cat(second_per_grid_ts, dim=0)
-    if len(pixel_values_images) > 0:
-        max_len = max([x.shape[0] for x in pixel_values_images])
-        for i in range(len(pixel_values_images)):
-            pixel_values_images[i] = pixel_values_images[i].unsqueeze(0)
-            assert (
-                pixel_values_images[i].ndim == 3
-            ), f"pixel_values_images[i].ndim: {pixel_values_images[i].ndim}"
-            pixel_values_images[i] = F.pad(
-                pixel_values_images[i],
-                (0, 0, 0, max_len - pixel_values_images[i].shape[1]),
-            )
-        pixel_values_images = torch.cat(pixel_values_images, dim=0)
-        image_grid_thw = torch.cat(image_grid_thw, dim=0)
-    batch = {
-        "input_ids": input_ids,
-        "label_ids": label_ids,
-    }
-    if len(pixel_values_videos) > 0:
-        batch["pixel_values_videos"] = pixel_values_videos
-        batch["video_grid_thw"] = video_grid_thw
-        batch["second_per_grid_ts"] = second_per_grid_ts
-        batch["pixel_values_videos_lengths_per_sample"] = torch.tensor(
-            pixel_values_videos_lengths_per_sample, dtype=torch.long
-        ).view(-1, 1)
-    if len(pixel_values_images) > 0:
-        batch["pixel_values_images"] = pixel_values_images
-        batch["image_grid_thw"] = image_grid_thw
-        batch["pixel_values_images_lengths_per_sample"] = torch.tensor(
-            pixel_values_images_lengths_per_sample, dtype=torch.long
-        ).view(-1, 1)
-    return batch
+    return model_input
 
 
 def construct_dataset(
     config: SFTDataConfig,
     tokenizer: AutoTokenizer,
-    processor: AutoProcessor,
-    hf_config: AutoConfig,
-    max_length: int,
+    data_packer: DataPacker,
+    user_provided_dataset: Optional[Dataset] = None,
 ):
-    dataset = util.load_data_from_disk_or_hf(
-        config.dataset_name, config.dataset_subset, config.dataset_revision or None
-    )
-    dataset_list = []
-    for split_name in config.dataset_train_split:
-        logger.info(
-            f"Appending split {split_name}, dataset size = {len(dataset[split_name])}"
+    if user_provided_dataset is not None:
+        dataset = None
+        train_dataset = user_provided_dataset
+        logger.info("Using user-provided dataset, which will skip split processing.")
+    else:
+        dataset = util.load_data_from_disk_or_hf(
+            config.dataset_name, config.dataset_subset, config.dataset_revision or None
         )
-        dataset_list.append(dataset[split_name])
-    train_dataset = concatenate_datasets(dataset_list)
+        dataset_list = []
+        for split_name in config.dataset_train_split:
+            logger.info(
+                f"Appending split {split_name}, dataset size = {len(dataset[split_name])}"
+            )
+            dataset_list.append(dataset[split_name])
+        train_dataset = concatenate_datasets(dataset_list)
     logger.info(f"Final dataset size = {len(train_dataset)}")
+
     try:
-        test_dataset = dataset[config.dataset_test_split]
-        if len(test_dataset) == 0:
+        if dataset is not None:
+            test_dataset = dataset[config.dataset_test_split]
+            if len(test_dataset) == 0:
+                raise ValueError("Test dataset is empty")
+        else:
             raise ValueError("Test dataset is empty")
     except Exception:
-        train_test_split = train_dataset.train_test_split(
-            test_size=config.dataset_test_size, shuffle=False
-        )
-        train_dataset = train_test_split["train"]
-        test_dataset = train_test_split["test"]
+        if isinstance(train_dataset, torch.utils.data.Dataset):
+            # Define the split ratio (e.g., 80% train, 20% test)
+            if isinstance(config.dataset_test_size, float):
+                n_test_samples = int(len(train_dataset) * config.dataset_test_size)
+            else:
+                n_test_samples = config.dataset_test_size
+            n_test_samples = max(min(n_test_samples, len(train_dataset) - 1), 1)
+
+            # Generate deterministic indices
+            indices = list(range(len(train_dataset)))
+            test_indices = indices[:n_test_samples]
+            train_indices = indices[n_test_samples:]
+
+            test_dataset = torch.utils.data.Subset(train_dataset, test_indices)
+            train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+        else:
+            assert hasattr(
+                train_dataset, "train_test_split"
+            ), "train_dataset must have train_test_split method"
+            train_test_split = train_dataset.train_test_split(
+                test_size=config.dataset_test_size, shuffle=False
+            )
+            train_dataset = train_test_split["train"]
+            test_dataset = train_test_split["test"]
 
     train_sft_dataset = SFTDataset(
         config,
         tokenizer=tokenizer,
-        processor=processor,
-        hf_config=hf_config,
-        max_length=max_length,
         dataset=train_dataset,
+        data_packer=data_packer,
+        is_user_dataset=user_provided_dataset is not None,
     )
     test_sft_dataset = SFTDataset(
         config,
         tokenizer=tokenizer,
-        processor=processor,
-        hf_config=hf_config,
-        max_length=max_length,
         dataset=test_dataset,
+        data_packer=data_packer,
+        is_user_dataset=user_provided_dataset is not None,
     )
 
     return train_sft_dataset, test_sft_dataset
@@ -209,310 +155,53 @@ class SFTDataset(Dataset):
         self,
         config: SFTDataConfig,
         tokenizer: AutoTokenizer,
-        processor: AutoProcessor,
-        hf_config: AutoConfig,
-        max_length: int,
-        dataset,
+        dataset: Dataset,
+        data_packer: DataPacker,
+        is_user_dataset: bool = False,
     ):
         self.config = config
         self.tokenizer = tokenizer
-        self.processor = processor
         self.column_name = config.conversation_column_name
         self.dataset = dataset
-        self.max_length = max_length
-
+        self.data_packer = data_packer
+        self.is_user_dataset = is_user_dataset
         self.cache = None
         if self.config.enable_dataset_cache:
-            if self.enable_dataset_preprocess:
-                logger.warning(
-                    "it is no need to cache the preprocessed dataset, please set enable_dataset_cache = False"
-                )
-            else:
-                # TODO(zjx): can we reuse the cachebetween different training jobs?
-                # It's not stable yet, we only checked if the config is the same
-                # If there are any problems, it is recommended that the user clears the cache folder
-                cache_folder = os.path.join(
-                    os.environ.get(
-                        "COSMOS_CACHE",
-                        os.path.join(os.path.expanduser("~"), ".cache/cosmos/"),
-                    ),
-                    "datasets_cache",
-                    f"{self.config.dataset_name}-{config_hash(config)}",
-                )
-                logger.info(f"SFTDataset Cache folder: {cache_folder}")
-                self.cache = cache.DiskCache(cache_folder)
-        self.vision_enabled = (
-            self.config.vision_asset_column_name is not None
-            and len(self.config.vision_asset_column_name) > 0
-        )
-        if self.vision_enabled and not self.config.enable_dataset_preprocess:
-            cache_dir = os.environ.get(
-                "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
-            )
-            video_clips_path = os.path.join(
-                cache_dir,
-                "datasets",
-                basename_from_modelpath(self.config.dataset_name),
-                self.config.dataset_subset,
-                "video_clips",
-            )
-            if not os.path.exists(video_clips_path):
-                raise FileNotFoundError(
-                    f"Dataset directory {video_clips_path} does not exist. Please check the dataset path."
-                )
-            mm_files_paths = {}
-            for root, dirs, files in os.walk(video_clips_path):
-                for file in files:
-                    if file.endswith(
-                        (".mp4", ".avi", ".mov")
-                    ):  # Common video extensions
-                        mm_files_paths[file] = os.path.join(root, file)
-            self.mm_files_paths = mm_files_paths
-        if hasattr(hf_config, "image_token_id"):
-            self.image_token = tokenizer.decode([hf_config.image_token_id])
-            self.image_token_id = hf_config.image_token_id
-        else:
-            self.image_token = None
-            self.image_token_id = None
-        if hasattr(hf_config, "video_token_id"):
-            self.video_token = tokenizer.decode([hf_config.video_token_id])
-            self.video_token_id = hf_config.video_token_id
-        else:
-            self.video_token = None
-            self.video_token_id = None
-
-    def _get_item_on_the_fly_(self, idx):
-        item = self.dataset[idx]
-        conversations = copy.deepcopy(item[self.column_name])
-
-        if self.vision_enabled:
-            video_path = self.mm_files_paths[item["video"].split("/")[-1]]
-            multi_modal_content = {
-                "type": "video",
-                "video": video_path,
-                "max_pixels": self.config.max_pixels,
-                "fps": self.config.fps,
-            }
-            for conv in conversations:
-                if conv["role"] == "user":
-                    assert isinstance(
-                        conv["content"], str
-                    ), "User message must be string"
-                    # Rewrite to support image/video tokens
-                    content = []
-                    content.append(multi_modal_content)
-                    content.append(
-                        {
-                            "type": "text",
-                            "text": conv["content"],
-                        }
-                    )
-                    conv["content"] = content
-            prompt = self.processor.apply_chat_template(
-                conversations,
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-            image_inputs, video_inputs = process_vision_info(conversations)
-            inputs = self.processor(
-                text=[prompt],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            )
-            result_dict = {
-                "input_ids": inputs["input_ids"][0].tolist()[: self.max_length],
-                "pixel_values_videos": inputs["pixel_values_videos"],
-                "video_grid_thw": inputs["video_grid_thw"],
-                "second_per_grid_ts": torch.tensor(
-                    inputs["second_per_grid_ts"], dtype=torch.float
+            # TODO(zjx): can we reuse the cache between different training jobs?
+            # It's not stable yet, we only checked if the config is the same
+            # If there are any problems, it is recommended that the user clears the cache folder
+            cache_folder = os.path.join(
+                os.environ.get(
+                    "COSMOS_CACHE",
+                    os.path.join(os.path.expanduser("~"), ".cache/cosmos/"),
                 ),
-                "pixel_values_videos_lengths_per_sample": inputs[
-                    "pixel_values_videos"
-                ].shape[0],
-            }
-        else:
-            token_ids = self.tokenizer.apply_chat_template(
-                conversations,
-                return_assistant_tokens_mask=True,
-                return_dict=True,
-                add_generation_prompt=False,
-            )["input_ids"]
-
-            x = token_ids[: self.max_length]
-            result_dict = {"input_ids": x}
-
-        return result_dict
-
-    def _get_item_preprocessed_(self, idx):
-        item = self.dataset[idx]
-        conversations = copy.deepcopy(item[self.column_name])
-
-        assets_dicts = []
-        if self.vision_enabled:
-            assets = self.dataset[idx][self.config.vision_asset_column_name]
-            cache_dir = os.environ.get(
-                "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
+                "datasets_cache",
+                f"{self.config.dataset_name}-{config_hash(config)}",
             )
-            video_tensors_path = os.path.join(
-                cache_dir,
-                "datasets",
-                self.config.dataset_name,
-                self.config.dataset_subset,
-                "video_tensors",
-                f"fps-{self.config.fps}-pixels-{self.config.max_pixels}",
-            )
-            assert os.path.exists(
-                video_tensors_path
-            ), f"Dataset directory {video_tensors_path} does not exist. Please check the dataset path."
-            if isinstance(assets, str):
-                assets = [assets]
-            else:
-                assert isinstance(
-                    assets, list
-                ), "`vision_asset_column_name` must be a string or a list of strings"
-
-            for asset in assets:
-                asset = os.path.basename(asset).split(".")[0]
-                asset_path = os.path.join(video_tensors_path, f"{asset}.cosmos")
-                assert os.path.exists(asset_path), f"Asset {asset_path} does not exist"
-                loaded_asset = torch.load(asset_path, map_location="cpu")
-                assets_dicts.append(loaded_asset)
-        # Check if the image/video token is already in the conversation
-        # If so, we don't need to add the image/video token to the conversation
-        if not self.vision_enabled:
-            token_ids = self.tokenizer.apply_chat_template(
-                conversations,
-                return_assistant_tokens_mask=True,
-                return_dict=True,
-                add_generation_prompt=False,
-            )["input_ids"]
-
-            x = token_ids[: self.max_length]
-            return {"input_ids": x}
-        else:
-            # Add image/video tokens to the conversation
-            # text = self.processor.apply_chat_template(conversations, tokenize=False, add_generation_prompt=False)
-
-            added_placeholders = []
-            for conv in conversations:
-                # Hack the first user message to support image/video tokens
-                if conv["role"] == "user":
-                    assert isinstance(
-                        conv["content"], str
-                    ), "User message must be string"
-                    # Rewrite to support image/video tokens
-                    content = []
-                    for x in assets_dicts:
-                        placeholder = (
-                            "video"
-                            if x.get("pixel_values_videos") is not None
-                            else "image"
-                        )
-                        content.append(
-                            {
-                                "type": placeholder,
-                                "video": "",
-                            }
-                        )
-                        n_tokens = x[f"n_{placeholder}_tokens"]
-                        added_placeholders.append((placeholder, n_tokens))
-
-                    content.append(
-                        {
-                            "type": "text",
-                            "text": conv["content"],
-                        }
-                    )
-                    conv["content"] = content
-                    break
-
-            text = self.processor.apply_chat_template(
-                conversations, tokenize=False, add_generation_prompt=False
-            )
-            temp_image_token = "[COSMOS_IMAGE_TOKEN]"
-            temp_video_token = "[COSMOS_VIDEO_TOKEN]"
-            for placeholder, n_tokens in added_placeholders:
-                if placeholder == "image":
-                    text = text.replace(
-                        self.image_token, n_tokens * temp_image_token, 1
-                    )
-                elif placeholder == "video":
-                    text = text.replace(
-                        self.video_token, n_tokens * temp_video_token, 1
-                    )
-
-            text = text.replace(temp_image_token, self.image_token)
-            text = text.replace(temp_video_token, self.video_token)
-
-            tokens = self.tokenizer.encode(text, add_special_tokens=False)
-            # video:
-            #   pixel_values_videos
-            #   video_grid_thw
-            #   second_per_grid_ts
-            # image:
-            #   pixel_values_images
-            #   image_grid_thw
-
-            # Concatenate all the assets
-            n_videos = sum([1 for x in added_placeholders if x[0] == "video"])
-            n_images = sum([1 for x in added_placeholders if x[0] == "image"])
-
-            result_dict = {"input_ids": tokens[: self.max_length]}
-
-            if n_videos > 0:
-                pixel_values_videos = []
-                video_grid_thw = []
-                second_per_grid_ts = []
-                for x in assets_dicts:
-                    pixel_values_videos.append(x["pixel_values_videos"])
-                    video_grid_thw.append(x["video_grid_thw"])
-                    second_per_grid_ts.append(
-                        torch.tensor(x["second_per_grid_ts"], dtype=torch.float)
-                    )
-                result_dict["pixel_values_videos"] = torch.cat(
-                    pixel_values_videos, dim=0
-                )
-                result_dict["video_grid_thw"] = torch.cat(video_grid_thw, dim=0)
-                result_dict["second_per_grid_ts"] = torch.cat(second_per_grid_ts, dim=0)
-                result_dict["pixel_values_videos_lengths_per_sample"] = result_dict[
-                    "pixel_values_videos"
-                ].shape[0]
-            if n_images > 0:
-                pixel_values_images = []
-                image_grid_thw = []
-                for x in assets_dicts:
-                    pixel_values_images.append(x["pixel_values_images"])
-                    image_grid_thw.append(x["image_grid_thw"])
-                result_dict["pixel_values_images"] = torch.cat(
-                    pixel_values_images, dim=0
-                )
-                result_dict["image_grid_thw"] = torch.cat(image_grid_thw, dim=0)
-                result_dict["pixel_values_images_lengths_per_sample"] = result_dict[
-                    "pixel_values_images"
-                ].shape[0]
-
-            return result_dict
+            logger.info(f"SFTDataset Cache folder: {cache_folder}")
+            self.cache = cache.DiskCache(cache_folder)
 
     def __len__(self):
         return len(self.dataset)
 
     def __getitem__(self, idx):
-        if self.config.enable_dataset_preprocess:
-            item = self._get_item_preprocessed_(idx)
-        else:
-            # we only cache on_the_fly result
-            if self.cache is not None:
-                cache_obj = self.cache.get(idx)
-                if cache_obj is not None:
-                    return cache_obj
+        # we only cache on_the_fly result
+        if self.cache is not None:
+            cache_obj = self.cache.get(idx)
+            if cache_obj is not None:
+                return cache_obj
 
-            item = self._get_item_on_the_fly_(idx)
+        raw_item = (
+            self.dataset[idx][self.column_name]
+            if not self.is_user_dataset and self.column_name
+            else self.dataset[idx]
+        )
 
-            if self.cache is not None:
-                # try cache obj
-                self.cache.set(idx, item)
+        item: Dict[str, Any] = self.data_packer.sft_process_sample(raw_item)
+
+        if self.cache is not None:
+            # try cache obj
+            self.cache.set(idx, item)
         return item
 
 
@@ -551,9 +240,8 @@ class SFTTrainer(Trainer):
         train_dataset, val_dataset = construct_dataset(
             config.train.train_policy,
             tokenizer=self.tokenizer,
-            processor=self.hf_processor,
-            hf_config=self.hf_config,
-            max_length=config.policy.model_max_length,
+            data_packer=self.data_packer,
+            user_provided_dataset=self.sft_user_dataset,
         )
         train_sampler = DistributedSampler(
             train_dataset, num_replicas=self.dp_world_size, rank=self.dp_rank
@@ -575,11 +263,12 @@ class SFTTrainer(Trainer):
                 collate_fn,
                 pad_token_id=self.tokenizer.pad_token_id,
                 seq_len_multiple=self.seq_len_multiple,
-                vision_ids=[train_dataset.image_token_id, train_dataset.video_token_id],
                 # TODO(cjx): PP only support fixed length training data, fix it.
                 fixed_length=config.policy.model_max_length
                 if parallel_dims.pp_enabled
                 else None,
+                data_packer=self.data_packer,
+                config=config,
             ),
         )
         self.val_data_loader = DataLoader(
@@ -592,11 +281,12 @@ class SFTTrainer(Trainer):
                 collate_fn,
                 pad_token_id=self.tokenizer.pad_token_id,
                 seq_len_multiple=self.seq_len_multiple,
-                vision_ids=[val_dataset.image_token_id, val_dataset.video_token_id],
                 # TODO(cjx): PP only support fixed length training data, fix it.
                 fixed_length=config.policy.model_max_length
                 if parallel_dims.pp_enabled
                 else None,
+                data_packer=self.data_packer,
+                config=config,
             ),
         )
         # For iteration control
@@ -621,7 +311,7 @@ class SFTTrainer(Trainer):
                     )
                 val_inputs = val_batch["input_ids"]
                 val_labels = val_batch.pop("label_ids")
-                val_position_ids, val_pos_seq_dim = self.model.get_position_ids(
+                val_position_ids, _, val_pos_seq_dim = self.model.get_position_ids(
                     **val_batch
                 )
 
@@ -677,7 +367,6 @@ class SFTTrainer(Trainer):
                     val_total_loss += val_loss.item() * val_inputs.size(0)
             val_avg_loss = val_total_loss / len(self.val_data_loader.dataset)
             logger.info(f"[Policy] Validation loss: {val_avg_loss}")
-        self.model.train()
         return val_avg_loss
 
     def train(self):
@@ -685,6 +374,7 @@ class SFTTrainer(Trainer):
         pp_last_stage = False
 
         for batch in self.train_data_loader:
+            self.model.train()
             start_time = time.time()
             for k, v in batch.items():
                 batch[k] = v.to(self.device) if isinstance(v, torch.Tensor) else v
@@ -692,7 +382,7 @@ class SFTTrainer(Trainer):
             inputs = batch["input_ids"]
             labels = batch.pop("label_ids")
 
-            position_ids, pos_seq_dim = self.model.get_position_ids(**batch)
+            position_ids, input_ids, pos_seq_dim = self.model.get_position_ids(**batch)
 
             self.optimizers.zero_grad()
 
@@ -793,7 +483,7 @@ class SFTTrainer(Trainer):
                     if self.config.logging.report_mfu:
                         mfu = compute_mfu(
                             model=self.model,
-                            inputs=batch,
+                            n_tokens=np.prod(input_ids.shape),
                             iter_time=iter_time,
                             num_gpus=self.world_size,
                             dtype=self.config.train.param_dtype,
@@ -861,6 +551,8 @@ class SFTTrainer(Trainer):
                     pp_last_stage=pp_last_stage,
                 )
 
+            if self.train_step >= self.total_steps:
+                break
         # process the final step
         val_score = self.validate()
         if self.config.train.ckpt.export_safetensors:

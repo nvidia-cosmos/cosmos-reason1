@@ -16,15 +16,21 @@
 import argparse
 import uvicorn
 import os
-import uuid
 import toml
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
+from torch.utils.data import Dataset
+import time
+import asyncio
+import base64
+import cloudpickle
+
 from fastapi.responses import HTMLResponse, JSONResponse
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable
 from cosmos_reason1.dispatcher.controller import Controller
 import cosmos_reason1.utils.constant as constant
 from cosmos_reason1.dispatcher.protocol import MESH_NAMES
-from cosmos_reason1.dispatcher.replica import Atom, RolloutGroup, Rollout
+from cosmos_reason1.dispatcher.replica import Atom, RolloutGroup, Rollout, Replica
 from cosmos_reason1.dispatcher.protocol import (
     RegisterRequest,
     ErrorResponse,
@@ -37,19 +43,31 @@ from cosmos_reason1.dispatcher.protocol import (
     WeightReadyRequest,
     SetProfileRequest,
     SetTracePathRequest,
+    NcclErrRequest,
 )
 from cosmos_reason1.policy.config import Config as CosmosConfig
 import cosmos_reason1.utils.util as util
-import subprocess
-import sys
-import atexit
 from cosmos_reason1.utils.logging import logger
-import time
 from cosmos_reason1.utils.constant import COSMOS_ROLLOUT_SCAN_INTERVAL
-import asyncio
-from contextlib import asynccontextmanager
-from cosmos_reason1.utils.network_util import get_eth_ips
-from cosmos_reason1.utils.modelscope import update_config_if_modelscope
+from cosmos_reason1.utils.api_suffix import (
+    COSMOS_API_PANEL_SUFFIX,
+    COSMOS_API_STATUS_SUFFIX,
+    COSMOS_API_META_SUFFIX,
+    COSMOS_API_REGISTER_SUFFIX,
+    COSMOS_API_SET_PROFILE_SUFFIX,
+    COSMOS_API_SET_TRACE_PATH_SUFFIX,
+    COSMOS_API_UNREGISTER_SUFFIX,
+    COSMOS_API_HEARTBEAT_SUFFIX,
+    COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX,
+    COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX,
+    COSMOS_API_NCCL_COMM_GET_ALL_SUFFIX,
+    COSMOS_API_NCCL_COMM_ERROR_SUFFIX,
+    COSMOS_API_NEXT_PROMPT_SUFFIX,
+    COSMOS_API_ROLLOUT_SUFFIX,
+    COSMOS_API_POLICY_TRAIN_ACK_SUFFIX,
+    COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
+)
+from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 
 
 def create_error_response(
@@ -75,50 +93,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 
-REDIS_CONFIG_PATH = "/opt/redis_config.conf"
-
-
-def write_redis_config(file_path, port, logfile):
-    config_content = f"""# Redis configuration file example for insecure connections
-
-# Bind to all network interfaces (use with caution)
-bind 0.0.0.0
-
-# Set the port for Redis to listen on (default is {port})
-port {port}
-
-# Disable TLS by setting the tls-port to 0
-tls-port 0
-
-# Disable authentication by commenting out the requirepass directive
-# requirepass yourpassword
-
-# Other configuration settings can remain as default or be customized as needed
-timeout 0
-tcp-keepalive 300
-protected-mode no
-# enable-protected-configs yes
-# enable-debug-command yes
-# enable-module-command yes
-daemonize yes
-supervised no
-loglevel notice
-logfile {logfile}
-databases 16
-save 900 1
-save 300 10
-save 60 10000
-stop-writes-on-bgsave-error yes
-rdbcompression yes
-rdbchecksum yes
-dbfilename dump.rdb
-dir /opt
-"""
-    with open(file_path, "w") as file:
-        file.write(config_content)
-
-
-@app.get("/panel")
+@app.get(COSMOS_API_PANEL_SUFFIX)
 async def panel():
     # HTML template with JavaScript for auto-refresh
     with open(
@@ -137,7 +112,7 @@ API for replica-controller communication
 """
 
 
-@app.get("/api/status")
+@app.get(COSMOS_API_STATUS_SUFFIX)
 async def get_status():
     return {
         "mesh_names": MESH_NAMES,
@@ -146,14 +121,23 @@ async def get_status():
     }
 
 
-@app.get("/api/meta")
-async def get_meta():
-    return {
+@app.get(COSMOS_API_META_SUFFIX)
+async def meta():
+    meta = {
         "config": controller.config,
     }
+    if not controller.is_rl and controller.sft_user_dataset is not None:
+        meta["sft_user_dataset"] = base64.b64encode(
+            cloudpickle.dumps(controller.sft_user_dataset)
+        ).decode("utf-8")
+    if controller.user_data_packer is not None:
+        meta["user_data_packer"] = base64.b64encode(
+            cloudpickle.dumps(controller.user_data_packer)
+        ).decode("utf-8")
+    return meta
 
 
-@app.post("/api/register")
+@app.post(COSMOS_API_REGISTER_SUFFIX)
 async def register(request: RegisterRequest):
     try:
         await controller.register(
@@ -167,13 +151,14 @@ async def register(request: RegisterRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
-@app.post("/api/set_profile")
+@app.post(COSMOS_API_SET_PROFILE_SUFFIX)
 async def set_profile(request: SetProfileRequest):
-    msg = await controller.set_profile(request.replica_name)
+    logger.info(f"[Dispatcher] set profile request: {request}")
+    msg = await controller.set_profile(request)
     return msg
 
 
-@app.post("/api/set_trace_path")
+@app.post(COSMOS_API_SET_TRACE_PATH_SUFFIX)
 async def set_trace_path(request: SetTracePathRequest):
     atom = await controller.set_trace_path(
         request.replica_name, request.trace_path, request.global_rank
@@ -184,13 +169,13 @@ async def set_trace_path(request: SetTracePathRequest):
         return {"message": "Ignore the trace path request!"}
 
 
-@app.post("/api/unregister")
+@app.post(COSMOS_API_UNREGISTER_SUFFIX)
 async def unregister(request: UnregisterRequest):
     await controller.unregister(request.replica_name)
     return {"message": "Unregistered"}
 
 
-@app.post("/api/heartbeat")
+@app.post(COSMOS_API_HEARTBEAT_SUFFIX)
 async def heartbeat(request: HeartbeatRequest):
     # Set the replica timestamp to the current time for heartbeat
     controller.set_replica_timestamp(request.replica_name, int(time.time()))
@@ -202,7 +187,7 @@ NCCL Handshake API
 """
 
 
-@app.post("/api/nccl/comm_initiator")
+@app.post(COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX)
 async def comm_initiator(request: HandshakeInitiatorRequest):
     if request.unique_pair_name in controller.temp_kv_store:
         return create_error_response(
@@ -217,7 +202,7 @@ async def comm_initiator(request: HandshakeInitiatorRequest):
     return {"message": "Handshake initiator received"}
 
 
-@app.post("/api/nccl/comm_acceptor")
+@app.post(COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX)
 async def comm_acceptor(request: HandshakeAcceptorRequest):
     if request.unique_pair_name not in controller.temp_kv_store:
         return create_error_response(
@@ -226,16 +211,27 @@ async def comm_acceptor(request: HandshakeAcceptorRequest):
     return {"handle_base64": controller.temp_kv_store.get(request.unique_pair_name)}
 
 
+@app.post(COSMOS_API_NCCL_COMM_ERROR_SUFFIX)
+async def comm_error(request: NcclErrRequest):
+    await controller.set_replica_ncclerror(request.replica_name, request.error)
+    return {"message": "DetectTimeout received"}
+
+
+@app.get(COSMOS_API_NCCL_COMM_GET_ALL_SUFFIX)
+async def comm_get_all():
+    return {"comm_info": controller.temp_kv_store}
+
+
 """
 Rollout API
 """
 
 
-@app.get("/api/next_prompt")
+@app.get(COSMOS_API_NEXT_PROMPT_SUFFIX)
 async def get_batched_prompt(n: int):
-    prompt_id_and_str_list, is_end = await controller.get_batched_prompt(n)
+    prompt_id_and_payload_list, is_end = await controller.get_batched_prompt(n)
     return {
-        "prompt_id_and_str_list": prompt_id_and_str_list,
+        "prompt_id_and_payload_list": prompt_id_and_payload_list,
         "is_end": is_end,
     }
 
@@ -247,7 +243,7 @@ async def monitor_replica_status():
         await asyncio.sleep(COSMOS_ROLLOUT_SCAN_INTERVAL)
 
 
-@app.post("/api/rollout")
+@app.post(COSMOS_API_ROLLOUT_SUFFIX)
 async def put_rollout(rollout: RolloutRequest):
     try:
         if rollout.extra_info is not None and "is_end" in rollout.extra_info:
@@ -260,13 +256,13 @@ async def put_rollout(rollout: RolloutRequest):
         rollout_groups: List[RolloutGroup] = [
             RolloutGroup(
                 prompt_idx=prompt_idx,
-                prompt=prompt,
+                payload=payload,
                 completions=completions,
                 extra_info=rollout.extra_info,
                 reference_answer=controller.query_reference_answer(prompt_idx),
             )
-            for prompt_idx, prompt, completions in zip(
-                rollout.prompt_idxs, rollout.prompt_strs, rollout.completions
+            for prompt_idx, payload, completions in zip(
+                rollout.prompt_idxs, rollout.payloads, rollout.completions
             )
         ]
 
@@ -312,24 +308,13 @@ async def put_rollout(rollout: RolloutRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
-@app.get("/api/policy/{replica_name}/rollouts")
-async def get_rollouts(replica_name: str):
-    try:
-        rollouts = await controller.get_rollouts(replica_name, 0)
-        return {"message": "Rollouts fetched", "rollouts": rollouts}
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
-
-
-@app.post("/api/policy/train_ack")
+@app.post(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX)
 async def train_ack(request: TrainAckRequest):
     try:
         replicaname = request.replica_name
         iteration_count = request.iteration_count
-        await controller.train_ack(replicaname, iteration_count)
+        profile_finished = request.profile_finished
+        await controller.train_ack(replicaname, iteration_count, profile_finished)
         return {"message": "Ack completed"}
     except Exception as e:
         import traceback
@@ -338,7 +323,7 @@ async def train_ack(request: TrainAckRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
-@app.post("/api/policy/weight_ready")
+@app.post(COSMOS_API_POLICY_WEIGHT_READY_SUFFIX)
 async def weight_ready(request: WeightReadyRequest):
     try:
         replicaname = request.replica_name
@@ -351,31 +336,18 @@ async def weight_ready(request: WeightReadyRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
-def _serialize_replicas(replicas: Dict) -> List[Dict]:
+def _serialize_replicas(replicas: Dict[str, Replica]) -> List[Dict]:
     result = []
     for name, replica in replicas.items():
-        atoms = []
-        for atom_key, atom in replica.atoms.items():
-            atoms.append(
-                {
-                    "ranks": atom.ranks,
-                    "group_size": atom.group_size,
-                    "replica_name": atom.replica_name,
-                }
-            )
-        result.append(
-            {
-                "name": replica.name,
-                "role": replica.role,
-                "atoms": atoms,
-                "arrived": replica.all_atoms_arrived,
-                "weight_step": replica.weight_step,
-            }
-        )
+        result.append(replica.to_dict())
     return result
 
 
-def main():
+def main(
+    dataset: Optional[Dataset] = None,
+    data_packer: Optional[DataPacker] = None,
+    reward_fns: Optional[List[Callable]] = None,
+):
     parser = argparse.ArgumentParser(
         description="Run the web panel for the dispatcher."
     )
@@ -391,11 +363,6 @@ def main():
         default=None,
         required=True,
         help="Path to TOML configuration file to load.",
-    )
-    parser.add_argument(
-        "--create-redis-config",
-        action="store_true",
-        help="Whether to create the default redis config that allows insecure connections.",
     )
     parser.add_argument(
         "--redis-logfile-path",
@@ -421,7 +388,6 @@ def main():
         # Need SFTDataConfig and GrpoConfig for from_dict
 
         loaded_config = CosmosConfig.from_dict(config_dict)
-        loaded_config = update_config_if_modelscope(loaded_config)
         # Use redis port from config if available, otherwise use arg/default
         if hasattr(loaded_config, "redis") and loaded_config.redis:
             try:
@@ -432,7 +398,19 @@ def main():
                 logger.warning(
                     f"Invalid redis port format in config file: {loaded_config.redis}. Using default/arg: {args.redis_port}"
                 )
-        controller.set_config(loaded_config)
+
+        if data_packer is not None:
+            assert isinstance(
+                data_packer, DataPacker
+            ), "data_packer should be a DataPacker instance"
+        controller.setup(
+            loaded_config,
+            redis_port=args.redis_port,
+            redis_logfile_path=args.redis_logfile_path,
+            dataset=dataset,
+            reward_fns=reward_fns,
+            data_packer=data_packer,
+        )
         logger.info(f"Successfully loaded configuration from {args.config_file}")
     except FileNotFoundError:
         raise FileNotFoundError(f"Config file not found: {args.config_file}")
@@ -442,45 +420,9 @@ def main():
             exc_info=True,
         )
 
-    redis_free_port = util.find_available_port(args.redis_port)
-    args.redis_port = redis_free_port  # Update args with the actual port found
-
-    # Update the redis port in the loaded config object if it exists
-    if controller.config:  # Check if config was set (either loaded or via web later)
-        controller.config.redis = str(redis_free_port)
-
-    ips = get_eth_ips()
-    if len(ips) > 0:
-        controller.config.eth_ips = ";".join(ips)
-
-    random_db_file_name = f"cosmos_reason1_{str(uuid.uuid4())}.rdb"
-    if args.create_redis_config:
-        write_redis_config(REDIS_CONFIG_PATH, redis_free_port, args.redis_logfile_path)
-        redis_server_cmd = f'redis-server {REDIS_CONFIG_PATH} --dbfilename {random_db_file_name} --save ""'
-    else:
-        redis_server_cmd = f'redis-server --port {redis_free_port} --dbfilename {random_db_file_name} --save ""'
-    logger.info(f"Init redis {redis_server_cmd}.")
-    redis_server_proc = subprocess.Popen(
-        redis_server_cmd, shell=True, stdout=sys.stdout, stderr=sys.stderr
-    )
-    controller.init_redis(host="0.0.0.0", port=redis_free_port)
     uvicorn.run(
         app, host="0.0.0.0", port=util.find_available_port(args.port), access_log=False
     )
-
-    def exit_server():
-        logger.info("Stopping redis server")
-        redis_server_proc.terminate()
-        redis_server_proc.wait()
-        if args.create_redis_config:
-            redis_terminate_cmd = f"redis-cli -p {redis_free_port} shutdown nosave"
-            redis_terminate = subprocess.Popen(
-                redis_terminate_cmd, shell=True, stdout=sys.stdout, stderr=sys.stderr
-            )
-            redis_terminate.wait()
-        logger.info("Redis server stopped.")
-
-    atexit.register(exit_server)
 
 
 if __name__ == "__main__":

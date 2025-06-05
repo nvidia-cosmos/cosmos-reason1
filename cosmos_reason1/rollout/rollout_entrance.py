@@ -13,6 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from cosmos_reason1.utils.distributed import prevent_vllm_from_setting_nccl_env
+
+prevent_vllm_from_setting_nccl_env()
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as RolloutConfig
@@ -21,35 +24,12 @@ from cosmos_reason1.utils.distributed import (
     destroy_distributed,
     get_controller_metadata,
 )
+
 import sys
-import os
-from cosmos_reason1.utils.modelscope import update_config_if_modelscope
-
-try:
-    # Prevent vllm from changing NCCL env
-    origin_env_map = os.environ.copy()
-    # Begin with `NCCL_`
-    origin_nccl_env = {k: v for k, v in origin_env_map.items() if k.startswith("NCCL_")}
-
-    import vllm  # noqa: F401
-except ImportError:
-    logger.warning("vllm is not installed, skipping nccl env consistency check")
-finally:
-    current_env_map = os.environ.copy()
-    current_nccl_env = {
-        k: v for k, v in current_env_map.items() if k.startswith("NCCL_")
-    }
-    # Delete all keys in current_nccl_env that are not in origin_nccl_env
-    for k in current_nccl_env.keys():
-        if k not in origin_nccl_env:
-            os.environ.pop(k)
-            logger.info(f"Deleted {k} from env")
-    # Restore original NCCL env
-    os.environ.update(origin_nccl_env)
-
 from cosmos_reason1.rollout.vllm_rollout.vllm_rollout_worker import vLLMRolloutWorker
 
-if __name__ == "__main__":
+
+def run_rollout():
     ctrl_ip, ctrl_port, metadata = get_controller_metadata()
 
     if metadata["config"] is None:
@@ -76,9 +56,8 @@ if __name__ == "__main__":
         parallesim_config=cosmos_rollout_config.rollout.parallelism
     )
 
-    init_distributed(cpu_enabled=False)
+    init_distributed()
     parallel_dims.build_mesh(device_type="cuda")
-    cosmos_rollout_config = update_config_if_modelscope(cosmos_rollout_config)
 
     try:
         rollout_worker = vLLMRolloutWorker(cosmos_rollout_config, parallel_dims)
@@ -90,3 +69,7 @@ if __name__ == "__main__":
     finally:
         destroy_distributed()
         logger.info("[Rollout] Destroy context of torch dist.")
+
+
+if __name__ == "__main__":
+    run_rollout()

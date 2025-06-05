@@ -40,7 +40,6 @@ dataset_name = "nvidia/Cosmos-Reason1-SFT-Dataset"
 dataset_subset = "robovqa"
 dataset_train_split = "understanding"
 dataset_test_size = 100
-enable_dataset_preprocess = false
 enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4

@@ -40,6 +40,9 @@ from cosmos_reason1.policy.kernel.symm_mem_recipes import OnDeviceAllToAllV
 from cosmos_reason1.policy.kernel.moe.indices import generate_permute_indices
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.policy.model.base import BaseModel
+from cosmos_reason1.dispatcher.data.packer.decoder_only_llm_data_packer import (
+    DecoderOnlyLLMDataPacker,
+)
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from functools import cached_property, partial
 
@@ -949,7 +952,7 @@ class Qwen3MoE(nn.Module, BaseModel):
             .unsqueeze(0)
             .expand_as(inputs)
         )
-        return position_ids, seq_dim_idx
+        return position_ids, inputs, seq_dim_idx
 
     def separate_model_parts(self) -> List[nn.Module]:
         return [self]
@@ -1135,7 +1138,7 @@ class Qwen3MoE(nn.Module, BaseModel):
         return name
 
     @torch.no_grad()
-    def maybe_decompose_weights(self, name, expert_weight: torch.Tensor):
+    def maybe_decompose_weights_to_hf_naming(self, name, expert_weight: torch.Tensor):
         if match := re.search(
             r"model\.layers\.(\d+)\.mlp\.(up_proj|gate_proj|down_proj)\.(weight)", name
         ):
@@ -1152,3 +1155,7 @@ class Qwen3MoE(nn.Module, BaseModel):
                 )
         else:
             yield name, expert_weight
+
+    @classmethod
+    def data_packer(cls) -> DecoderOnlyLLMDataPacker:
+        return DecoderOnlyLLMDataPacker()

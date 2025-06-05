@@ -39,6 +39,7 @@ from huggingface_hub.utils import disable_progress_bars, enable_progress_bars
 from typing import Dict
 import cosmos_reason1.utils.util as util
 from cosmos_reason1.utils.profiler import CosmosProfiler
+from cosmos_reason1.utils.api_suffix import COSMOS_API_SET_TRACE_PATH_SUFFIX
 
 
 class Trainer(CommMixin):
@@ -56,15 +57,14 @@ class Trainer(CommMixin):
         self.global_rank = int(os.environ.get("RANK", 0))
         self.role = Role.POLICY
         self.world_size = int(os.environ.get("WORLD_SIZE", 1))
-        self.init_comm()
-
         self.device = torch.device(f"cuda:{self.local_rank}")
         torch.cuda.set_device(self.device)
-
         self.tokenizer = util.retry(AutoTokenizer.from_pretrained)(
             config.policy.model_name_or_path,
             trust_remote_code=True,
         )
+        self.init_comm()
+
         self.hf_config = util.retry(AutoConfig.from_pretrained)(
             config.policy.model_name_or_path,
             trust_remote_code=True,
@@ -107,7 +107,9 @@ class Trainer(CommMixin):
             config,
             parallel_dims,
             replica_name=self.replica_name,
-            alternative_urls=self.get_alternative_urls("api/set_trace_path"),
+            alternative_urls=self.get_alternative_urls(
+                COSMOS_API_SET_TRACE_PATH_SUFFIX
+            ),
         )
         self.save_manager = SaveManager(config, self.global_rank)
         # TODO(cjx): add `CompiledAutograd` support
@@ -179,7 +181,9 @@ class Trainer(CommMixin):
                 save_file(chunk, file_path)
                 logger.info(f"Saved chunk {file_idx} to {os.path.basename(file_path)}")
 
-        for name, param in self.model.to_hf_state_dict_generator(self.parallel_dims):
+        for name, param in self.model.named_parameters():
+            # First map the key from local to hf naming convention
+            name = self.model.map_local_key_to_hf_key(name)
             if trainable_only and not param.requires_grad:
                 continue
             is_dtensor = isinstance(param, torch.distributed.tensor.DTensor)
@@ -188,7 +192,9 @@ class Trainer(CommMixin):
 
             pp_rank, pp_size = self.parallel_dims.pp_coord
 
-            for _name, _param in self.model.maybe_decompose_weights(name, param):
+            for _name, _param in self.model.maybe_decompose_weights_to_hf_naming(
+                name, param
+            ):
                 tensor_size = get_tensor_size(_param)
                 # If adding the current tensor exceeds the size limit, save the current chunk
                 if current_chunk_size + tensor_size > max_size_bytes:

@@ -36,6 +36,9 @@ from cosmos_reason1.policy.model.qwen2_5_vl.weight_converter import (
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.policy.model.base import BaseModel
+from cosmos_reason1.dispatcher.data.packer.qwen2_5_vlm_data_packer import (
+    Qwen2_5_VLM_DataPacker,
+)
 from functools import cached_property
 import re
 from functools import partial
@@ -1223,12 +1226,12 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
 
             return position_ids, mrope_position_deltas
 
-    def get_position_ids(self, **kwargs) -> Tuple[torch.Tensor, int]:
+    def get_position_ids(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, int]:
         seq_dim_idx = 2
         position_ids, _ = self._get_rope_index(**kwargs)
         # [batch_size, 3, seq_len] for Pipeline Parallelism micro batch
         position_ids = position_ids.permute(1, 0, 2).contiguous()
-        return position_ids, seq_dim_idx
+        return position_ids, kwargs["input_ids"], seq_dim_idx
 
     def post_to_empty_hook(self, cosmos_config: CosmosConfig):
         self.model.rotary_emb.reset_inv_freq()
@@ -1601,3 +1604,7 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
         ) is not None and is_visual:
             return True
         return False
+
+    @classmethod
+    def data_packer(cls) -> Qwen2_5_VLM_DataPacker:
+        return Qwen2_5_VLM_DataPacker()

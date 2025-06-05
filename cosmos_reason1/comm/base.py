@@ -16,20 +16,27 @@
 import torch.distributed as dist
 import uuid
 from typing import Dict, Callable, Type, Optional
+import copy
+import requests
+import time
+import atexit
+from functools import partial
+import threading
+from urllib.parse import urljoin
+from cosmos_reason1.utils.redis_stream import RedisStreamHandler
+from cosmos_reason1.utils.network_util import make_request_with_retry, get_local_ip
+from cosmos_reason1.dispatcher.command import CommandRegistry, Command
 from cosmos_reason1.utils.logging import logger
 import cosmos_reason1.utils.constant as constant
 import cosmos_reason1.utils.distributed as dist_utils
-import requests
 from cosmos_reason1.dispatcher.protocol import MESH_NAMES
-import copy
-import time
-import atexit
-from cosmos_reason1.utils.redis_stream import RedisStreamHandler
-import threading
-from cosmos_reason1.utils.network_util import make_request_with_retry
-from functools import partial
-from cosmos_reason1.dispatcher.command import CommandRegistry, Command
-from cosmos_reason1.utils.network_util import get_local_ip
+from cosmos_reason1.policy.model import get_data_packer
+from cosmos_reason1.utils.api_suffix import (
+    COSMOS_API_REGISTER_SUFFIX,
+    COSMOS_API_UNREGISTER_SUFFIX,
+)
+import base64
+import cloudpickle
 
 
 class CommMixin:
@@ -71,7 +78,31 @@ class CommMixin:
         )
         # Fetch metadata from the controller
         # Get list of remote IPs and port
-        self.remote_ips, self.remote_port, _ = dist_utils.get_controller_metadata()
+        self.remote_ips, self.remote_port, metadata = (
+            dist_utils.get_controller_metadata()
+        )
+
+        # `sft_user_dataset` is only used in SFT mode when the user provides a dataset
+        self.sft_user_dataset = None
+        sft_user_dataset = metadata.get("sft_user_dataset", None)
+        if sft_user_dataset:
+            sft_user_dataset = base64.b64decode(sft_user_dataset)
+            sft_user_dataset = cloudpickle.loads(sft_user_dataset)
+            if hasattr(sft_user_dataset, "setup"):
+                sft_user_dataset.setup(self.config, self.tokenizer)
+            self.sft_user_dataset = sft_user_dataset
+
+        user_data_packer = metadata.get("user_data_packer", None)
+        if user_data_packer:
+            user_data_packer = base64.b64decode(user_data_packer)
+            user_data_packer = cloudpickle.loads(user_data_packer)
+            self.data_packer = user_data_packer
+            logger.info(f"Using user-provided data packer: {self.data_packer}")
+        else:
+            self.data_packer = get_data_packer(self.config)
+            logger.info(f"Using default data packer: {self.data_packer}")
+        self.data_packer.setup(self.config, self.tokenizer)
+
         self.remote_hosts = [
             f"http://{remote_ip}:{self.remote_port}" for remote_ip in self.remote_ips
         ]
@@ -116,7 +147,7 @@ class CommMixin:
                     requests.post,
                     json=payload,
                 ),
-                self.get_alternative_urls("api/register"),
+                self.get_alternative_urls(COSMOS_API_REGISTER_SUFFIX),
                 max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
             )
         except Exception as e:
@@ -144,7 +175,7 @@ class CommMixin:
                         requests.post,
                         json={"replica_name": self.replica_name},
                     ),
-                    self.get_alternative_urls("api/unregister"),
+                    self.get_alternative_urls(COSMOS_API_UNREGISTER_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
             except Exception as e:
@@ -213,5 +244,5 @@ class CommMixin:
         # Get the alternative URLs for the given suffix
         urls = []
         for remote_host in self.remote_hosts:
-            urls.append(f"{remote_host}/{suffix}")
+            urls.append(urljoin(remote_host, suffix))
         return urls

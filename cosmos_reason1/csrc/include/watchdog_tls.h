@@ -16,6 +16,7 @@
 #pragma once
 #include <functional>
 #include <stack>
+#include <string>
 #include <vector>
 
 namespace cosmos_reason1 {

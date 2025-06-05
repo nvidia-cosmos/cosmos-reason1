@@ -132,8 +132,10 @@ def make_request_with_retry(
 
         # Increase delay for next round of retries
         delay = min(delay * backoff_factor, max_delay)
-
-    raise last_exception or Exception("All retry attempts failed")
+    if last_exception is not None:
+        raise last_exception
+    else:
+        raise Exception(f"All retry attempts failed for all urls: {urls}")
 
 
 def get_ip_address(ifname):
@@ -259,3 +261,16 @@ def get_eth_ips():
         ip_info = get_all_ipv4_addresses()
 
     return [x["ip"] for x in ip_info]
+
+
+def find_available_port(start_port):
+    max_port = 65535  # Maximum port number
+    for port in range(start_port, max_port + 1):
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("localhost", port))
+                return port
+        except OSError:
+            continue
+
+    raise RuntimeError("No available port found in the specified range.")

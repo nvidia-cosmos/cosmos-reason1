@@ -21,6 +21,7 @@ import json
 import hashlib
 import torch
 from cosmos_reason1.utils.util import update_dataclass_with_dict
+from cosmos_reason1.utils.modelscope import update_config_if_modelscope
 
 
 def skip_ui_field(*, default=MISSING, default_factory=MISSING, **kwargs):
@@ -73,12 +74,6 @@ class SFTDataConfig:
         default=0.1,
         metadata={
             "help": "Size of the test set. If float, it is the ratio (between 0.0 and 1.0) of the dataset; if int, it is the absolute size of the test set."
-        },
-    )
-    enable_dataset_preprocess: bool = field(
-        default=False,
-        metadata={
-            "help": "Enable dataset preprocess, such as image/video preprocessing",
         },
     )
     enable_dataset_cache: bool = field(
@@ -251,12 +246,6 @@ class GrpoConfig:
         default_factory=list,
         metadata={"help": "A list of dataset splits to train"},
     )
-    enable_dataset_preprocess: bool = field(
-        default=False,
-        metadata={
-            "help": "Enable dataset preprocess, such as image/video preprocessing",
-        },
-    )
     enable_dataset_cache: bool = field(
         default=False,
         metadata={
@@ -276,21 +265,9 @@ class GrpoConfig:
         default="",
         metadata={"help": "Column name for prompt"},
     )
-    choices_column_name: str = field(
-        default="",
-        metadata={
-            "help": "Column name for choices, if exists, the content of this column should be a list or dict of choices",
-        },
-    )
     response_column_name: str = field(
         default="",
         metadata={"help": "Column name for response/reference answer"},
-    )
-    system_prompt: str = field(
-        default="",
-        metadata={
-            "help": "System prompt for the model, which will be prepended to the prompt",
-        },
     )
     max_pixels: int = field(
         default=320 * 256,
@@ -384,6 +361,29 @@ class GrpoConfig:
 
 
 @dataclass
+class SubProfilerConfig:
+    do_profile: bool = field(
+        default=False, metadata={"help": "Whether to profile, only used in runtime."}
+    )
+    active_steps: int = field(default=1, metadata={"help": "Number of active steps"})
+    rank_filter: List[int] = field(
+        default_factory=list, metadata={"help": "Rank filter"}
+    )
+    record_shape: bool = field(
+        default=False, metadata={"help": "Whether to record shape"}
+    )
+    profile_memory: bool = field(
+        default=False, metadata={"help": "Whether to profile memory"}
+    )
+    with_stack: bool = field(
+        default=False, metadata={"help": "Whether to profile stack"}
+    )
+    with_modules: bool = field(
+        default=False, metadata={"help": "Whether to profile modules"}
+    )
+
+
+@dataclass
 class ProfilerConfig:
     enable_profiler: bool = field(
         default=False,
@@ -391,15 +391,9 @@ class ProfilerConfig:
             "help": "Enable profiler for training",
         },
     )
-    active_steps: int = field(
-        default=1, metadata={"help": "The number of steps that profiler traces."}
-    )
 
-    rank_filter: List[int] = field(
-        default_factory=list,
-        metadata={
-            "help": "The ranks that profiler traces.",
-        },
+    sub_profiler_config: SubProfilerConfig = field(
+        default_factory=SubProfilerConfig, metadata={"help": "Sub profiler config"}
     )
 
 
@@ -781,6 +775,7 @@ class Config:
 
         update_dataclass_with_dict(config, config_data)
         config.validate()
+        config = update_config_if_modelscope(config)
         return config
 
     def validate(self):

@@ -17,13 +17,12 @@ import vllm
 from vllm import SamplingParams
 
 import torch
-from typing import List, Tuple
-from transformers import AutoTokenizer, AutoProcessor, AutoConfig
+from typing import List, Tuple, Any
+from transformers import AutoTokenizer, AutoConfig
 from transformers import GenerationConfig
 from vllm.entrypoints.llm import LLM
 
 from cosmos_reason1.rollout.rollout_base import RolloutBase
-from cosmos_reason1.rollout.utils import prepare_vl_dataset, construct_vl_input
 from cosmos_reason1.policy.config import Config
 from cosmos_reason1.utils.logging import logger
 import cosmos_reason1.utils.util as util
@@ -31,6 +30,7 @@ from cosmos_reason1.rollout.vllm_rollout.vllm_patch import (
     patch_vllm_model_to_reload_weight,
 )
 from cosmos_reason1.policy.config import RolloutConfig
+from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 
 DEFAULT_SEED_FOR_VLLM = 42
 
@@ -58,25 +58,12 @@ class vLLMRollout(RolloutBase):
 
         self.config = config
         policy_config = self.config.policy
-        grpo_config = self.config.train.train_policy
         self.rollout_config = self.config.rollout
 
         vllm_version_check(self.rollout_config)
 
         trust_remote_code = True  # set trust remote code default to True.
         model_path = policy_config.model_name_or_path
-
-        # Hack for Cosmos RL dataset
-        if "cosmos" in grpo_config.dataset_name.lower():
-            self.is_cosmos = True
-            self.processor = util.retry(AutoProcessor.from_pretrained)(
-                model_path,
-                trust_remote_code=trust_remote_code,
-            )
-            self.mm_files_paths = prepare_vl_dataset(grpo_config)
-        else:
-            self.is_cosmos = False
-            self.processor = None
 
         # Check if the model has MoE
         model_config = util.retry(AutoConfig.from_pretrained)(model_path)
@@ -182,24 +169,21 @@ class vLLMRollout(RolloutBase):
     @torch.no_grad()
     def rollout_generation(
         self,
-        prompt_id_and_str_list: List[Tuple[int, str]],
+        prompt_id_and_payload_list: List[Tuple[int, Any]],
         stream: torch.cuda.Stream,
+        data_packer: DataPacker,
     ) -> List[List[str]]:
-        # List of strings.
+        # List of payloads.
         # [
-        #   prompt_str,
-        #   prompt_str,
+        #   payload,
+        #   payload,
         #   ...
         # ]
-        prompts = [x[1] for x in prompt_id_and_str_list]
+        payloads = [x[1] for x in prompt_id_and_payload_list]
 
-        if self.is_cosmos:
-            prompts = construct_vl_input(
-                prompts,
-                self.config,
-                self.processor,
-                self.mm_files_paths,
-            )
+        # Pack the payloads into prompts for vllm.
+        prompts = [data_packer.get_rollout_input(payload) for payload in payloads]
+        prompts = data_packer.rollout_collate_fn(prompts)
 
         # List of completions per prompt.
         # [

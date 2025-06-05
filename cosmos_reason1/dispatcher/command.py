@@ -65,50 +65,39 @@ class Command(ABC):
 
     @classmethod
     def deserialize(cls, dict_v):
+        sub_cls = None
         if dict_v["command_type"] == CommandType.WEIGHT_RESUME:
-            return WeightResumeCommand(dict_v["replica_name"], dict_v["uuid"])
-        elif dict_v["command_type"] == "BUILD_MESH":
-            return BuildMeshCommand(dict_v["replica_name_to_rank"], dict_v["uuid"])
+            sub_cls = WeightResumeCommand
+        elif dict_v["command_type"] == CommandType.BUILD_MESH:
+            sub_cls = BuildMeshCommand
         elif dict_v["command_type"] == CommandType.POLICY_TO_POLICY_BROADCAST:
-            return PolicyToPolicyBroadcastCommand(
-                dict_v["src_replica_name"], dict_v["dst_replica_names"], dict_v["uuid"]
-            )
+            sub_cls = PolicyToPolicyBroadcastCommand
         elif dict_v["command_type"] == CommandType.POLICY_TO_POLICY_UNICAST:
-            return PolicyToPolicyUnicastCommand(
-                dict_v["src_replica_name"], dict_v["dst_replica_name"], dict_v["uuid"]
-            )
+            sub_cls = PolicyToPolicyUnicastCommand
         elif dict_v["command_type"] == CommandType.POLICY_TO_ROLLOUT_UNICAST:
-            return PolicyToRolloutUnicastCommand(
-                dict_v["src_replica_name"],
-                dict_v["dst_replica_name"],
-                dict_v["src_replica_size"],
-                dict_v["dst_replica_size"],
-                dict_v["uuid"],
-                dict_v["do_weight_sync_check"],
-            )
+            sub_cls = PolicyToRolloutUnicastCommand
         elif dict_v["command_type"] == CommandType.ROLLOUT_TO_ROLLOUT_BROADCAST:
-            return RolloutToRolloutBroadcastCommand(
-                dict_v["src_replica_name"], dict_v["dst_replica_names"], dict_v["uuid"]
-            )
+            sub_cls = RolloutToRolloutBroadcastCommand
         elif dict_v["command_type"] == CommandType.DATA_FETCH:
-            return DataFetchCommand(
-                dict_v["replica_name"],
-                dict_v["items_count"],
-                dict_v["global_step"],
-                dict_v["total_steps"],
-                dict_v["do_profile"],
-                dict_v["uuid"],
-            )
+            sub_cls = DataFetchCommand
         elif dict_v["command_type"] == CommandType.ALL_REDUCE:
-            return AllReduceCommand(dict_v["replica_name_to_rank"], dict_v["uuid"])
+            sub_cls = AllReduceCommand
         elif dict_v["command_type"] == CommandType.STOP:
-            return StopCommand(dict_v["replica_name"], dict_v["uuid"])
-        return DummyCommand
+            sub_cls = StopCommand
+
+        if sub_cls is None:
+            return DummyCommand
+        else:
+            return sub_cls.from_dict(dict_v)
 
     @classmethod
     def depack(cls, byte):
         dict = msgpack.unpackb(byte)
         return cls.deserialize(dict)
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        raise NotImplementedError("from_dict is not implemented for Base Command")
 
 
 class DummyCommand(Command):
@@ -128,6 +117,13 @@ class StopCommand(Command):
         cmd = cls(replica.name, cls.new_uuid())
         redis_handler.publish_command(cmd.pack(), replica.name)
 
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["replica_name"],
+            dict_v["uuid"],
+        )
+
 
 class WeightResumeCommand(Command):
     def __init__(self, replica_name: str, uuid: str):
@@ -145,6 +141,13 @@ class WeightResumeCommand(Command):
         redis_handler.publish_command(cmd.pack(), replica.name)
         # initial weight step
         replica.weight_step = 0
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["replica_name"],
+            dict_v["uuid"],
+        )
 
 
 class BuildMeshCommand(Command):
@@ -169,6 +172,13 @@ class BuildMeshCommand(Command):
             redis_handler.publish_command(cmd.pack(), replica.name)
             replica.in_mesh = True
         return replica_name_to_rank
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["replica_name_to_rank"],
+            dict_v["uuid"],
+        )
 
 
 class PolicyToPolicyBroadcastCommand(Command):
@@ -203,6 +213,14 @@ class PolicyToPolicyBroadcastCommand(Command):
 
             replica.weight_step = src_replica.weight_step
 
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["src_replica_name"],
+            dict_v["dst_replica_names"],
+            dict_v["uuid"],
+        )
+
 
 class PolicyToPolicyUnicastCommand(Command):
     """
@@ -230,6 +248,14 @@ class PolicyToPolicyUnicastCommand(Command):
         dst_replica.weights_loaded_in_view_of_command = True
 
         dst_replica.weight_step = src_replica.weight_step
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["src_replica_name"],
+            dict_v["dst_replica_name"],
+            dict_v["uuid"],
+        )
 
 
 class PolicyToRolloutUnicastCommand(Command):
@@ -297,6 +323,17 @@ class PolicyToRolloutUnicastCommand(Command):
         if cls.do_weight_sync_check_flag:
             cls.do_weight_sync_check_flag = False
 
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["src_replica_name"],
+            dict_v["dst_replica_name"],
+            dict_v["src_replica_size"],
+            dict_v["dst_replica_size"],
+            dict_v["uuid"],
+            dict_v["do_weight_sync_check"],
+        )
+
 
 class RolloutToRolloutBroadcastCommand(Command):
     """
@@ -337,6 +374,14 @@ class RolloutToRolloutBroadcastCommand(Command):
             status_manager.set_optimize_step(replica.name, optimize_step)
             status_manager.set_status(replica.name, RolloutStatus.READY)
 
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["src_replica_name"],
+            dict_v["dst_replica_names"],
+            dict_v["uuid"],
+        )
+
 
 class DataFetchCommand(Command):
     """
@@ -351,21 +396,43 @@ class DataFetchCommand(Command):
         items_count: int,
         global_step: int,
         total_steps: int,
-        do_profile: bool,
         uuid: str,
+        # For profiling
+        do_profile: bool,
+        active_steps: int,
+        rank_filter: List[int],
+        record_shape: bool,
+        profile_memory: bool,
+        with_stack: bool,
+        with_modules: bool,
     ):
         super().__init__(uuid, CommandScope.LOCAL, CommandType.DATA_FETCH)
         self.replica_name = replica_name
         self.items_count = items_count
         self.global_step = global_step
         self.total_steps = total_steps
+
+        # Profling config
         self.do_profile = do_profile
+        self.active_steps = active_steps
+        self.rank_filter = rank_filter
+        self.record_shape = record_shape
+        self.profile_memory = profile_memory
+        self.with_stack = with_stack
+        self.with_modules = with_modules
 
     replica_name: Optional[str] = None
     items_count: Optional[int] = None
     global_step: Optional[int] = None
     total_steps: Optional[int] = None
+
     do_profile: Optional[bool] = None
+    active_steps: Optional[int] = None
+    rank_filter: Optional[List[int]] = None
+    record_shape: Optional[bool] = None
+    profile_memory: Optional[bool] = None
+    with_stack: Optional[bool] = None
+    with_modules: Optional[bool] = None
 
     @classmethod
     def trigger(
@@ -381,10 +448,34 @@ class DataFetchCommand(Command):
             items_count,
             global_step,
             total_steps,
-            replica.do_profile,
             cls.new_uuid(),
+            replica.sub_profiler_config.do_profile,
+            replica.sub_profiler_config.active_steps,
+            replica.sub_profiler_config.rank_filter,
+            replica.sub_profiler_config.record_shape,
+            replica.sub_profiler_config.profile_memory,
+            replica.sub_profiler_config.with_stack,
+            replica.sub_profiler_config.with_modules,
         )
         redis_handler.publish_command(cmd.pack(), replica.name)
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["replica_name"],
+            dict_v["items_count"],
+            dict_v["global_step"],
+            dict_v["total_steps"],
+            dict_v["uuid"],
+            # For profiling
+            dict_v["do_profile"],
+            dict_v["active_steps"],
+            dict_v["rank_filter"],
+            dict_v["record_shape"],
+            dict_v["profile_memory"],
+            dict_v["with_stack"],
+            dict_v["with_modules"],
+        )
 
 
 class AllReduceCommand(Command):
@@ -406,6 +497,13 @@ class AllReduceCommand(Command):
         cmd = cls(replica_name_to_rank, cls.new_uuid())
         for replica_name, _ in replica_name_to_rank.items():
             redis_handler.publish_command(cmd.pack(), replica_name)
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["replica_name_to_rank"],
+            dict_v["uuid"],
+        )
 
 
 class CommandRegistry:

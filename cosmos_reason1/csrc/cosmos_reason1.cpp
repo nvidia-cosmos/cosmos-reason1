@@ -33,7 +33,8 @@
 #include "watchdog_tls.h"
 
 namespace py = pybind11;
-static std::vector<ncclComm_t> shared_comms;
+static std::atomic<int64_t> comm_idx_counter = 0;
+static std::unordered_map<int64_t, ncclComm_t> shared_comms;
 
 namespace cosmos_reason1 {
 
@@ -46,11 +47,11 @@ static const int64_t DEFAULT_TIMEOUT_MS = ([]() -> int {
       return std::stoi(groupsize);
     } catch (...) {
       std::cout
-          << "Invalid COSMOS_NCCL_TIMEOUT_MS, using default value `600000`"
+          << "Invalid COSMOS_NCCL_TIMEOUT_MS, using default value `500000`"
           << std::endl;
     }
   }
-  return 600000;
+  return 500000;
 })();
 ;
 
@@ -214,14 +215,15 @@ int64_t create_nccl_comm(std::vector<int64_t> uid_chars, int64_t rank,
   };
 
   nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
-  shared_comms.push_back(comm);
-  return shared_comms.size() - 1;
+  int64_t comm_idx = comm_idx_counter.fetch_add(1);
+  shared_comms.insert({comm_idx, comm});
+  return comm_idx;
 }
 
 ncclComm_t get_nccl_comm(int64_t idx) {
-  COSMOS_CHECK_WITH_INFO(idx >= 0 && idx < shared_comms.size(),
+  COSMOS_CHECK_WITH_INFO(shared_comms.find(idx) != shared_comms.end(),
                          "Invalid NCCL communicator index");
-  return shared_comms[idx];
+  return shared_comms.at(idx);
 }
 
 int nccl_get_comm_count(int64_t comm_idx) {
@@ -475,11 +477,16 @@ void nccl_alltoall(torch::Tensor sendbuff, torch::Tensor recvbuff,
 }
 
 void nccl_abort(int64_t comm_idx) {
+  if (shared_comms.find(comm_idx) == shared_comms.end()) {
+    return;
+  }
+
   auto comm = get_nccl_comm(comm_idx);
   if (comm == nullptr) {
     return;
   }
   NCCL_CHECK(ncclCommAbort(comm));
+  shared_comms.erase(comm_idx);
 }
 
 int64_t nccl_timeout_in_ms() { return nccl::DEFAULT_TIMEOUT_MS; }
@@ -494,8 +501,6 @@ PYBIND11_MODULE(_cpp, m) {
   m.doc() = "Cosmos C++/CUDA extension";
   m.def("create_nccl_comm", &cosmos_reason1::create_nccl_comm,
         py::call_guard<py::gil_scoped_release>(), "Create a NCCL communicator");
-  // m.def("get_nccl_comm", &cosmos_reason1::get_nccl_comm, "Get a NCCL
-  // communicator");
   m.def("from_blob", &cosmos_reason1::from_blob, "Create a tensor from a blob");
   m.def("create_nccl_uid", &cosmos_reason1::create_nccl_uid,
         "Create a NCCL unique ID");

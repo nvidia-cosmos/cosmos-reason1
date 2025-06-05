@@ -43,7 +43,6 @@ dataset_test_size = 100
 enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
-enable_dataset_preprocess = false
 conversation_column_name = "conversations"
 vision_asset_column_name = "video"
 fps = 1

@@ -66,8 +66,6 @@ if [[ -n "$LOG_FILE" ]]; then
   CMD+=" --redis-logfile-path $LOG_FILE"
 fi
 
-CMD+=" --create-redis-config"
-
 echo "${CMD}"
 
 $CMD

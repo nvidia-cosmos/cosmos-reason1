@@ -35,6 +35,9 @@ from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from functools import cached_property
+from cosmos_reason1.dispatcher.data.packer.decoder_only_llm_data_packer import (
+    DecoderOnlyLLMDataPacker,
+)
 
 
 class RMSNorm(nn.Module):
@@ -601,7 +604,7 @@ class GPT(nn.Module, BaseModel):
                 with torch.no_grad():
                     local_view.data.copy_(shared_weight)
 
-    def get_position_ids(self, **kwargs) -> Tuple[torch.Tensor, int]:
+    def get_position_ids(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, int]:
         seq_dim_idx = 1
         inputs = kwargs["input_ids"]
         position_ids = (
@@ -609,7 +612,7 @@ class GPT(nn.Module, BaseModel):
             .unsqueeze(0)
             .expand_as(inputs)
         )
-        return position_ids, seq_dim_idx
+        return position_ids, inputs, seq_dim_idx
 
     def separate_model_parts(self) -> List[nn.Module]:
         return [self]
@@ -758,3 +761,7 @@ class GPT(nn.Module, BaseModel):
             if not name.startswith("model."):
                 name = "model." + name
         return name
+
+    @classmethod
+    def data_packer(cls) -> DecoderOnlyLLMDataPacker:
+        return DecoderOnlyLLMDataPacker()

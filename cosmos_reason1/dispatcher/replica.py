@@ -14,9 +14,10 @@
 # limitations under the License.
 
 from typing import List, Dict, Any, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import math
 from cosmos_reason1.dispatcher.protocol import Role, MESH_NAMES, RegisterRequest
+from cosmos_reason1.policy.config import SubProfilerConfig
 import asyncio
 from cosmos_reason1.dispatcher.algo.base import RuleBasedAlgo
 import weakref
@@ -27,12 +28,28 @@ import msgpack
 
 @dataclass
 class Rollout:
-    prompt: str
+    payload: Any
     completion: str
     extra_info: Dict[str, Any]
     reward: float
     advantage: float
     prompt_idx: int
+
+    def __init__(
+        self,
+        payload: Any,
+        completion: str,
+        extra_info: Dict[str, Any],
+        reward: float,
+        advantage: float,
+        prompt_idx: int,
+    ):
+        self.payload = payload
+        self.completion = completion
+        self.extra_info = extra_info
+        self.reward = reward
+        self.advantage = advantage
+        self.prompt_idx = prompt_idx
 
 
 class RolloutGroup:
@@ -44,13 +61,13 @@ class RolloutGroup:
     def __init__(
         self,
         prompt_idx: int,
-        prompt: str,
+        payload: Any,
         completions: List[str],
         extra_info: Dict[str, Any],
         reference_answer: str,
     ):
         self.prompt_idx: int = prompt_idx
-        self.prompt: str = prompt
+        self.payload: Any = payload
         self.completions: List[str] = completions
         self.extra_info: Dict[str, Any] = extra_info
         self.reference_answer: str = reference_answer
@@ -61,7 +78,7 @@ class RolloutGroup:
         ), "[RolloutGroup] Reference answer is not provided"
 
         rewards = [
-            algo.compute_reward(self.prompt + completion, self.reference_answer)
+            algo.compute_reward(completion, self.reference_answer)
             for completion in self.completions
         ]
         logger.debug(f"[RolloutGroup] Rewards: {rewards}")
@@ -70,12 +87,12 @@ class RolloutGroup:
 
         return [
             Rollout(
-                self.prompt,
-                completion,
-                self.extra_info,
-                reward,
-                advantage,
-                self.prompt_idx,
+                payload=self.payload,
+                completion=completion,
+                extra_info=self.extra_info,
+                reward=reward,
+                advantage=advantage,
+                prompt_idx=self.prompt_idx,
             )
             for completion, reward, advantage in zip(
                 self.completions, rewards, advantages
@@ -150,11 +167,23 @@ class Atom:
         self.group_size = group_size
         self.replica_name = replica_name
         self.rollout_queue: asyncio.Queue[Rollout] = asyncio.Queue()
-        self._replica = None
+        self._replica: Optional[weakref.ReferenceType["Replica"]] = None
         self.global_rank = global_rank
         self.host_ip = host_ip
         self.host_name = host_name
         self.trace_path = trace_path
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "ranks": self.ranks,
+            "group_size": self.group_size,
+            "replica_name": self.replica_name,
+            "global_rank": self.global_rank,
+            "host_ip": self.host_ip,
+            "host_name": self.host_name,
+            "trace_path": self.trace_path,
+            "replica": self._replica().name if self._replica else "None",
+        }
 
     @property
     def replica(self) -> "Replica":
@@ -238,7 +267,9 @@ class Replica:
     in_mesh: bool = False
     pending_rollouts: int = 0
     weight_step: int = -1
-    do_profile: bool = False
+
+    # For profiling
+    sub_profiler_config: SubProfilerConfig = field(default_factory=SubProfilerConfig)
 
     def __init__(self, name: str, role: Role, atoms: List[Atom]):
         self.name = name  # Note: name must be unique across all the replicas.
@@ -247,8 +278,21 @@ class Replica:
         self.command_queue = asyncio.Queue()
         self.pending_rollouts = 0
         self.weight_step = -1
-        # Whether to profile in this replica.
-        self.do_profile = False
+
+        self.sub_profiler_config = SubProfilerConfig()
+
+    def to_dict(self) -> Dict[str, Any]:
+        atoms = []
+        for atom_key, atom in self.atoms.items():
+            atoms.append(atom.to_dict())
+        return {
+            "name": self.name,
+            "role": self.role,
+            "atoms": atoms,
+            "arrived": self.all_atoms_arrived,
+            "weight_step": self.weight_step,
+            "pending_rollouts": self.pending_rollouts,
+        }
 
     def get_atom(self, ranks: List[int]) -> Atom:
         assert (

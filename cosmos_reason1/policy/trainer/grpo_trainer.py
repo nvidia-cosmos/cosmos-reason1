@@ -21,13 +21,11 @@ from cosmos_reason1.utils.parallelism import (
     create_context_parallel_ctx,
 )
 import torch
-import torch.nn.functional as F
 import os
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
-from cosmos_reason1.utils.util import compute_mfu, basename_from_modelpath
+from cosmos_reason1.utils.util import compute_mfu
 import cosmos_reason1.utils.distributed as dist_util
-import json
 import time
 import torch.distributed as dist
 import numpy as np
@@ -50,8 +48,6 @@ from cosmos_reason1.dispatcher.command import (
 import atexit
 from cosmos_reason1.utils.util import (
     list_to_b64,
-    b64_to_list,
-    selective_log_softmax,
     msgpack_c_long,
     msgunpack_c_long,
     fix_data_type_size,
@@ -61,14 +57,20 @@ from cosmos_reason1.utils.parallelism_map import (
     slice_tensor_with_strategies,
 )
 from functools import cached_property
-from qwen_vl_utils import process_vision_info
-from typing import List, Callable
+from typing import List, Callable, Dict, Any, Tuple
 import types
 from functools import partial
 import msgpack
 from cosmos_reason1.utils.network_util import make_request_with_retry
 from cosmos_reason1.utils.util import seperate_nccl_comm_needed
 from cosmos_reason1.utils import constant
+from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
+from cosmos_reason1.utils.api_suffix import (
+    COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX,
+    COSMOS_API_POLICY_TRAIN_ACK_SUFFIX,
+    COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
+)
+from cosmos_reason1.utils.util import selective_log_softmax
 
 
 def compute_loss(
@@ -122,6 +124,11 @@ def compute_loss(
 class GRPOTrainer(Trainer):
     def __init__(self, config: CosmosConfig, parallel_dims: ParallelDims):
         super().__init__(config, parallel_dims)
+        if parallel_dims.dp_replicate > 1:
+            raise ValueError(
+                f"DP replicate size {parallel_dims.dp_replicate} is not supported for GRPO"
+                "Please use elastic scaling feature instead."
+            )
 
         # Heartbeat thread is used to keep the connection alive with the controller.
         self.shutdown_background_task_event = threading.Event()
@@ -134,9 +141,16 @@ class GRPOTrainer(Trainer):
         self.model_ready = False
 
         # For mesh build
-        self.mesh_ready = False
-        self.inter_policy_nccl = -1
+        self.inter_policy_nccl = HighAvailabilitylNccl(
+            replica_name=self.replica_name,
+            global_rank=self.global_rank,
+            controller_hosts=self.remote_hosts,
+        )
         self.rollouts_comm = {}
+        self.kv_store = dist_util.DistKVStore(
+            group=dist.distributed_c10d._get_default_group(),
+            master_rank=0,
+        )
 
         # For command fetch
         self.fetch_command_buffer = Queue()
@@ -159,7 +173,7 @@ class GRPOTrainer(Trainer):
         self.train_step = 0
         self.total_steps = 0
         self.optimize_step = 0
-        self.batch_for_this_step = 0
+        self.repilca_batch_for_this_step = 0
         self.mini_batch = self.grpo_config.mini_batch
 
         # For Polocy to Rollout weight mapping
@@ -168,46 +182,6 @@ class GRPOTrainer(Trainer):
 
         # For GRPO
         self.max_length = config.policy.model_max_length
-        self.is_cosmos = False
-        if "cosmos" in self.grpo_config.dataset_name.lower():
-            self.is_cosmos = True
-            self.cosmos_cache_dir = os.environ.get(
-                "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
-            )
-            if not self.grpo_config.enable_dataset_preprocess:
-                video_clips_path = os.path.join(
-                    self.cosmos_cache_dir,
-                    "datasets",
-                    basename_from_modelpath(self.grpo_config.dataset_name),
-                    self.grpo_config.dataset_subset,
-                    "video_clips",
-                )
-                if not os.path.exists(video_clips_path):
-                    raise FileNotFoundError(
-                        f"Dataset directory {video_clips_path} does not exist. Please check the dataset path."
-                    )
-                mm_files_paths = {}
-                for root, dirs, files in os.walk(video_clips_path):
-                    for file in files:
-                        if file.endswith(
-                            (".mp4", ".avi", ".mov")
-                        ):  # Common video extensions
-                            mm_files_paths[file] = os.path.join(root, file)
-                self.mm_files_paths = mm_files_paths
-        if hasattr(self.hf_config, "image_token_id"):
-            self.image_token = self.tokenizer.decode([self.hf_config.image_token_id])
-            self.image_token_id = self.hf_config.image_token_id
-        else:
-            self.image_token = None
-            self.image_token_id = None
-        if hasattr(self.hf_config, "video_token_id"):
-            self.video_token = self.tokenizer.decode([self.hf_config.video_token_id])
-            self.video_token_id = self.hf_config.video_token_id
-        else:
-            self.video_token = None
-            self.video_token_id = None
-        # generate_every_optimize : Number of iterations per batch (denoted as μ in the algorithm).
-        # Currently ony 1 is supported.
         self.mu_iterations = self.config.train.train_policy.mu_iterations
         self.optimizers.zero_grad()
         self.fetch_command_thread = None
@@ -216,8 +190,14 @@ class GRPOTrainer(Trainer):
         self.p2r_related_ranks = None
         self.p2r_nccl_uuids = {}
 
+        # Flag for determining if the current replica is the master replica,
+        # The master replica needs to:
+        # - Save the checkpoint/safetensors
+        self.is_master_replica = True
+
     def handle_shutdown(self):
         self.shutdown_background_task_event.set()
+        self.inter_policy_nccl.shutdown()
         if self.global_rank == 0:
             if self.fetch_command_thread is not None:
                 self.fetch_command_thread.join()
@@ -277,76 +257,13 @@ class GRPOTrainer(Trainer):
         return True
 
     def check_intra_policy_all_ready(self, command):
+        # TODO(zjx), never called, can we remove it?
+        # because we directly forward the buildmesh command to the nccl comm, so main thread will never receive buildmesh command
+        # this function will never return true
         commands = [DummyCommand for _ in range(self.world_size)]
         dist.all_gather_object(commands, command)
         is_mesh_builds = [isinstance(x, BuildMeshCommand) for x in commands]
         return all(is_mesh_builds)
-
-    @Trainer.register_policy_command_handler(BuildMeshCommand)
-    def execute_build_mesh(self, command: BuildMeshCommand):
-        if len(command.replica_name_to_rank) == 1:
-            self.mesh_ready = True
-            self.replica_name_to_rank = command.replica_name_to_rank
-            return True
-        else:
-            if not self.check_inter_policy_all_ready():
-                return False
-            assert self.replica_name in command.replica_name_to_rank
-            rank = command.replica_name_to_rank[self.replica_name]
-            mesh_key = self.get_group_unique_key(command.replica_name_to_rank)
-            nccl_group_id = None
-            if rank == 0:
-                # initialize nccl handle for building mesh among policies
-                # only replica_rank == 0 have the right to generate nccl id.
-                nccl_group_id = cosmos_c.create_nccl_uid()
-                base64_nccl_group_id = list_to_b64(nccl_group_id)
-                try:
-                    make_request_with_retry(
-                        partial(
-                            requests.post,
-                            json={
-                                "unique_pair_name": mesh_key,
-                                "handle_base64": base64_nccl_group_id,
-                            },
-                        ),
-                        self.get_alternative_urls("api/nccl/comm_initiator"),
-                        max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
-                    )
-                except Exception as e:
-                    raise RuntimeError(
-                        f"[Policy] Failed in post nccl group_id to controller after retries {e}."
-                    )
-            else:
-                # other replicas should query the nccl group id from controller
-                # all ranks need to wait for the rollout replica 0 finished the group_id post
-                # and then they can get the group_id from controller
-                # But we don't have something like dist.barrier(), so just while True loop to query it like synchronize.
-                # all ranks not zero in replica 0 or all ranks of other replicas need to query the group_id from controller
-                try:
-                    r = make_request_with_retry(
-                        partial(
-                            requests.post,
-                            json={"unique_pair_name": mesh_key},
-                        ),
-                        self.get_alternative_urls("api/nccl/comm_acceptor"),
-                        max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
-                    )
-                except Exception as e:
-                    raise RuntimeError(
-                        f"[Policy] Failed in query nccl group_id from controller after retries {e}."
-                    )
-                base64_nccl_group_id = r.json()["handle_base64"]
-                nccl_group_id = b64_to_list(base64_nccl_group_id)
-            self.inter_policy_nccl = cosmos_c.create_nccl_comm(
-                nccl_group_id, rank, len(command.replica_name_to_rank)
-            )
-            logger.info(
-                f"[Policy] Created inter policy nccl comm {self.inter_policy_nccl} for rank {rank} with total {len(command.replica_name_to_rank)} ranks."
-            )
-            # Also need delete old nccl handler
-            self.mesh_ready = True
-            self.replica_name_to_rank = command.replica_name_to_rank
-            return True
 
     def wrap_to_cuda_tensor(self, key, obj, in_place=False):
         """
@@ -494,16 +411,14 @@ class GRPOTrainer(Trainer):
     def execute_policy_to_policy_broadcast(
         self, command: PolicyToPolicyBroadcastCommand
     ):
-        assert self.mesh_ready, "Mesh must be built before policy to policy broadcast"
         send = self.replica_name == command.src_replica_name
         recv = self.replica_name in command.dst_replica_names and not send
-        assert command.src_replica_name in self.replica_name_to_rank
-        src_rank = self.replica_name_to_rank[command.src_replica_name]
         if not send and not recv:
             return True
         st = time.time()
+        # TODO(zjx): there need failure tolerance for nccl send and recv, so get nccl param from command
         send_recv_hook = partial(
-            cosmos_c.nccl_broadcast, rank=src_rank, comm_idx=self.inter_policy_nccl
+            self.inter_policy_nccl.broadcast, src_replica=command.src_replica_name
         )
         len_params = self.sync_all_states(
             is_send=send,
@@ -514,27 +429,23 @@ class GRPOTrainer(Trainer):
             self.model_ready = True
         time_eclapsed = time.time() - st
         logger.debug(
-            f"[Policy] Policy2Policy Broadcast {len_params} parameters from {command.src_replica_name} (rank {src_rank}) to {len(command.dst_replica_names)} replicas took {time_eclapsed:.3f} seconds."
+            f"[Policy] Policy2Policy Broadcast {len_params} parameters from {command.src_replica_name} (rank {self.inter_policy_nccl.get_replica_rank(command.src_replica_name)}) to {len(command.dst_replica_names)} replicas took {time_eclapsed:.3f} seconds."
         )
         return True
 
     @Trainer.register_policy_command_handler(PolicyToPolicyUnicastCommand)
     def execute_policy_to_policy_unicast(self, command: PolicyToPolicyUnicastCommand):
-        assert self.mesh_ready
         send = self.replica_name == command.src_replica_name
         recv = self.replica_name == command.dst_replica_name
-        assert command.src_replica_name in self.replica_name_to_rank
-        assert command.dst_replica_name in self.replica_name_to_rank
-        src_rank = self.replica_name_to_rank[command.src_replica_name]
-        dst_rank = self.replica_name_to_rank[command.dst_replica_name]
         if not send and not recv:
             return True
         st = time.time()
+        # TODO(zjx): there need failure tolerance for nccl send and recv, so get nccl param from command
         send_hook = partial(
-            cosmos_c.nccl_send, peer=dst_rank, comm_idx=self.inter_policy_nccl
+            self.inter_policy_nccl.send, dst_replica=command.dst_replica_name
         )
         recv_hook = partial(
-            cosmos_c.nccl_recv, peer=src_rank, comm_idx=self.inter_policy_nccl
+            self.inter_policy_nccl.recv, src_replica=command.src_replica_name
         )
         len_params = self.sync_all_states(
             is_send=send,
@@ -545,7 +456,7 @@ class GRPOTrainer(Trainer):
             self.model_ready = True
         time_eclapsed = time.time() - st
         logger.debug(
-            f"[Policy] Policy2Policy Unicast {len_params} parameters from {command.src_replica_name} (rank {src_rank}) to {command.dst_replica_name} (rank {dst_rank}) as sender {send} took {time_eclapsed:.3f} seconds."
+            f"[Policy] Policy2Policy Unicast {len_params} parameters from {command.src_replica_name} (rank {self.inter_policy_nccl.get_replica_rank(command.src_replica_name)}) to {command.dst_replica_name} (rank {self.inter_policy_nccl.get_replica_rank(command.dst_replica_name)}) as sender {send} took {time_eclapsed:.3f} seconds."
         )
         return True
 
@@ -647,7 +558,9 @@ class GRPOTrainer(Trainer):
                                         "handle_base64": base64_nccl_group_id,
                                     },
                                 ),
-                                self.get_alternative_urls("api/nccl/comm_initiator"),
+                                self.get_alternative_urls(
+                                    COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX
+                                ),
                                 max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                             )
                         except Exception as e:
@@ -773,7 +686,7 @@ class GRPOTrainer(Trainer):
                             "replica_name": self.replica_name,
                         },
                     ),
-                    self.get_alternative_urls("api/policy/weight_ready"),
+                    self.get_alternative_urls(COSMOS_API_POLICY_WEIGHT_READY_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
             except Exception as e:
@@ -794,9 +707,10 @@ class GRPOTrainer(Trainer):
                         json={
                             "replica_name": self.replica_name,
                             "iteration_count": self.train_step,
+                            "profile_finished": self.profiler.check_finished(),
                         },
                     ),
-                    self.get_alternative_urls("api/policy/train_ack"),
+                    self.get_alternative_urls(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
             except Exception as e:
@@ -807,10 +721,17 @@ class GRPOTrainer(Trainer):
     @Trainer.register_policy_command_handler(DataFetchCommand)
     def execute_data_fetch(self, command: DataFetchCommand):
         if command.do_profile:
-            self.profiler.start()
+            self.profiler.start_dynamic(
+                active_steps=command.active_steps,
+                rank_filter=command.rank_filter,
+                record_shape=command.record_shape,
+                profile_memory=command.profile_memory,
+                with_stack=command.with_stack,
+                with_modules=command.with_modules,
+            )
 
         assert self.replica_name == command.replica_name
-        self.batch_for_this_step = command.items_count
+        self.repilca_batch_for_this_step = command.items_count
         self.train_step = command.global_step
         self.total_steps = command.total_steps
         self.train()
@@ -848,29 +769,51 @@ class GRPOTrainer(Trainer):
         return True
 
     async def fetch_command(self):
-        assert self.global_rank == 0, "Only rank 0 can fetch command"
+        # assert self.global_rank == 0, "Only rank 0 can fetch command"
         while not self.shutdown_background_task_event.is_set():
-            commands = []
-            try:
-                commands = self.redis_controller.subscribe_command(self.replica_name)
-            except Exception as e:
-                logger.error(
-                    f"Failed to get commands : {e} at replica {self.replica_name}"
-                )
-                raise e
-            try:
-                encountered_stop = False
-                for x in commands:
-                    command = Command.depack(x)
-                    if isinstance(command, StopCommand):
-                        encountered_stop = True
-                    self.fetch_command_buffer.put_nowait(command)
-                if encountered_stop:
-                    logger.info("[Policy] Stop command received. Exiting...")
+            # TODO(zjx): will remove separate BuildMeshCommand, and here only fetch other commands
+            if self.global_rank == 0:
+                # rank 0 will get command from redis
+                # and broadcast the buildmesh command to all ranks
+                commands = []
+                try:
+                    commands = self.redis_controller.subscribe_command(
+                        self.replica_name
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to get commands : {e} at replica {self.replica_name}"
+                    )
+                    raise e
+                try:
+                    encountered_stop = False
+                    for x in commands:
+                        command = Command.depack(x)
+                        if isinstance(command, StopCommand):
+                            encountered_stop = True
+                            # broadcast the stop command to all other ranks to let them exit this loop
+                            cmd = self.kv_store.broadcast_command(command, 0)
+                        elif isinstance(command, BuildMeshCommand):
+                            """ directly push the buildmesh command to the nccl comm, will not block main thread """
+                            # broadcast the buildmesh command to all ranks
+                            cmd = self.kv_store.broadcast_command(command, 0)
+                            self.inter_policy_nccl.push_cmd(cmd)
+                            continue
+                        self.fetch_command_buffer.put_nowait(command)
+                    if encountered_stop:
+                        logger.info("[Policy] Stop command received. Exiting...")
+                        break
+                except Exception as e:
+                    logger.error(e)
+                    raise e
+
+            else:
+                # receive buildmesh command from rank 0
+                bmcmd = self.kv_store.broadcast_command(None, 0)
+                if isinstance(bmcmd, StopCommand):
+                    # Stop command received from rank 0, means exiting the whole program, so break to exit the loop
                     break
-            except Exception as e:
-                logger.error(e)
-                raise e
+                self.inter_policy_nccl.push_cmd(bmcmd)
 
     @Trainer.register_policy_command_handler(StopCommand)
     def execute_stop(self, command):
@@ -921,13 +864,22 @@ class GRPOTrainer(Trainer):
             new_loop.close()
             return
 
+        # Start the thread with daemon=True, so it will exit when the main program exits.
+        # we need all ranks have fetch_command_thread, so that buildmesh command can be broadcasted to all ranks
+        # TODO(zjx): we will only let rank 0 fetch and broadcast command
+        self.fetch_command_thread = threading.Thread(
+            target=fetch_command_helper,
+            args=(self,),
+            daemon=True,
+            name="fetch_command_thread",
+        ).start()
+
         if self.global_rank == 0:
-            # Start the thread with daemon=True, so it will exit when the main program exits.
-            self.fetch_command_thread = threading.Thread(
-                target=fetch_command_helper, args=(self,), daemon=True
-            ).start()
             self.fetch_rollouts_thread = threading.Thread(
-                target=fetch_rollouts_helper, args=(self,), daemon=True
+                target=fetch_rollouts_helper,
+                args=(self,),
+                daemon=True,
+                name="fetch_rollouts_thread",
             ).start()
 
         while not self.shutdown_background_task_event.is_set():
@@ -940,13 +892,16 @@ class GRPOTrainer(Trainer):
     def dispatch_rollouts(self):
         rollouts = [[]]
         scattered_rollouts = [[] for _ in range(self.world_size)]
-        self.batch_for_this_step = (
-            self.batch_for_this_step // self.dp_world_size * self.dp_world_size
-        )
-        assert self.batch_for_this_step % self.dp_world_size == 0
         if self.global_rank == 0:
+            batch_for_this_step = (
+                self.repilca_batch_for_this_step
+                // self.dp_world_size
+                * self.dp_world_size
+            )
+            assert batch_for_this_step % self.dp_world_size == 0
+
             dp_id = 0
-            for _ in range(self.batch_for_this_step):
+            for _ in range(batch_for_this_step):
                 try:
                     rollout = self.data_queue.get(block=True, timeout=None)
                 except Empty:
@@ -970,268 +925,34 @@ class GRPOTrainer(Trainer):
         )
         return rollouts[0]
 
-    def _get_per_token_logps(self, input, full_logits) -> torch.Tensor:
-        input_ids_batch = input["input_ids"]
-        logprob_masks = input.pop("logprob_masks")
-        token_masks = input.pop("token_masks")
-        advantages = input.pop("advantages")[token_masks]
+    def compute_logprobs_and_advantages(
+        self,
+        minibatch: Dict[str, Any],
+        full_logits: torch.Tensor,
+        advantages: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute the per-token log probabilities and advantages
+        """
+        assert "input_ids" in minibatch, "input_ids is required for computing logprobs"
+        assert (
+            "logprob_masks" in minibatch
+        ), "logprob_masks is required for computing logprobs"
+        assert (
+            "token_masks" in minibatch
+        ), "token_masks is required for computing logprobs"
+        input_ids_batch = minibatch["input_ids"]
+        logprob_masks = minibatch["logprob_masks"]
+        token_masks = minibatch["token_masks"]
+
+        advantages_of_interest = advantages[token_masks]
         logits = full_logits[logprob_masks]
         input_ids_of_interest = input_ids_batch[token_masks]
         assert (
             logits.shape[0] == input_ids_of_interest.shape[0]
         ), f"Logits shape {logits.shape} does not match input_ids shape {input_ids_of_interest.shape}"
-        if self.config.train.train_policy.temperature > 1e-6:
-            logits = logits / self.config.train.train_policy.temperature
         logps = selective_log_softmax(logits, input_ids_of_interest)
-        return logps, advantages
-
-    def gen_cosmos_sample(self, sample):
-        assert "video" in sample or "image" in sample, "No video/image in the sample"
-
-        choices = sample["qa_pairs"]["index2ans"]
-        system_prompt = self.grpo_config.system_prompt
-
-        user_prompt = (
-            sample["qa_pairs"]["question"]
-            + "\n"
-            + "\n".join([f"({i}) {choice}" for i, choice in choices.items()])
-        )
-        user_prompt += (
-            "\nAnswer with the option's letter from the given choices directly."
-        )
-        user_prompt += "\nPlease answer the question in the following format: <think> your reasoning </think> <answer> your answer </answer>."
-
-        if self.grpo_config.enable_dataset_preprocess:
-            if "video" in sample:
-                asset = sample["video"]
-                placeholder = "video"
-            else:
-                asset = sample["image"]
-                placeholder = "image"
-            multi_modal_content = {
-                "type": placeholder,
-                placeholder: "",
-            }
-
-            # TODO(dinghaoy): Currently does not support multiple videos or images,
-            # since the cosmos dataset only has one video each sample
-            video_tensors_path = os.path.join(
-                self.cosmos_cache_dir,
-                "datasets",
-                self.grpo_config.dataset_name,
-                self.grpo_config.dataset_subset,
-                "video_tensors",
-                f"fps-{self.grpo_config.fps}-pixels-{self.grpo_config.max_pixels}",
-            )
-            asset = os.path.basename(asset).split(".")[0]
-            asset_path = os.path.join(video_tensors_path, f"{asset}.cosmos")
-            assert os.path.exists(asset_path), f"Asset {asset_path} does not exist"
-            loaded_asset = torch.load(asset_path, map_location="cpu")
-            n_tokens = loaded_asset[f"n_{placeholder}_tokens"]
-
-            conversations = [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        multi_modal_content,
-                        {
-                            "type": "text",
-                            "text": user_prompt,
-                        },
-                    ],
-                },
-            ]
-
-            text = self.hf_processor.apply_chat_template(
-                conversations, tokenize=False, add_generation_prompt=False
-            )
-            temp_image_token = "[COSMOS_IMAGE_TOKEN]"
-            temp_video_token = "[COSMOS_VIDEO_TOKEN]"
-
-            if placeholder == "image":
-                text = text.replace(self.image_token, n_tokens * temp_image_token, 1)
-            elif placeholder == "video":
-                text = text.replace(self.video_token, n_tokens * temp_video_token, 1)
-
-            text = text.replace(temp_image_token, self.image_token)
-            text = text.replace(temp_video_token, self.video_token)
-
-            encoded_text = self.tokenizer.encode(text, add_special_tokens=False)
-
-            result_dict = {
-                "input_ids": encoded_text[: self.max_length],
-            }
-
-            if placeholder == "video":
-                result_dict["pixel_values_videos"] = loaded_asset["pixel_values_videos"]
-                result_dict["video_grid_thw"] = loaded_asset["video_grid_thw"]
-                result_dict["second_per_grid_ts"] = torch.tensor(
-                    loaded_asset["second_per_grid_ts"], dtype=torch.float
-                )
-                result_dict["pixel_values_videos_lengths_per_sample"] = result_dict[
-                    "pixel_values_videos"
-                ].shape[0]
-            else:  # image
-                result_dict["pixel_values_images"] = loaded_asset["pixel_values_images"]
-                result_dict["image_grid_thw"] = loaded_asset["image_grid_thw"]
-                result_dict["pixel_values_images_lengths_per_sample"] = result_dict[
-                    "pixel_values_images"
-                ].shape[0]
-        else:
-            if "video" in sample:
-                multi_modal_content = {
-                    "type": "video",
-                    "video": self.mm_files_paths[sample["video"].split("/")[-1]],
-                    "max_pixels": self.grpo_config.max_pixels,
-                    "fps": self.grpo_config.fps,
-                }
-            else:
-                multi_modal_content = {
-                    "type": "image",
-                    "image": self.mm_files_paths[sample["image"].split("/")[-1]],
-                }
-            conversations = [
-                {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        multi_modal_content,
-                        {
-                            "type": "text",
-                            "text": user_prompt,
-                        },
-                    ],
-                },
-            ]
-            prompt = self.hf_processor.apply_chat_template(
-                conversations,
-                tokenize=False,
-                add_generation_prompt=False,
-            )
-            image_inputs, video_inputs = process_vision_info(conversations)
-            inputs = self.hf_processor(
-                text=[prompt],
-                images=image_inputs,
-                videos=video_inputs,
-                padding=True,
-                return_tensors="pt",
-            )
-            result_dict = {
-                "input_ids": inputs["input_ids"][0].tolist()[: self.max_length],
-                "pixel_values_videos": inputs["pixel_values_videos"],
-                "video_grid_thw": inputs["video_grid_thw"],
-                "second_per_grid_ts": torch.tensor(
-                    inputs["second_per_grid_ts"], dtype=torch.float
-                ),
-                "pixel_values_videos_lengths_per_sample": inputs[
-                    "pixel_values_videos"
-                ].shape[0],
-            }
-
-        return result_dict
-
-    def batch_cosmos_sample(self, samples):
-        pixel_values_videos = []
-        video_grid_thw = []
-        second_per_grid_ts = []
-        pixel_values_images = []
-        image_grid_thw = []
-        pixel_values_videos_lengths_per_sample = []
-        pixel_values_images_lengths_per_sample = []
-
-        for x in samples:
-            if "pixel_values_videos" in x:
-                pixel_values_videos.append(x["pixel_values_videos"])
-                video_grid_thw.append(x["video_grid_thw"])
-                second_per_grid_ts.append(x["second_per_grid_ts"])
-                pixel_values_videos_lengths_per_sample.append(
-                    x["pixel_values_videos_lengths_per_sample"]
-                )
-            if "pixel_values_images" in x:
-                pixel_values_images.append(x["pixel_values_images"])
-                image_grid_thw.append(x["image_grid_thw"])
-                pixel_values_images_lengths_per_sample.append(
-                    x["pixel_values_images_lengths_per_sample"]
-                )
-
-        if len(pixel_values_videos) > 0:
-            max_len = max([x.shape[0] for x in pixel_values_videos])
-            for i in range(len(pixel_values_videos)):
-                pixel_values_videos[i] = pixel_values_videos[i].unsqueeze(0)
-                assert (
-                    pixel_values_videos[i].ndim == 3
-                ), f"pixel_values_videos[i].ndim: {pixel_values_videos[i].ndim}"
-                pixel_values_videos[i] = F.pad(
-                    pixel_values_videos[i],
-                    (0, 0, 0, max_len - pixel_values_videos[i].shape[1]),
-                )
-            pixel_values_videos = torch.cat(pixel_values_videos, dim=0)
-            video_grid_thw = torch.cat(video_grid_thw, dim=0)
-            second_per_grid_ts = torch.cat(second_per_grid_ts, dim=0)
-        if len(pixel_values_images) > 0:
-            max_len = max([x.shape[0] for x in pixel_values_images])
-            for i in range(len(pixel_values_images)):
-                pixel_values_images[i] = pixel_values_images[i].unsqueeze(0)
-                assert (
-                    pixel_values_images[i].ndim == 3
-                ), f"pixel_values_images[i].ndim: {pixel_values_images[i].ndim}"
-                pixel_values_images[i] = F.pad(
-                    pixel_values_images[i],
-                    (0, 0, 0, max_len - pixel_values_images[i].shape[1]),
-                )
-            image_grid_thw = torch.cat(image_grid_thw, dim=0)
-
-        batch = {}
-
-        if len(pixel_values_videos) > 0:
-            batch["pixel_values_videos"] = pixel_values_videos
-            batch["video_grid_thw"] = video_grid_thw
-            batch["second_per_grid_ts"] = second_per_grid_ts
-            batch["pixel_values_videos_lengths_per_sample"] = torch.tensor(
-                pixel_values_videos_lengths_per_sample, dtype=torch.long
-            ).view(-1, 1)
-        if len(pixel_values_images) > 0:
-            batch["pixel_values_images"] = pixel_values_images
-            batch["image_grid_thw"] = image_grid_thw
-            batch["pixel_values_images_lengths_per_sample"] = torch.tensor(
-                pixel_values_images_lengths_per_sample, dtype=torch.long
-            ).view(-1, 1)
-
-        return batch
-
-    def batch_encoding(self, input_texts: List[str], completion_texts: List[str]):
-        if self.is_cosmos:
-            samples = [
-                self.gen_cosmos_sample(json.loads(input_text))
-                for input_text in input_texts
-            ]
-            encoded_inputs = self.batch_cosmos_sample(samples)
-            input_ids = [x["input_ids"] for x in samples]
-        else:
-            input_ids = self.tokenizer(
-                input_texts, truncation=True, padding=False
-            ).input_ids  # Don't pad yet
-            encoded_inputs = {}
-
-        completion_ids = self.tokenizer(
-            completion_texts, truncation=True, padding=False
-        ).input_ids  # Don't pad yet
-
-        merged_ids = []
-        logprob_mask = []
-        token_mask = []
-        for x, y in zip(input_ids, completion_ids):
-            merged_ids.append(x + y)
-            logprob_mask.append([0] * (len(x) - 1) + [1] * len(y) + [0])
-            token_mask.append([0] * len(x) + [1] * len(y))
-        return encoded_inputs, merged_ids, logprob_mask, token_mask
+        return logps, advantages_of_interest
 
     def train(self):
         pp_last_stage = (
@@ -1259,37 +980,23 @@ class GRPOTrainer(Trainer):
 
         start_time = time.time()
         logger.debug("[Policy] Prepare training data.")
-        rollouts = self.dispatch_rollouts()
-        ### Fake
-        prompts = [rollout["prompt"] for rollout in rollouts]
-        labels = [rollout["completion"] for rollout in rollouts]
-        # logger.info(f"prompts shape: {len(prompts)}, labels shape: {len(labels)}")
-        # for i in range(len(prompts)):
-        #     logger.info(f"prompts[{i}] shape: {len(prompts[i])}, labels[{i}] shape: {len(labels[i])}")
-        advantage = [rollout["advantage"] for rollout in rollouts]
-        # print(f"advantage shape: {len(advantage), advantage}")
-        # prompt_idx = [rollout["prompt_idx"] for rollout in rollouts]
-        # extra_info = [rollout["extra_info"] for rollout in rollouts]
-        kwargs, merged_ids, logprob_masks, token_masks = self.batch_encoding(
-            prompts, labels
-        )
-        kwargs = {name: tensor.to(self.device) for name, tensor in kwargs.items()}
+        rollouts: List[Dict] = self.dispatch_rollouts()
 
-        inputs = {
-            "input_ids": merged_ids,
-            "logprob_masks": logprob_masks,
-            "token_masks": token_masks,
-            "advantages": torch.tensor(advantage).to(self.device),
-            # TODO(lfeng): To be added for reference model
-            # "ref_per_token_logps": torch.tensor(ref_per_token_logps).to(self.device),
-        }
-        inputs.update(kwargs)
-        logger.debug(
-            f"[Policy] Start training with prompts {len(inputs['input_ids'])}."
-        )
+        payloads_list = [rollout["payload"] for rollout in rollouts]
+        completions_list = [rollout["completion"] for rollout in rollouts]
+        advantages_list = [rollout["advantage"] for rollout in rollouts]
+        processed_samples: List[Any] = [
+            self.data_packer.get_policy_input(
+                payloads_list[i],
+                completions_list[i],
+            )
+            for i in range(len(payloads_list))
+        ]
+        # user_info_keys = list(kwargs.keys())
+        advantages_t = torch.tensor(advantages_list).to(self.device)
         # Currently, we only support no cp parallelism for policy training.
         assert not self.parallel_dims.cp_enabled
-        batch_size = len(inputs["input_ids"])
+        batch_size = len(rollouts)
         mini_batch_size = (
             min(self.mini_batch, batch_size) if self.mini_batch > 0 else batch_size
         )
@@ -1299,6 +1006,7 @@ class GRPOTrainer(Trainer):
         num_mini_batch = batch_size // mini_batch_size
         self.old_per_token_logps = [None for _ in range(num_mini_batch)]
 
+        acc_n_tokens = 0
         # Validate the PP parallelism configuration
         if self.parallel_dims.pp_enabled:
             n_microbatches = (
@@ -1313,59 +1021,57 @@ class GRPOTrainer(Trainer):
             with torch.cuda.stream(self.train_stream):
                 for i in range(0, batch_size, mini_batch_size):
                     end = min(i + mini_batch_size, batch_size)
-                    input = {}
-                    for key in inputs:
-                        input[key] = inputs[key][i:end]
+                    # Convert advantages from [batch_size] -> [batch_size, max_len] via expanding
+
+                    minibatched_processed_samples = processed_samples[i:end]
 
                     # TODO(jiaxin): support variable length in PP
-                    max_len = (
+                    computed_max_len = (
                         self.config.policy.model_max_length
                         if self.parallel_dims.pp_enabled
-                        else max([len(x) for x in input["input_ids"]])
+                        else self.data_packer.policy_compute_max_len(
+                            minibatched_processed_samples
+                        )
                     )
-                    max_len = (
-                        (max_len + self.seq_len_multiple - 1)
+
+                    computed_max_len = (
+                        (computed_max_len + self.seq_len_multiple - 1)
                         // self.seq_len_multiple
                         * self.seq_len_multiple
                     )
-                    input["input_ids"] = torch.tensor(
-                        [
-                            x
-                            + [self.tokenizer.pad_token_id] * (max(0, max_len - len(x)))
-                            for x in input["input_ids"]
-                        ],
-                        dtype=torch.long,
-                    ).to(self.device)
-                    input["logprob_masks"] = torch.tensor(
-                        [
-                            x + [0] * (max(0, max_len - len(x)))
-                            for x in input["logprob_masks"]
-                        ],
-                        dtype=torch.bool,
-                    ).to(self.device)
-                    input["token_masks"] = torch.tensor(
-                        [
-                            x + [0] * (max(0, max_len - len(x)))
-                            for x in input["token_masks"]
-                        ],
-                        dtype=torch.bool,
-                    ).to(self.device)
-
-                    # [batch_size] -> [batch_size, max_len] via expanding
-                    input["advantages"] = (
-                        input["advantages"].unsqueeze(1).expand(-1, max_len)
+                    minibatched_advantages = (
+                        advantages_t[i:end]
+                        .unsqueeze(1)
+                        .expand(-1, computed_max_len)
+                        .to(self.device)
                     )
 
-                    position_ids, pos_seq_dim = self.model.get_position_ids(**input)
-                    input["position_ids"] = position_ids
+                    user_mini_batch: Dict[str, Any] = (
+                        self.data_packer.policy_collate_fn(
+                            minibatched_processed_samples,
+                            computed_max_len=computed_max_len,
+                        )
+                    )
+
+                    # Move all tensor to device
+                    for k in user_mini_batch.keys():
+                        v = user_mini_batch[k]
+                        if isinstance(v, torch.Tensor) and v.device != self.device:
+                            user_mini_batch[k] = v.to(self.device)
+
+                    position_ids, input_ids, pos_seq_dim = self.model.get_position_ids(
+                        **user_mini_batch
+                    )
+                    acc_n_tokens += np.prod(input_ids.shape)
+                    user_mini_batch["position_ids"] = position_ids
                     cp_context = (
                         create_context_parallel_ctx(
                             cp_mesh=self.parallel_dims.mesh["cp"],
-                            cp_buffers=[input["input_ids"], input["position_ids"]],
+                            cp_buffers=[input_ids, user_mini_batch["position_ids"]],
                             cp_seq_dims=[1, pos_seq_dim],
                             cp_no_restore_buffers={
-                                input["input_ids"],
-                                input["position_ids"],
+                                input_ids,
+                                user_mini_batch["position_ids"],
                             },
                             cp_rotate_method=self.config.policy.parallelism.cp_rotate_method,
                         )
@@ -1419,14 +1125,15 @@ class GRPOTrainer(Trainer):
                             # Pipeline Parallel forward / backward inside step() call
                             losses = [] if pp_last_stage else None
                             if pp_last_stage:
-                                # Add the mini-batch ids to the input so that the last stage can know which microbatch it is processing
-                                input["mini_batch_ids"] = mini_batch_ids_cpu
-                                input["micro_batch_ids"] = micro_batch_ids_cpu
-                                input["loss_scaling"] = loss_scaling_cpu
+                                # Inject the `mini-batch` and `micro-batch` ids to the input so that the last stage can know which microbatch it is processing
+                                user_mini_batch["mini_batch_ids"] = mini_batch_ids_cpu
+                                user_mini_batch["micro_batch_ids"] = micro_batch_ids_cpu
+                                user_mini_batch["loss_scaling"] = loss_scaling_cpu
                             if pp_first_stage or pp_last_stage:
                                 # First/Last stage: pass all inputs
                                 self.pp_scheduler.step(
-                                    **input,
+                                    **user_mini_batch,
+                                    advantages=minibatched_advantages,
                                     losses=losses,
                                     target=torch.empty(
                                         [mini_batch_size, 1], device=self.device
@@ -1441,9 +1148,18 @@ class GRPOTrainer(Trainer):
                                 else torch.tensor([-1.0], device=self.device)
                             )
                         else:
+                            raw_logits = self.model(**user_mini_batch)
+                            if self.config.train.train_policy.temperature > 1e-6:
+                                raw_logits = (
+                                    raw_logits
+                                    / self.config.train.train_policy.temperature
+                                )
+
                             current_per_token_logprobs, current_advantages = (
-                                self._get_per_token_logps(
-                                    input, full_logits=self.model(**input)
+                                self.compute_logprobs_and_advantages(
+                                    user_mini_batch,
+                                    full_logits=raw_logits,
+                                    advantages=minibatched_advantages,
                                 )
                             )
                             if self.old_per_token_logps[local_mini_step] is None:
@@ -1461,7 +1177,7 @@ class GRPOTrainer(Trainer):
                             loss, kl_loss = compute_loss(
                                 current_per_token_logprobs,
                                 self.old_per_token_logps[local_mini_step],
-                                input.get("ref_per_token_logps", None),
+                                user_mini_batch.get("ref_per_token_logps", None),
                                 current_advantages,
                                 self.config,
                             )
@@ -1532,7 +1248,7 @@ class GRPOTrainer(Trainer):
                 if self.config.logging.report_mfu:
                     mfu = compute_mfu(
                         model=self.model,
-                        inputs=inputs,
+                        n_tokens=acc_n_tokens,
                         iter_time=iter_time,
                         num_gpus=self.world_size,
                         dtype=self.config.train.param_dtype,
@@ -1555,13 +1271,16 @@ class GRPOTrainer(Trainer):
             )
 
         # checkpointing
-        if (
-            self.config.train.ckpt.enable_checkpoint
-            and self.train_step % self.config.train.ckpt.save_freq == 0
-            and self.train_step > 0
-        ) or (
-            self.config.train.ckpt.enable_checkpoint
-            and self.train_step == self.total_steps
+        if self.is_master_replica and (
+            (
+                self.config.train.ckpt.enable_checkpoint
+                and self.train_step % self.config.train.ckpt.save_freq == 0
+                and self.train_step > 0
+            )
+            or (
+                self.config.train.ckpt.enable_checkpoint
+                and self.train_step == self.total_steps
+            )
         ):
             if self.config.train.ckpt.export_safetensors:
                 logger.info(
@@ -1617,14 +1336,14 @@ def _swizzle_pp_grpo_forward(
     mini_batch_ids = kwargs.pop("mini_batch_ids")
     micro_batch_ids = kwargs.pop("micro_batch_ids")
     loss_scaling = kwargs.pop("loss_scaling")
-    logprobs_mask = kwargs.pop("logprob_masks")
-    token_masks = kwargs.pop("token_masks")
     advantages = kwargs.pop("advantages")
-    full_token_ids = kwargs.pop("input_ids")
 
     micro_batch_id = micro_batch_ids[0].item()
     mini_batch_id = mini_batch_ids[0].item()
     loss_scaling = loss_scaling[0].item()
+
+    # User defined input
+    user_input = kwargs.copy()
 
     assert torch.all(
         micro_batch_ids == micro_batch_id
@@ -1635,31 +1354,34 @@ def _swizzle_pp_grpo_forward(
     del micro_batch_ids, mini_batch_ids
 
     ref_per_token_logprobs = kwargs.get("ref_per_token_logps", None)
-    assert (
-        logprobs_mask.ndim == 2
-    ), f"logprobs_mask.ndim: {logprobs_mask.ndim}, while it should be 2"
-    assert (
-        token_masks.ndim == 2
-    ), f"token_masks.ndim: {token_masks.ndim}, while it should be 2"
-    assert (
-        logprobs_mask.shape == token_masks.shape
-    ), f"logprobs_mask.shape: {logprobs_mask.shape}, while it should be {token_masks.shape}"
-    assert (
-        full_token_ids.shape[0] == logprobs_mask.shape[0]
-    ), f"full_token_ids.shape[0]: {full_token_ids.shape[0]}, while it should be {logprobs_mask.shape[0]}"
-    assert (
-        full_token_ids.shape[0] == advantages.shape[0]
-    ), f"full_token_ids.shape[0]: {full_token_ids.shape[0]}, while it should be {advantages.shape[0]}"
+    # assert (
+    #     logprobs_mask.ndim == 2
+    # ), f"logprobs_mask.ndim: {logprobs_mask.ndim}, while it should be 2"
+    # assert (
+    #     token_masks.ndim == 2
+    # ), f"token_masks.ndim: {token_masks.ndim}, while it should be 2"
+    # assert (
+    #     logprobs_mask.shape == token_masks.shape
+    # ), f"logprobs_mask.shape: {logprobs_mask.shape}, while it should be {token_masks.shape}"
+    # assert (
+    #     full_token_ids.shape[0] == logprobs_mask.shape[0]
+    # ), f"full_token_ids.shape[0]: {full_token_ids.shape[0]}, while it should be {logprobs_mask.shape[0]}"
+    # assert (
+    #     full_token_ids.shape[0] == advantages.shape[0]
+    # ), f"full_token_ids.shape[0]: {full_token_ids.shape[0]}, while it should be {advantages.shape[0]}"
 
+    raw_logits = ori_forward(*args, **kwargs)
+    if config.train.train_policy.temperature > 1e-6:
+        raw_logits = raw_logits / config.train.train_policy.temperature
     # [n_tokens, n_vocab]
-    current_per_token_logprobs, current_advantages = trainer._get_per_token_logps(
-        input={
-            "input_ids": full_token_ids,
-            "logprob_masks": logprobs_mask,
-            "token_masks": token_masks,
-            "advantages": advantages,
-        },
-        full_logits=ori_forward(*args, **kwargs),
+    current_per_token_logprobs, current_advantages = (
+        trainer.compute_logprobs_and_advantages(
+            input={
+                **user_input,
+            },
+            full_logits=raw_logits,
+            advantages=advantages,
+        )
     )
 
     if (

@@ -19,16 +19,15 @@ import torch
 from functools import cached_property
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
+from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 from transformers import AutoConfig
 
 
 class BaseModel(ABC):
-    @staticmethod
-    @abstractmethod
-    def supported_model_types():
-        raise NotImplementedError
-
     def current_device(self):
+        """
+        Get the current device of the model
+        """
         return next(self.parameters()).device
 
     @cached_property
@@ -47,6 +46,35 @@ class BaseModel(ABC):
         sorted_params_info.sort(key=lambda x: x[0])
         return sorted_params_info
 
+    @torch.no_grad()
+    def maybe_decompose_weights_to_hf_naming(self, name, param):
+        """
+        Decompose the weights of the model parameters into fine-grained weights
+        This is especially useful for models with non-symmetric parameter layout than the original HuggingFace one
+        For example, MoE experts' weights are stacked in the 0th dimension,
+        while they are stored in different keys in the original HuggingFace naming convention
+        """
+        yield name, param
+
+    def tensor_precollect_required_for_sync(self, name: str) -> bool:
+        """
+        Check if the tensor sync precollect is required for the given name.
+        Args:
+            name (str): The name of the tensor.
+        Returns:
+            bool: True if the tensor sync precollect is required, False otherwise.
+        """
+        return False
+
+    """
+    Abstract methods
+    """
+
+    @staticmethod
+    @abstractmethod
+    def supported_model_types():
+        raise NotImplementedError
+
     @property
     @abstractmethod
     def parallelize_fn(self):
@@ -64,7 +92,7 @@ class BaseModel(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def get_position_ids(self, **kwargs) -> Tuple[torch.Tensor, int]:
+    def get_position_ids(self, **kwargs) -> Tuple[torch.Tensor, torch.Tensor, int]:
         """
         Method to get the position ids of the model.
         This function is declared due to that `Context Parallelism`
@@ -74,7 +102,10 @@ class BaseModel(ABC):
             **kwargs: Keyword arguments.
 
         Returns:
-            Tuple[torch.Tensor, int]: A tuple containing the position ids and the sequence dimension index of the returned position ids.
+            Tuple[torch.Tensor, torch.Tensor, int]:
+                - Tensor of position ids
+                - Tensor of input ids
+                - Sequence dimension index of position ids.
         """
         raise NotImplementedError
 
@@ -107,16 +138,6 @@ class BaseModel(ABC):
     def map_local_key_to_hf_key(self, key: str) -> str:
         raise NotImplementedError
 
-    @torch.no_grad()
-    def to_hf_state_dict_generator(self, parallel_dims: ParallelDims):
-        for name, param in self.named_parameters():
-            name = self.map_local_key_to_hf_key(name)
-            yield name, param
-
-    @torch.no_grad()
-    def maybe_decompose_weights(self, name, param):
-        yield name, param
-
     @classmethod
     @abstractmethod
     def from_pretrained(
@@ -129,7 +150,7 @@ class BaseModel(ABC):
 
     @abstractmethod
     def weight_sync_transform_by_key(
-        self, dest_name: str
+        cls, dest_name: str
     ) -> Union[Callable[[], torch.Tensor], torch.Tensor]:
         """
         Get the local view of the tensor from the state dict
@@ -154,7 +175,7 @@ class BaseModel(ABC):
 
     @classmethod
     @abstractmethod
-    def get_nparams_and_flops(self, seq_len: int) -> tuple[int, int]:
+    def get_nparams_and_flops(cls, seq_len: int) -> tuple[int, int]:
         """
         Get the number of parameters and flops of the model.
         Args:
@@ -164,12 +185,7 @@ class BaseModel(ABC):
         """
         raise NotImplementedError
 
-    def tensor_precollect_required_for_sync(self, name: str) -> bool:
-        """
-        Check if the tensor sync precollect is required for the given name.
-        Args:
-            name (str): The name of the tensor.
-        Returns:
-            bool: True if the tensor sync precollect is required, False otherwise.
-        """
-        return False
+    @classmethod
+    @abstractmethod
+    def data_packer(cls) -> DataPacker:
+        raise NotImplementedError

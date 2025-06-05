@@ -28,6 +28,7 @@ from cosmos_reason1.utils.distributed import (
 )
 from cosmos_reason1.rollout.vllm_rollout.vllm_rollout_worker import vLLMRolloutWorker
 from cosmos_reason1.dispatcher.protocol import RolloutRequest
+from cosmos_reason1.utils.api_suffix import COSMOS_API_ROLLOUT_SUFFIX
 
 
 class mock_vLLMRolloutWorker(vLLMRolloutWorker):
@@ -91,7 +92,7 @@ class mock_vLLMRolloutWorker(vLLMRolloutWorker):
         def _sendrequest_helper(response: RolloutRequest):
             try:
                 _ = requests.post(
-                    f"{self.remote_host}/api/rollout",
+                    f"{self.remote_host}/{COSMOS_API_ROLLOUT_SUFFIX}",
                     json=response.model_dump(),
                 )
             except Exception as e:
@@ -162,7 +163,7 @@ if __name__ == "__main__":
     parallel_dims = ParallelDims.from_config(
         parallesim_config=cosmos_rollout_config.rollout.parallelism
     )
-    init_distributed(cpu_enabled=False)
+    init_distributed()
     parallel_dims.build_mesh(device_type="cuda")
     try:
         rollout_worker = mock_vLLMRolloutWorker(cosmos_rollout_config, parallel_dims)

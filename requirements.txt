@@ -21,3 +21,7 @@ pynvml
 torchao
 boto3
 modelscope
+cloudpickle
+click
+rich
+pyyaml

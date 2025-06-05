@@ -175,6 +175,12 @@ def parse_args():
         description="Launch multiple processes with GPU assignments"
     )
     parser.add_argument(
+        "--launcher",
+        type=str,
+        default="cosmos_reason1.dispatcher.run_web_panel",
+        help="The launcher to use, default is `cosmos_reason1.dispatcher.run_web_panel`, a custom launcher can be provided for custom dataset and reward functions injection.",
+    )
+    parser.add_argument(
         "--config",
         type=str,
         required=True,
@@ -487,6 +493,22 @@ def replica_placement(
             )
             gpu_idx += min_n_gpus_policy
 
+    if min_n_gpus_rollout > len(global_available_gpus[global_worker_idx]):
+        # If the number of GPUs needed for rollout is more than available GPUs, we need to allocate a new worker
+        if gpu_idx > 0:
+            global_launch_settings.append(
+                [commands, gpu_devices, control_urls, output_files]
+            )
+            commands = []
+            gpu_devices = []
+            control_urls = []
+            output_files = []
+            gpu_idx = 0
+            global_worker_idx += 1
+            global_available_gpus.append(
+                available_gpus
+            )
+
     for i in range(n_rollouts):
         if min_n_gpus_rollout > len(global_available_gpus[global_worker_idx]):
             assert min_n_gpus_rollout % len(
@@ -573,6 +595,16 @@ def main():
 
     # Check if the config file is provided
     cosmos_config = read_config(args.config)
+    # train.train_policy.dataset_name
+    dataset_name = cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", None)
+    if dataset_name and "nvidia/Cosmos-Reason1-SFT-Dataset" in dataset_name:
+        launcher = os.path.join(os.path.dirname(__file__), "dataset", "cosmos_sft.py")
+    elif dataset_name and "nvidia/Cosmos-Reason1-RL-Dataset" in dataset_name:
+        launcher = os.path.join(os.path.dirname(__file__), "dataset", "cosmos_grpo.py")
+    else:
+        launcher = args.launcher
+    
+    os.environ["COSMOS_CONTROLLER_LAUNCHER"] = launcher
     # Get the number of GPUs required for policy and rollout
     # and the number of replicas for each
     policy_parallelism = cosmos_config.get("policy", {}).get("parallelism", {})
@@ -927,12 +959,13 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
     controller_cmd = None
     tmpfile_toml = None
     if control_url is None:
-        if "policy" in cosmos_config and "parallelism" in cosmos_config["policy"]:
-            # Only available for RL.
-            cosmos_config["policy"]["parallelism"]["n_init_replicas"] = n_policy
-        if "rollout" in cosmos_config and "parallelism" in cosmos_config["rollout"]:
-            # Only available for RL.
-            cosmos_config["rollout"]["parallelism"]["n_init_replicas"] = n_rollouts
+        if n_policy > 0 or n_rollouts > 0:
+            # Do not update the config if no replicas are needed which means launch controller only.
+            if "policy" in cosmos_config and "parallelism" in cosmos_config["policy"]:
+                cosmos_config["policy"]["parallelism"]["n_init_replicas"] = n_policy
+            if "rollout" in cosmos_config and "parallelism" in cosmos_config["rollout"]:
+                # Only available for RL.
+                cosmos_config["rollout"]["parallelism"]["n_init_replicas"] = n_rollouts
         # Create a temporary file and write to it
         with tempfile.NamedTemporaryFile(mode='w+', suffix=".toml", delete=False) as tmpfile:
             toml.dump(cosmos_config, tmpfile)

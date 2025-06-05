@@ -48,11 +48,6 @@ dataset_train_split = "train"
 prompt_column_name = "question"
 response_column_name = "answer"
 reward_function = "gsm8k"
-system_prompt = """You are an AI math expert, you will be given a question and required to answer. 
-Final answer should be like
-```
-#### [ANS]
-``` where [ANS] is your answer"""
 temperature = 0.9
 epsilon_low = 0.2
 epsilon_high = 0.2

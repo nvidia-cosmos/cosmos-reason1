@@ -1,0 +1,44 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "math_examples",
+  "dataset_size": 95490215,
+  "description": "",
+  "download_size": 42540081,
+  "features": {
+    "prompt": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "thinking": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "result": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "ans_start": {
+      "dtype": "int64",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 138030296,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 95490215,
+      "num_examples": 5000,
+      "dataset_name": "math_examples"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

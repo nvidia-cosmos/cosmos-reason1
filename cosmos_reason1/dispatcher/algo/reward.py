@@ -21,7 +21,7 @@ from cosmos_reason1.policy.config import Config
 from typing import Union, Callable
 from cosmos_reason1.utils.constant import RewardFn
 from cosmos_reason1.utils.logging import logger
-from functools import partial
+from typing import Optional, List
 
 math_comparer = math_metric(
     gold_extraction_target=(LatexExtractionConfig(),),
@@ -275,60 +275,35 @@ REWARD_FUNC_MAPPING = {
     RewardFn.OVERLONG: overlong_reward_fn,
 }
 
-GLOBAL_OVERRIDE_REWARD_FNs = []
-
-
-def register_reward_fn(name: str, func: Callable, override_toml: bool = False):
-    """
-    Register a new reward function.
-    If override_toml is True, this SINGLE reward function will be used as the default reward function.
-    """
-    global GLOBAL_OVERRIDE_REWARD_FNs
-
-    # Bind a new function to catch the potential exception raised by the original function.
-    def wrapped_func(
-        to_be_evaluated: str,
-        reference: Union[str, None],
-        func: Callable,
-        name: str,
-        *args,
-        **kwargs,
-    ):
-        try:
-            return func(to_be_evaluated, reference, *args, **kwargs)
-        except Exception as e:
-            logger.warning(
-                f"Error raised in reward function {name}: {e}, is being ignored and reward is set to 0."
-            )
-            return 0.0
-
-    REWARD_FUNC_MAPPING[name] = partial(wrapped_func, func=func, name=name)
-    if override_toml:
-        if GLOBAL_OVERRIDE_REWARD_FNs is not None:
-            GLOBAL_OVERRIDE_REWARD_FNs.append(name)
-
 
 class Reward:
-    def __init__(self, config: Config, tokenier: PreTrainedTokenizer):
+    def __init__(
+        self,
+        config: Config,
+        tokenier: PreTrainedTokenizer,
+        explicit_reward_fn: Optional[List[Callable]] = None,
+    ):
         self.config = config
         self.tokenizer = tokenier
-        global GLOBAL_OVERRIDE_REWARD_FNs
-        if GLOBAL_OVERRIDE_REWARD_FNs:
-            self.reward_funcs = [
-                REWARD_FUNC_MAPPING[name] for name in GLOBAL_OVERRIDE_REWARD_FNs
-            ]
+        if explicit_reward_fn:
+            self.reward_funcs = (
+                explicit_reward_fn
+                if isinstance(explicit_reward_fn, list)
+                else [explicit_reward_fn]
+            )
             logger.info(
-                f"Using user-registered reward function as the default reward function, {config.train.train_policy.reward_function} will be ignored."
+                f"[Reward] Using provided reward functions: {self.reward_funcs}, `config.train.train_policy.reward_function` will be ignored"
             )
         else:
             self.reward_funcs = []
             for name in config.train.train_policy.reward_function:
                 reward_func = RewardFn.from_string(name)
-                if reward_func not in REWARD_FUNC_MAPPING:
-                    raise ValueError(
-                        f"Reward function {reward_func} not found in mapping."
-                    )
-                self.reward_funcs.append(REWARD_FUNC_MAPPING[name])
+            if reward_func not in REWARD_FUNC_MAPPING:
+                raise ValueError(f"Reward function {reward_func} not found in mapping.")
+            self.reward_funcs.append(REWARD_FUNC_MAPPING[name])
+            logger.info(
+                f"[Reward] Using reward functions: {config.train.train_policy.reward_function}"
+            )
 
     def compute_reward(self, to_be_evaluated: str, reference: Union[str, None]):
         total_reward = 0.0

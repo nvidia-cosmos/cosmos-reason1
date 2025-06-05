@@ -38,7 +38,7 @@ from cosmos_reason1.utils import util
 
 
 def main(args: argparse.Namespace):
-    init_distributed(cpu_enabled=False)
+    init_distributed()
 
     config = [
         None,
@@ -135,7 +135,7 @@ def main(args: argparse.Namespace):
         temp = [None]
         if parallel_dims.global_rank == 0:
             pbar.update(1)
-            prompt_id_and_str_list: List[Tuple[int, str]] = []
+            prompt_id_and_payload_list: List[Tuple[int, str]] = []
             # get the prompt
             for _ in range(batch_size):
                 try:
@@ -145,7 +145,7 @@ def main(args: argparse.Namespace):
                     break
 
                 idx = idx.item() if isinstance(idx, torch.Tensor) else idx
-                prompt_id_and_str_list.append(
+                prompt_id_and_payload_list.append(
                     (
                         idx,
                         prompt[0]
@@ -153,22 +153,22 @@ def main(args: argparse.Namespace):
                         else prompt,
                     )
                 )
-            temp[0] = prompt_id_and_str_list
+            temp[0] = prompt_id_and_payload_list
 
         if world_size > 1:
             dist.broadcast_object_list(temp, src=0, device=torch.device("cpu"))
 
-        prompt_id_and_str_list = temp[0]
+        prompt_id_and_payload_list = temp[0]
 
         # calculate the token number
         token_input_nums = []
-        for _, prompt in prompt_id_and_str_list:
+        for _, prompt in prompt_id_and_payload_list:
             token_input_nums.append(len(tokenizer.encode(prompt)))
 
         # E2E rollout generation perf: prompt preprocessing + rollout generation
         start = time.perf_counter()
         completions_per_prompt = rollout_engine.rollout_generation(
-            prompt_id_and_str_list, stream=None
+            prompt_id_and_payload_list, stream=None
         )
         end = time.perf_counter()
 
