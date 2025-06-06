@@ -552,7 +552,7 @@ class HighAvailabilitylNccl:
         self.replica_name_to_rank = cmd.replica_name_to_rank
         self.is_single_peer.clear()
         self.is_comm_ready.set()
-        logger.info(
+        logger.debug(
             f"{self.__log_prefix()} created nccl_comm for replica_rank {rank} with total {len(cmd.replica_name_to_rank)} ranks."
         )
 
