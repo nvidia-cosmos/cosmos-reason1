@@ -19,8 +19,202 @@ import torch.distributed.pipelining
 from torch.distributed.pipelining import (
     PipelineStage as OriginalPipelineStage,
     Schedule1F1B as OriginalSchedule1F1B,
+    ScheduleGPipe as OriginalScheduleGPipe,
+)
+from torch.distributed.pipelining.stage import (
+    _RecvInfo, _RootArgPlaceholder, _make_tensor_from_meta
 )
 
+from cosmos_reason1.utils.logging import logger
+
+# Common functions for dynamic shape support
+def clear_stage(self):
+    self._stage_initialized = False
+    self._stage.inputs_meta = None
+    self._stage._outputs_meta = None
+
+def infer_seq_dim(self, position_ids_shape):
+    # Find the dimension index where the current position_ids shape differs from the initial shape
+    diff = [i for i, (a, b) in enumerate(zip(position_ids_shape, self.init_position_ids_shape)) if a != b]
+    if len(diff) > 1 and not self.clear_stage_enabled:
+        logger.warning(f"Only one dimension can be different between the current and the initial position ids shape.\
+                         Set clear_stage_enabled to True.")
+        self.clear_stage_enabled = True
+        return
+
+    if len(diff) == 1:
+        position_ids_seq_dim = diff[0]
+        self.position_ids_seq_dim = position_ids_seq_dim
+        prev_seq_len = self.init_position_ids_shape[position_ids_seq_dim]
+        input_prev_seq_len = prev_seq_len // self.seq_len_multiple
+        output_prev_seq_len = input_prev_seq_len if not self._stage.is_last else prev_seq_len
+
+        logger.info(f"Inferred position ids seq dim: {self.position_ids_seq_dim}")
+        for input_meta in self._stage.inputs_meta:
+            input_meta_shape = input_meta.shape
+            logger.info(f"Input meta shape: {input_meta_shape} {input_prev_seq_len=}")
+            for i, dim in enumerate(input_meta_shape):
+                if dim == input_prev_seq_len:
+                    self.input_seq_dim = i
+                    logger.info(f"Inferred input meta seq dim: {self.input_seq_dim}")
+                    break
+            if self.input_seq_dim is None:
+                logger.warning(f"Seq dim is not inferred for input meta {input_meta}, set clear_stage_enabled to True.")
+                self.clear_stage_enabled = True
+                break
+        for output_meta in self._stage._outputs_meta:
+            output_meta_shape = output_meta.shape
+            logger.info(f"Output meta shape: {output_meta_shape} {output_prev_seq_len=}")
+            for i, dim in enumerate(output_meta_shape):
+                if dim == output_prev_seq_len:
+                    self.output_seq_dim = i
+                    logger.info(f"Inferred output meta seq dim: {self.output_seq_dim}")
+                    break
+            if self.output_seq_dim is None:
+                logger.warning(f"Seq dim is not inferred for output meta {output_meta}, set clear_stage_enabled to True.")
+                self.clear_stage_enabled = True
+
+def update_stage(self, position_ids_shape):
+    # TODO: support multiple inputs/outputs meta update
+    inputs_meta_len = len(self._stage.inputs_meta)
+    outputs_meta_len = len(self._stage._outputs_meta)
+    if (inputs_meta_len > 1 or outputs_meta_len > 1) and not self.clear_stage_enabled:
+        logger.warning(f"Default pipeline parallelism dynamic shape mode currently only supports at most 1 input meta (got {inputs_meta_len}) \
+                         or 1 output meta (got {outputs_meta_len}). Set clear_stage_enabled to True.")
+        self.clear_stage_enabled = True
+
+    if self.input_seq_dim is None and self.output_seq_dim is None and not self.clear_stage_enabled:
+        self._infer_seq_dim(position_ids_shape)
+
+    # In case the position_ids seq dim is not inferred, just skip the update
+    # e.g. both prev batch and current batch have same seq len
+    if self.position_ids_seq_dim is None:
+        return
+
+    # clear the stage if clear_stage_enabled is True
+    if self.clear_stage_enabled:
+        self._clear_stage()
+        return
+
+    new_seq_len = position_ids_shape[self.position_ids_seq_dim]
+    input_new_seq_len = new_seq_len // self.seq_len_multiple
+    output_new_seq_len = input_new_seq_len if not self._stage.is_last else new_seq_len
+    logger.debug(f"Updating stage with {new_seq_len=} {input_new_seq_len=} {output_new_seq_len=}")
+    if inputs_meta_len:
+        new_inputs_meta = tuple()
+        for input_meta in self._stage.inputs_meta:
+            input_meta_shape = list(input_meta.shape)
+            if input_meta_shape[self.input_seq_dim] != input_new_seq_len:
+                input_meta_shape[self.input_seq_dim] = input_new_seq_len
+                new_input_meta = torch.empty(input_meta_shape, device=input_meta.device, dtype=input_meta.dtype)
+            else:
+                new_input_meta = input_meta
+            new_inputs_meta += (new_input_meta, )
+        self._stage.inputs_meta = new_inputs_meta
+        logger.debug(f"Updated inputs meta: {self._stage.inputs_meta}")
+
+    if outputs_meta_len:
+        new_outputs_meta = tuple()
+        for output_meta in self._stage._outputs_meta:
+            output_meta_shape = list(output_meta.shape)
+            if output_meta_shape[self.output_seq_dim] != output_new_seq_len:
+                output_meta_shape[self.output_seq_dim] = output_new_seq_len
+                new_output_meta = torch.empty(output_meta_shape, device=output_meta.device, dtype=output_meta.dtype)
+            else:
+                new_output_meta = output_meta
+            new_outputs_meta += (new_output_meta, )
+        self._stage._outputs_meta = new_outputs_meta
+        logger.debug(f"Updated outputs meta: {self._stage._outputs_meta}")
+
+    self._stage._reconstruct_forward_infra(self._n_microbatches)
+    if self._has_backward:
+        self._stage._prepare_backward_infra(self._n_microbatches)
+
+def step_func(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+    """
+    Run one iteration of the pipeline schedule with *whole-batch* input.
+    Will chunk the input into microbatches automatically, and go through the
+    microbatches according to the schedule implementation.
+
+    args: positional arguments to the model (as in non-pipeline case).
+    kwargs: keyword arguments to the model (as in non-pipeline case).
+    target: target for the loss function.
+    losses: a list to store the losses for each microbatch.
+    """
+
+    # Clean per iteration
+    self._stage.clear_runtime_states()
+
+    # Split inputs into microbatches
+    args_split, kwargs_split = self._split_inputs(args, kwargs)
+
+    # Split target into microbatches
+    if target is not None:
+        targets_split = list(torch.tensor_split(target, self._n_microbatches))
+    else:
+        targets_split = None
+
+    if self.pp_dynamic_shape_enabled is None:
+        self.pp_dynamic_shape_enabled = kwargs.get("pp_dynamic_shape_enabled", False)
+
+    position_ids = kwargs_split[0].get("position_ids", None)
+    if position_ids is None:
+        logger.warning(f"Position ids is None, set clear_stage_enabled to True")
+        self.clear_stage_enabled = True
+    else:
+        if self.pp_dynamic_shape_enabled and self.init_position_ids_shape is None:
+            self.init_position_ids_shape = position_ids.shape
+        seq_len_multiple = kwargs.get("seq_len_multiple", None)
+        if self.pp_dynamic_shape_enabled and self.seq_len_multiple is None:
+            assert seq_len_multiple is not None, "Seq len multiple is required for dynamic shape mode"
+            self.seq_len_multiple = seq_len_multiple
+    # Update stage if it is already initialized by updating input/output metadata
+    # to match the new input shapes and types
+    if self.pp_dynamic_shape_enabled and self._stage_initialized:
+        self._update_stage(position_ids.shape)
+
+    # Run microbatches
+    self._step_microbatches(args_split, kwargs_split, targets_split, losses)
+
+    # Return merged results per original format
+    if self._stage.is_last:
+        return self._merge_outputs(self._stage.output_chunks)
+    else:
+        return None
+
+
+class ScheduleGPipe(OriginalScheduleGPipe):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Used for input/output metadata update in dynamic shape mode
+        self.input_seq_dim = None
+        self.output_seq_dim = None
+        self.position_ids_seq_dim = None
+        self.init_position_ids_shape = None
+        self.seq_len_multiple = None
+        self.pp_dynamic_shape_enabled = None
+        self.first_call = True
+        # If true, clear the stage each step
+        self.clear_stage_enabled = False
+
+    # Reset the stage initialized flag for dynamic shape support
+    def _clear_stage(self):
+        clear_stage(self)
+
+    def _infer_seq_dim(self, position_ids_shape):
+        infer_seq_dim(self, position_ids_shape)
+
+    def _update_stage(self, position_ids_shape):
+        update_stage(self, position_ids_shape)
+
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+        # training schedule and validation schedule share the same stage, so we need to clear
+        # the stage before the first step
+        if self.first_call and (len(self._stage.inputs_meta) or len(self._stage._outputs_meta)):
+            self._clear_stage()
+            self.first_call = False
+
+        return step_func(self, *args, target=target, losses=losses, **kwargs)
 
 class Schedule1F1B(OriginalSchedule1F1B):
     def __init__(self, *args, **kwargs):
@@ -29,7 +223,28 @@ class Schedule1F1B(OriginalSchedule1F1B):
             # We scale the grads manually in this codebase
             kwargs["scale_grads"] = False
         super().__init__(*args, **kwargs)
+        # Used for input/output metadata update in dynamic shape mode
+        self.input_seq_dim = None
+        self.output_seq_dim = None
+        self.position_ids_seq_dim = None
+        self.init_position_ids_shape = None
+        self.seq_len_multiple = None
+        self.pp_dynamic_shape_enabled = None
+        # If true, clear the stage each step
+        self.clear_stage_enabled = False
 
+    # Reset the stage initialized flag for dynamic shape support
+    def _clear_stage(self):
+        clear_stage(self)
+
+    def _infer_seq_dim(self, position_ids_shape):
+        infer_seq_dim(self, position_ids_shape)
+
+    def _update_stage(self, position_ids_shape):
+        update_stage(self, position_ids_shape)
+
+    def step(self, *args, target=None, losses: Optional[List] = None, **kwargs):
+        return step_func(self, *args, target=target, losses=losses, **kwargs)
 
 class PipelineStage(OriginalPipelineStage):
     def __init__(self, *args, **kwargs):
@@ -44,6 +259,46 @@ class PipelineStage(OriginalPipelineStage):
             return self.cosmos_backward_one_chunk(*args, **kwargs)
         else:
             return super().backward_one_chunk(*args, **kwargs)
+
+    def _reconstruct_forward_infra(
+        self,
+        num_microbatches: int,
+    ) -> Tuple[Any, ...]:
+        for chunk_id in range(num_microbatches):
+            if not self.is_first:
+                # We assume that we always receive from stage - 1
+                recv_infos = tuple(
+                    [
+                        _RecvInfo(
+                            f"recv_for_{self.stage_index}_from_{self.stage_index - 1}",
+                            self.stage_index - 1,
+                            _make_tensor_from_meta(inp, self.device),
+                        )
+                        for inp in self.inputs_meta
+                    ]
+                )
+                # In case there is backward pass, set requires_grad for receive buffers
+                if self.has_backward:
+                    for r in recv_infos:
+                        r.buffer.requires_grad_(True)
+
+                self.args_recv_info[chunk_id] = recv_infos
+            else:
+                self.args_recv_info[chunk_id] = tuple(
+                    [_RootArgPlaceholder(i) for i in self.inputs_meta]
+                )
+
+        # Send info during forward for each activation
+        # only need the rank that is being sent to
+        self.act_send_info: Dict[int, List] = {}
+
+        for idx in range(len(self.get_outputs_meta())):
+            # We assume we always send to stage + 1
+            if not self.is_last:
+                self.act_send_info[idx] = [self.stage_index + 1]
+            else:
+                self.act_send_info[idx] = []
+
 
     def cosmos_backward_one_chunk(
         self,

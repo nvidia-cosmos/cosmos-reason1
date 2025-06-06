@@ -101,6 +101,7 @@ class ParallelDims:
     tp: int
     pp: int
     world_size: int
+    pp_dynamic_shape: bool
 
     @staticmethod
     def from_config(parallesim_config: ParallelismConfig):
@@ -111,6 +112,7 @@ class ParallelDims:
             tp=parallesim_config.tp_size,
             pp=parallesim_config.pp_size,
             world_size=parallesim_config.world_size,
+            pp_dynamic_shape=parallesim_config.pp_dynamic_shape,
         )
 
     @staticmethod
@@ -122,6 +124,7 @@ class ParallelDims:
             tp=parallesim_config.tp_size,
             pp=parallesim_config.pp_size,
             world_size=world_size,
+            pp_dynamic_shape=parallesim_config.pp_dynamic_shape,
         )
 
     def __post_init__(self):
@@ -269,6 +272,10 @@ class ParallelDims:
     @property
     def pp_enabled(self):
         return self.pp > 1
+
+    @property
+    def pp_dynamic_shape_enabled(self):
+        return self.pp > 1 and self.pp_dynamic_shape
 
     def non_data_parallel_size(self):
         return self.cp * self.tp * self.pp

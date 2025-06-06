@@ -36,8 +36,7 @@ from torch.distributed.tensor.parallel import (
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.policy.config import Config as CosmosConfig
-from cosmos_reason1.patch import PipelineStage, Schedule1F1B
-from torch.distributed.pipelining.schedules import ScheduleGPipe
+from cosmos_reason1.patch import PipelineStage, Schedule1F1B, ScheduleGPipe
 from typing import Callable, Optional
 from cosmos_reason1.utils.distributed import ReplicateParallel
 

@@ -52,7 +52,6 @@ def collate_fn(
     ignore_label_id=-100,
     fixed_length: Optional[int] = None,
 ):
-    # TODO(jiaxin): enable dynamic length for PP
     if fixed_length is None:
         max_len = min(
             config.policy.model_max_length,
@@ -263,9 +262,8 @@ class SFTTrainer(Trainer):
                 collate_fn,
                 pad_token_id=self.tokenizer.pad_token_id,
                 seq_len_multiple=self.seq_len_multiple,
-                # TODO(cjx): PP only support fixed length training data, fix it.
                 fixed_length=config.policy.model_max_length
-                if parallel_dims.pp_enabled
+                if parallel_dims.pp_enabled and not parallel_dims.pp_dynamic_shape
                 else None,
                 data_packer=self.data_packer,
                 config=config,
@@ -281,9 +279,8 @@ class SFTTrainer(Trainer):
                 collate_fn,
                 pad_token_id=self.tokenizer.pad_token_id,
                 seq_len_multiple=self.seq_len_multiple,
-                # TODO(cjx): PP only support fixed length training data, fix it.
                 fixed_length=config.policy.model_max_length
-                if parallel_dims.pp_enabled
+                if parallel_dims.pp_enabled and not parallel_dims.pp_dynamic_shape
                 else None,
                 data_packer=self.data_packer,
                 config=config,
@@ -341,11 +338,15 @@ class SFTTrainer(Trainer):
 
                         if pp_first_stage:
                             self.pp_scheduler_val.step(
-                                **val_batch, position_ids=val_position_ids
+                                **val_batch, position_ids=val_position_ids,
+                                pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
+                                seq_len_multiple=self.seq_len_multiple,
                             )
                         else:
                             pp_out = self.pp_scheduler_val.step(
-                                position_ids=val_position_ids
+                                position_ids=val_position_ids,
+                                pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
+                                seq_len_multiple=self.seq_len_multiple,
                             )
 
                         if pp_last_stage:
@@ -409,11 +410,17 @@ class SFTTrainer(Trainer):
                     # Pipeline Parallel forward / backward inside step() call
                     targets, losses = (labels, []) if pp_last_stage else (None, None)
                     if pp_first_stage:
-                        self.pp_scheduler.step(**batch, position_ids=position_ids)
+                        self.pp_scheduler.step(
+                            **batch, position_ids=position_ids,
+                            pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
+                            seq_len_multiple=self.seq_len_multiple,
+                        )
                     else:
                         # FWD + BWD if it is 1F1B-like scheduler
                         self.pp_scheduler.step(
-                            position_ids=position_ids, target=targets, losses=losses
+                            position_ids=position_ids, target=targets, losses=losses,
+                            pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
+                            seq_len_multiple=self.seq_len_multiple,
                         )
                     loss = (
                         torch.mean(torch.stack(losses)).to(self.device)
