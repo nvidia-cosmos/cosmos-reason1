@@ -700,10 +700,10 @@ def prevent_vllm_from_setting_nccl_env():
 class DistKVStore:
     def __init__(self, group: dist.ProcessGroup, master_rank: int):
         self.group = group
-        self.local_rank = self.group.rank()
+        self.rank = self.group.rank()
         self.world_size = self.group.size()
         self.master_rank = master_rank if -1 < master_rank < self.world_size else 0
-
+        self.counter = 0
         self.lock = threading.Lock()
 
         self.local_store = None
@@ -713,7 +713,7 @@ class DistKVStore:
         if self.world_size == 1:
             return
 
-        if self.local_rank == self.master_rank:
+        if self.rank == self.master_rank:
             local_ips = network_util.get_eth_ips()
             assert len(local_ips) > 0, "No IP addresses found"
             local_ip = local_ips[0]
@@ -726,7 +726,7 @@ class DistKVStore:
                     self.local_store = dist.TCPStore(
                         host_name="0.0.0.0",
                         port=free_port,
-                        world_size=None,
+                        # world_size=self.world_size,
                         is_master=True,
                         timeout=timedelta(seconds=constant.COSMOS_TCP_STORE_TIMEOUT),
                     )
@@ -764,6 +764,7 @@ class DistKVStore:
                         host_name=local_ip,
                         port=local_port,
                         is_master=False,
+                        # world_size=self.world_size,
                         timeout=timedelta(seconds=constant.COSMOS_TCP_STORE_TIMEOUT),
                     )
                     break
@@ -781,8 +782,12 @@ class DistKVStore:
         if self.world_size == 1:
             return command
 
-        __key = "#BROADCAST"
+        __key = f"#BROADCAST-{self.counter}"
         __key_dones = [f"{__key}-done-{i}" for i in range(self.world_size)]
+
+        __last_key = f"#BROADCAST-{self.counter - 1}"
+        __last_key_dones = [f"{__last_key}-done-{i}" for i in range(self.world_size)]
+        self.counter += 1
 
         _wait_hook = (
             partial(self.local_store.wait, timeout=timeout)
@@ -790,7 +795,7 @@ class DistKVStore:
             else self.local_store.wait
         )
 
-        if src == self.local_rank:
+        if src == self.rank:
             self.local_store.set(__key, command.pack())
         else:
             _wait_hook([__key])
@@ -799,14 +804,14 @@ class DistKVStore:
         cmd = Command.depack(cmd_raw)
 
         try:
-            self.local_store.set(__key_dones[self.local_rank], "1")
+            self.local_store.set(__key_dones[self.rank], "1")
             _wait_hook(__key_dones)
         except Exception as e:
             logger.error(f"Failed to broadcast command: {e}")
             raise e
         finally:
-            self.local_store.delete_key(__key)
-            for _d in __key_dones:
-                self.local_store.delete_key(_d)
-
+            if self.rank == self.master_rank:
+                self.local_store.delete_key(__last_key)
+                for _d in __last_key_dones:
+                    self.local_store.delete_key(_d)
         return cmd

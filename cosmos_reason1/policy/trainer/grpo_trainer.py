@@ -797,6 +797,9 @@ class GRPOTrainer(Trainer):
                             """ directly push the buildmesh command to the nccl comm, will not block main thread """
                             # broadcast the buildmesh command to all ranks
                             cmd = self.kv_store.broadcast_command(command, 0)
+                            self.is_master_replica = (
+                                cmd.replica_name_to_rank[self.replica_name] == 0
+                            )
                             self.inter_policy_nccl.push_cmd(cmd)
                             continue
                         self.fetch_command_buffer.put_nowait(command)
@@ -813,6 +816,12 @@ class GRPOTrainer(Trainer):
                 if isinstance(bmcmd, StopCommand):
                     # Stop command received from rank 0, means exiting the whole program, so break to exit the loop
                     break
+                assert isinstance(
+                    bmcmd, BuildMeshCommand
+                ), "Only buildmesh command is supported"
+                self.is_master_replica = (
+                    bmcmd.replica_name_to_rank[self.replica_name] == 0
+                )
                 self.inter_policy_nccl.push_cmd(bmcmd)
 
     @Trainer.register_policy_command_handler(StopCommand)
