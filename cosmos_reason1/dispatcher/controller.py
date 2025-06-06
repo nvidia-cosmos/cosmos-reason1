@@ -613,19 +613,21 @@ class Controller:
             self.policy_status_manager.set_ranks(replicas_to_rank)
 
             # 2. Trigger weight/optimizer state synchronization
-            initialized_replica = None
-            for replica in valid_replicas:
-                if replica.weights_loaded_in_view_of_command:
-                    initialized_replica = replica
-                    break
-            assert (
-                initialized_replica is not None
-            ), "No replica was selected to load weights"
-            command.PolicyToPolicyBroadcastCommand.trigger(
-                src_replica=initialized_replica,
-                dst_replicas=valid_replicas,
-                redis_handler=self.redis_controller,
-            )
+            if len(valid_replicas) > 1:
+                # Only broadcast when there are multiple policy replicas
+                initialized_replica = None
+                for replica in valid_replicas:
+                    if replica.weights_loaded_in_view_of_command:
+                        initialized_replica = replica
+                        break
+                assert (
+                    initialized_replica is not None
+                ), "No replica was selected to load weights"
+                command.PolicyToPolicyBroadcastCommand.trigger(
+                    src_replica=initialized_replica,
+                    dst_replicas=valid_replicas,
+                    redis_handler=self.redis_controller,
+                )
             for replica in valid_replicas:
                 self.policy_status_manager.set_status(replica.name, PolicyStatus.READY)
         elif len(valid_replicas) < self.config.policy.parallelism.n_init_replicas:
