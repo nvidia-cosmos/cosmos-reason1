@@ -926,6 +926,55 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
     else:
         output_dir = None
 
+    # def resolve_host(host):
+    #     try:
+    #         result = subprocess.run(
+    #             ["getent", "hosts", "--", host],
+    #             stdout=subprocess.PIPE,
+    #             stderr=subprocess.PIPE,
+    #             text=True
+    #         )
+
+    #         if result.returncode == 0:
+    #             if len(result.stdout.strip().split()) > 0:
+    #                 return result.stdout.strip().split()[0]
+    #             else:
+    #                 return None
+    #         else:
+    #             raise RuntimeError(f"Resolution failed: {result.stderr}")
+    #     except subprocess.TimeoutExpired:
+    #         raise TimeoutError("DNS resolution timed out")
+
+    # def resolve_host_blocking(hostname):
+    #     try:
+    #         while True:
+    #             new_hostname = resolve_host(hostname)
+    #             if new_hostname is not None:
+    #                 hostname = new_hostname
+    #                 logger.info(f"Resolved hostname: {hostname}")
+    #                 break
+    #             time.sleep(1)
+    #     except Exception as e:
+    #         pass
+    #     return hostname
+
+    if (
+        "LEPTON_JOB_WORKER_INDEX" in os.environ
+        and int(os.environ.get("LEPTON_JOB_WORKER_INDEX")) >= 0
+    ):
+        cur_work_idx = int(os.environ.get("LEPTON_JOB_WORKER_INDEX"))
+    else:
+        cur_work_idx = args.worker_idx
+
+    if "LEPTON_JOB_WORKER_INDEX" in os.environ:
+        prefix = os.environ.get(
+            "LEPTON_JOB_SERVICE_PREFIX", os.environ.get("LEPTON_JOB_NAME")
+        )
+        subdomain = os.environ.get("LEPTON_SUBDOMAIN", "")
+        hostname = f"{prefix}-{cur_work_idx}.{subdomain}"
+        logger.info(f"Setting hostname to {hostname} for worker index {cur_work_idx}")
+        os.system(f"hostname {hostname}")
+    
     control_url = None
     if args.url is not None:
         ip, port = args.url.split(":")
@@ -1039,14 +1088,6 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
         >= min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts
     ), f"Not enough GPUs available. Required: {min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts}, Available: {len(available_gpus)}"
 
-
-    if (
-        "LEPTON_JOB_WORKER_INDEX" in os.environ
-        and int(os.environ.get("LEPTON_JOB_WORKER_INDEX")) >= 0
-    ):
-        cur_work_idx = int(os.environ.get("LEPTON_JOB_WORKER_INDEX"))
-    else:
-        cur_work_idx = args.worker_idx
 
     if len(global_launch_settings) <= cur_work_idx or len(global_launch_settings[cur_work_idx]) == 0:
         if controller_cmd is None:
