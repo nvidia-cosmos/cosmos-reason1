@@ -62,7 +62,11 @@ setup(
     package_data={
         "cosmos_reason1": ["**/*.json", "**/*.toml"]
     },
-
+    entry_points={
+        "console_scripts": [
+            "cosmos-reason1 = cosmos_reason1.cli.cli:cosmos",
+        ],
+    },
     install_requires=requirements,
     ext_modules=[CMakeExtension('cosmos_reason1._cpp', sourcedir='.')],
     cmdclass=dict(build_ext=CMakeBuild),

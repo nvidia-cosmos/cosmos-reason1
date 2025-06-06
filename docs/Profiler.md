@@ -1,6 +1,6 @@
-## Profiling the training in cosmos
+## Profiling the training in cosmos-reason1
 
-We support profiling the training in cosmos by separate ranks. Users must specify the profiling config in `toml` config file like:
+We support profiling the training in cosmos reason1 by separate ranks. Users must specify the profiling config in `toml` config file like:
 
 ```
 [profiler]
@@ -44,7 +44,7 @@ Because we are in async mode, by default the profiling won't start automatically
 
 Example:
 ```
-cosmos profile set -ch localhost -cp 8000 a8563b86-5d7a-4955-82f1-e8e1b5d7c6f3
+cosmos-reason1 profile set -ch localhost -cp 8000 a8563b86-5d7a-4955-82f1-e8e1b5d7c6f3
 ```
 
 Output:
@@ -60,7 +60,7 @@ Then the controller will print logs like:
 
 This means the controller will tell the specified policy replica to start doing profiling at the coming round of training step. Remember that this command will only take effect for once for the same replica. Sending multiple commands to the same replica will generate multiple rounds of trace file.
 
-User could also specify profiler args dynamically, please run `cosmos profile set --help` to get the details.
+User could also specify profiler args dynamically, please run `cosmos-reason1 profile set --help` to get the details.
 
 #### 4. Get the trace file.
 
@@ -87,7 +87,7 @@ python tools/launch_all.py --config ./configs/qwen2-5/qwen2-5-7b-p-fsdp1-tp2-r-t
 2. Specify which policy replica to run the profiling
 
 ```
-cosmos profile set -ch localhost -cp 8000 a8563b86-5d7a-4955-82f1-e8e1b5d7c6f3
+cosmos-reason1 profile set -ch localhost -cp 8000 a8563b86-5d7a-4955-82f1-e8e1b5d7c6f3
 ```
 
 3. Get the trace file.

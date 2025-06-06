@@ -5,9 +5,9 @@ After installation of cosmos_reason1, there will have a `cosmos` command added t
 
 
 ```
-cosmos --help
+cosmos-reason1 --help
 
-Usage: cosmos [OPTIONS] COMMAND [ARGS]...
+Usage: cosmos-reason1 [OPTIONS] COMMAND [ARGS]...
 
   Cosmos Reason1 CLI.
 
@@ -15,17 +15,17 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  algo      Query information about training config from controller.
-  nccl      Query information about NCCL from controller.
-  profile   Manage profiler behavior of the training.
-  replica   Query replica information from controller.
+  algo     Query information about training config from controller.
+  nccl     Query information about NCCL from controller.
+  profile  Manage profiler behavior of the training.
+  replica  Query replica information from controller.
 ```
 
 ### List replicas
 
 
 ```
-cosmos replica ls -ch localhost -cp 8000
+cosmos-reason1 replica ls -ch localhost -cp 8000
 ```
 
 
@@ -45,7 +45,7 @@ Output:
 If you want check details of a replica:
 
 ```
-cosmos replica lsr -ch localhost -cp 8000 7b987ce5-18bf-4499-9ed0-04f689ab91d7
+cosmos-reason1 replica lsr -ch localhost -cp 8000 7b987ce5-18bf-4499-9ed0-04f689ab91d7
 ```
 
 Output:
@@ -67,15 +67,15 @@ Output:
 ### List config
 
 ```
-cosmos algo config -ch localhost -cp 8000
+cosmos-reason1 algo config -ch localhost -cp 8000
 ```
 
-This will output the config of cosmos.
+This will output the config of cosmos reason1.
 
 ### List NCCL info
 
 ```
-cosmos nccl ls -ch localhost -cp 8000
+cosmos-reason1 nccl ls -ch localhost -cp 8000
 ```
 
 This will list the NCCL info stored in controller.
