@@ -23,6 +23,7 @@ from cosmos_reason1.dispatcher.algo.reward import gsm8k_reward_fn
 from transformers import AutoTokenizer
 from cosmos_reason1.dispatcher.data.packer.decoder_only_llm_data_packer import DecoderOnlyLLMDataPacker
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
+from cosmos_reason1.utils.modelscope import modelscope_load_dataset
 
 class GSM8kDataset(Dataset):
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
@@ -33,7 +34,12 @@ class GSM8kDataset(Dataset):
         '''
         self.config = config
         self.tokenizer = tokenizer
-        self.dataset = load_dataset("openai/gsm8k", "main", split="train")
+        modelscope_dataset_if_enabled = modelscope_load_dataset('AI-ModelScope/gsm8k', subset_name='main', split='train')
+        if modelscope_dataset_if_enabled is None:
+            self.dataset = load_dataset("openai/gsm8k", "main", split="train")
+        else:
+            self.dataset = modelscope_dataset_if_enabled
+
 
     def __len__(self):
         return len(self.dataset)

@@ -126,3 +126,14 @@ def update_config_if_modelscope(loaded_config: Any):
         revision=loaded_config.train.train_policy.dataset_revision,
     )
     return loaded_config
+
+
+def modelscope_load_dataset(dataset_name: str, subset_name: str, split: str):
+    """
+    Load dataset from ModelScope.
+    """
+    if os.environ.get("COSMOS_USE_MODELSCOPE", False) in [True, "True", "true", "1"]:
+        from modelscope.msdatasets import MsDataset
+
+        return MsDataset.load(dataset_name, subset_name=subset_name, split=split)
+    return None
