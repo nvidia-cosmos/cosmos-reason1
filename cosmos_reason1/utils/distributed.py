@@ -147,7 +147,14 @@ def gradient_reduce_across_dp_replicas_(
         tmp_buffer = tmp_buffer / nranks
 
         # TODO a risk here, when comm is rebuilt, the reduce result will be wrong.
-        comm.allreduce(tmp_buffer, tmp_buffer, "sum")
+
+        # For the first time to build mesh, we set a longer timeout (30 minutes) to avoid lost some slower replicas
+        timeout_ms = nccl_timeout_in_ms()
+        if gradient_reduce_across_dp_replicas_.first_invoke:
+            timeout_ms = 30 * 60 * 1000
+            gradient_reduce_across_dp_replicas_.first_invoke = False
+
+        comm.allreduce(tmp_buffer, tmp_buffer, "sum", timeout_ms=timeout_ms)
 
         # copy the result back to original grad
         offset = 0
@@ -156,6 +163,9 @@ def gradient_reduce_across_dp_replicas_(
             g.copy_(tmp_buffer[offset : offset + size].view_as(g))
             offset += size
             assert offset <= tmp_buffer.numel(), "offset should be equal to total size"
+
+
+gradient_reduce_across_dp_replicas_.first_invoke = True
 
 
 @torch.no_grad()
@@ -308,8 +318,19 @@ def broadcast_object_cpu(obj, src=0, device=torch.device("cpu"), group=None):
     return obj_lst[0]
 
 
+def nccl_timeout_in_ms():
+    timeout_ms = int(
+        os.environ.get("COSMOS_NCCL_TIMEOUT_MS", cosmos_c.get_default_timeout_ms())
+    )
+    if timeout_ms < 0:
+        raise ValueError(
+            f"COSMOS_NCCL_TIMEOUT_MS must be non-negative, but got {timeout_ms}"
+        )
+    return timeout_ms
+
+
 @contextmanager
-def nccl_timeout_watchdog(wait_stream=False):
+def nccl_timeout_watchdog(wait_stream=False, timeout_ms: int = None):
     """
     Context manager to monitor NCCL operations and raise an error if they take longer than a specified timeout.
     Important: do not call any synchronous API:
@@ -335,7 +356,7 @@ def nccl_timeout_watchdog(wait_stream=False):
         warn_nccl_version()
 
     start_time = time.time()
-    threshold_ms = cosmos_c.nccl_timeout_in_ms()
+    threshold_ms = timeout_ms if timeout_ms is not None else nccl_timeout_in_ms()
     # Enter the watchdog context
     cosmos_c.watchdog_enter()
     error_raised = False
@@ -376,6 +397,7 @@ class HighAvailabilitylNccl:
         self.remote_hosts = controller_hosts
         # max retry times for nccl op after nccl comm is rebuilt
         self.max_retry = 3
+        self.default_timeout_ms = nccl_timeout_in_ms()
 
         # The nccl group info
         self.comm_idx: int = -1
@@ -388,6 +410,7 @@ class HighAvailabilitylNccl:
         self.is_single_peer.clear()
         self.is_comm_ready = threading.Event()
         self.is_comm_ready.clear()
+        self.is_first_time_build_mesh = True
         self.cmd_queue = Queue()
         self.build_mesh_thread = threading.Thread(
             target=self.__run_background_thread,
@@ -531,6 +554,7 @@ class HighAvailabilitylNccl:
             self.comm_idx = cosmos_c.create_nccl_comm(
                 nccl_group_id, rank, len(cmd.replica_name_to_rank)
             )
+            self.is_first_time_build_mesh = False
         except Exception as e:
             # report the error to the controller
             make_request_with_retry(
@@ -556,7 +580,7 @@ class HighAvailabilitylNccl:
             f"{self.__log_prefix()} created nccl_comm for replica_rank {rank} with total {len(cmd.replica_name_to_rank)} ranks."
         )
 
-    def __do_nccl_op_with_retry(self, func: Callable, *args, **kwargs):
+    def __do_nccl_op_with_retry(self, func: Callable, timeout_ms: int, **kwargs):
         if self.is_single_peer.is_set():
             # single peer, no need to do nccl op
             return
@@ -564,9 +588,15 @@ class HighAvailabilitylNccl:
         for i in range(self.max_retry):
             try:
                 self.wait_comm_ready()
-
-                with nccl_timeout_watchdog(wait_stream=True):
-                    func(comm_idx=self.comm_idx, *args, **kwargs)
+                timeout_ms = (
+                    timeout_ms if timeout_ms is not None else self.default_timeout_ms
+                )
+                with nccl_timeout_watchdog(wait_stream=True, timeout_ms=timeout_ms):
+                    func(
+                        comm_idx=self.comm_idx,
+                        timeout_ms=timeout_ms,
+                        **kwargs,
+                    )
 
                 # if success, break the loop
                 break
@@ -585,7 +615,7 @@ class HighAvailabilitylNccl:
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
                 logger.error(
-                    f"{self.__log_prefix()} recovering nccl op '{func.__name__}' with args {args} and kwargs {kwargs} after {i} retries: {e}"
+                    f"{self.__log_prefix()} recovering nccl op '{func.__name__}' with kwargs {kwargs} after {i} retries: {e}"
                 )
 
     def destroy_nccl_comm(self):
@@ -651,21 +681,48 @@ class HighAvailabilitylNccl:
         self.wait_comm_ready()
         return self.replica_name_to_rank[replica_name]
 
-    def broadcast(self, tensor: torch.Tensor, src_replica: str):
+    def broadcast(self, tensor: torch.Tensor, src_replica: str, timeout_ms: int = None):
         src_rank = self.get_replica_rank(src_replica)
-        self.__do_nccl_op_with_retry(cosmos_c.nccl_broadcast, tensor, src_rank)
+        self.__do_nccl_op_with_retry(
+            func=cosmos_c.nccl_broadcast,
+            tensor=tensor,
+            rank=src_rank,
+            timeout_ms=timeout_ms,
+        )
 
-    def allreduce(self, sendbuff: torch.Tensor, recvbuff: torch.Tensor, op: str):
+    def allreduce(
+        self,
+        sendbuff: torch.Tensor,
+        recvbuff: torch.Tensor,
+        op: str,
+        timeout_ms: int = None,
+    ):
         op = self.NCCL_REDUCE_OPS[op]
-        self.__do_nccl_op_with_retry(cosmos_c.nccl_allreduce, sendbuff, recvbuff, op)
+        self.__do_nccl_op_with_retry(
+            func=cosmos_c.nccl_allreduce,
+            sendbuff=sendbuff,
+            recvbuff=recvbuff,
+            op=op,
+            timeout_ms=timeout_ms,
+        )
 
-    def send(self, tensor: torch.Tensor, dst_replica: str):
+    def send(self, tensor: torch.Tensor, dst_replica: str, timeout_ms: int = None):
         dst_rank = self.get_replica_rank(dst_replica)
-        self.__do_nccl_op_with_retry(cosmos_c.nccl_send, tensor, dst_rank)
+        self.__do_nccl_op_with_retry(
+            func=cosmos_c.nccl_send,
+            tensor=tensor,
+            dst_rank=dst_rank,
+            timeout_ms=timeout_ms,
+        )
 
-    def recv(self, tensor: torch.Tensor, src_replica: str):
+    def recv(self, tensor: torch.Tensor, src_replica: str, timeout_ms: int = None):
         src_rank = self.get_replica_rank(src_replica)
-        self.__do_nccl_op_with_retry(cosmos_c.nccl_recv, tensor, src_rank)
+        self.__do_nccl_op_with_retry(
+            func=cosmos_c.nccl_recv,
+            tensor=tensor,
+            src_rank=src_rank,
+            timeout_ms=timeout_ms,
+        )
 
 
 def prevent_vllm_from_setting_nccl_env():

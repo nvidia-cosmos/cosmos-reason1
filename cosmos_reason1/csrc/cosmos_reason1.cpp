@@ -25,7 +25,6 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <queue>
 #include <thread>
 
@@ -168,14 +167,6 @@ cudaStream_t getCurrentCUDAStream() {
   return stream;
 }
 
-torch::Tensor from_blob(int64_t data_ptr, std::vector<int64_t> shape,
-                        torch::Tensor sample) {
-  auto options = torch::TensorOptions();
-  options = options.dtype(sample.dtype()).device(sample.device());
-  void* ptr = reinterpret_cast<void*>(data_ptr);
-  return torch::from_blob(ptr, shape, options);
-}
-
 std::vector<int64_t> create_nccl_uid() {
   ncclUniqueId uid;
   NCCL_CHECK(ncclGetUniqueId(&uid));
@@ -187,7 +178,7 @@ std::vector<int64_t> create_nccl_uid() {
 }
 
 int64_t create_nccl_comm(std::vector<int64_t> uid_chars, int64_t rank,
-                         int64_t world_size) {
+                         int64_t world_size, int64_t timeout_ms) {
   static std::once_flag once_flag;
   std::call_once(once_flag, []() {
     // Get current device
@@ -214,7 +205,7 @@ int64_t create_nccl_comm(std::vector<int64_t> uid_chars, int64_t rank,
     return comm;
   };
 
-  nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
+  nccl::async_enqueue(timeout_ms, functor);
   int64_t comm_idx = comm_idx_counter.fetch_add(1);
   shared_comms.insert({comm_idx, comm});
   return comm_idx;
@@ -234,7 +225,15 @@ int nccl_get_comm_count(int64_t comm_idx) {
   return nranks;
 }
 
-void nccl_broadcast(torch::Tensor tensor, int64_t rank, int64_t comm_idx) {
+int64_t get_default_timeout_ms() {
+  // We won't directly use nccl::DEFAULT_TIMEOUT_MS, because we should let user
+  // choose the timeout value, and we don't want to change the default value of
+  // nccl::DEFAULT_TIMEOUT_MS
+  return nccl::DEFAULT_TIMEOUT_MS;
+}
+
+void nccl_broadcast(torch::Tensor tensor, int64_t rank, int64_t comm_idx,
+                    int64_t timeout_ms) {
   TORCH_CHECK(tensor.is_cuda(), "Tensor must be a CUDA tensor");
   TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
   TORCH_CHECK(tensor.numel() > 0,
@@ -271,10 +270,11 @@ void nccl_broadcast(torch::Tensor tensor, int64_t rank, int64_t comm_idx) {
       .abort_func_ = nccl_abort,
   });
 
-  nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
+  nccl::async_enqueue(timeout_ms, functor);
 }
 
-void nccl_send(torch::Tensor tensor, int64_t peer, int64_t comm_idx) {
+void nccl_send(torch::Tensor tensor, int64_t peer, int64_t comm_idx,
+               int64_t timeout_ms) {
   TORCH_CHECK(tensor.is_cuda(), "Tensor must be a CUDA tensor");
   TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
   TORCH_CHECK(tensor.numel() > 0,
@@ -306,10 +306,11 @@ void nccl_send(torch::Tensor tensor, int64_t peer, int64_t comm_idx) {
       .abort_func_ = nccl_abort,
   });
 
-  nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
+  nccl::async_enqueue(timeout_ms, functor);
 }
 
-void nccl_recv(torch::Tensor tensor, int64_t peer, int64_t comm_idx) {
+void nccl_recv(torch::Tensor tensor, int64_t peer, int64_t comm_idx,
+               int64_t timeout_ms) {
   TORCH_CHECK(tensor.is_cuda(), "Tensor must be a CUDA tensor");
   TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
   TORCH_CHECK(tensor.numel() > 0,
@@ -340,11 +341,11 @@ void nccl_recv(torch::Tensor tensor, int64_t peer, int64_t comm_idx) {
       .comm_idx_ = comm_idx,
       .abort_func_ = nccl_abort,
   });
-  nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
+  nccl::async_enqueue(timeout_ms, functor);
 }
 
 void nccl_allreduce(torch::Tensor sendbuff, torch::Tensor recvbuff, int64_t op,
-                    int64_t comm_idx) {
+                    int64_t comm_idx, int64_t timeout_ms) {
   TORCH_CHECK(sendbuff.is_cuda(), "Send Tensor must be a CUDA tensor");
   TORCH_CHECK(sendbuff.is_contiguous(), "Send Tensor must be contiguous");
   TORCH_CHECK(sendbuff.numel() > 0,
@@ -409,11 +410,11 @@ void nccl_allreduce(torch::Tensor sendbuff, torch::Tensor recvbuff, int64_t op,
       .comm_idx_ = comm_idx,
       .abort_func_ = nccl_abort,
   });
-  nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
+  nccl::async_enqueue(timeout_ms, functor);
 }
 
 void nccl_alltoall(torch::Tensor sendbuff, torch::Tensor recvbuff,
-                   int64_t comm_idx) {
+                   int64_t comm_idx, int64_t timeout_ms) {
   TORCH_CHECK(sendbuff.is_cuda(), "Send Tensor must be a CUDA tensor");
   TORCH_CHECK(sendbuff.is_contiguous(), "Send Tensor must be contiguous");
   TORCH_CHECK(sendbuff.numel() > 0,
@@ -473,7 +474,7 @@ void nccl_alltoall(torch::Tensor sendbuff, torch::Tensor recvbuff,
       .comm_idx_ = comm_idx,
       .abort_func_ = nccl_abort,
   });
-  nccl::async_enqueue(nccl::DEFAULT_TIMEOUT_MS, functor);
+  nccl::async_enqueue(timeout_ms, functor);
 }
 
 void nccl_abort(int64_t comm_idx) {
@@ -489,8 +490,6 @@ void nccl_abort(int64_t comm_idx) {
   shared_comms.erase(comm_idx);
 }
 
-int64_t nccl_timeout_in_ms() { return nccl::DEFAULT_TIMEOUT_MS; }
-
 void watchdog_enter() { WatchdogTLS::new_context(); }
 
 void watchdog_exit(bool abort) { WatchdogTLS::pop_context(abort); }
@@ -500,15 +499,19 @@ void watchdog_exit(bool abort) { WatchdogTLS::pop_context(abort); }
 PYBIND11_MODULE(_cpp, m) {
   m.doc() = "Cosmos C++/CUDA extension";
   m.def("create_nccl_comm", &cosmos_reason1::create_nccl_comm,
+        py::arg("uid_chars"), py::arg("rank"), py::arg("world_size"),
+        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         py::call_guard<py::gil_scoped_release>(), "Create a NCCL communicator");
-  m.def("from_blob", &cosmos_reason1::from_blob, "Create a tensor from a blob");
   m.def("create_nccl_uid", &cosmos_reason1::create_nccl_uid,
         "Create a NCCL unique ID");
   m.def("get_nccl_comm_count", &cosmos_reason1::nccl_get_comm_count,
         py::arg("comm_idx"),
         "Get the number of ranks in the NCCL communicator");
+  m.def("get_default_timeout_ms", &cosmos_reason1::get_default_timeout_ms,
+        "Get the default timeout value for NCCL operations");
   m.def("nccl_broadcast", &cosmos_reason1::nccl_broadcast, py::arg("tensor"),
         py::arg("rank"), py::arg("comm_idx"),
+        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         py::call_guard<py::gil_scoped_release>(),
         R"pbdoc(
             Perform an NCCL broadcast on the given NCCL group.
@@ -521,6 +524,7 @@ PYBIND11_MODULE(_cpp, m) {
 
   m.def("nccl_send", &cosmos_reason1::nccl_send, py::arg("tensor"),
         py::arg("peer"), py::arg("comm_idx"),
+        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         py::call_guard<py::gil_scoped_release>(),
         R"pbdoc(
             Perform an NCCL point-to-point send operation.
@@ -533,6 +537,7 @@ PYBIND11_MODULE(_cpp, m) {
 
   m.def("nccl_recv", &cosmos_reason1::nccl_recv, py::arg("tensor"),
         py::arg("peer"), py::arg("comm_idx"),
+        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         py::call_guard<py::gil_scoped_release>(),
         R"pbdoc(
             Perform an NCCL point-to-point recv operation.
@@ -545,6 +550,7 @@ PYBIND11_MODULE(_cpp, m) {
 
   m.def("nccl_allreduce", &cosmos_reason1::nccl_allreduce, py::arg("sendbuff"),
         py::arg("recvbuff"), py::arg("op"), py::arg("comm_idx"),
+        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         py::call_guard<py::gil_scoped_release>(),
         R"pbdoc(
             Perform an NCCL allreduce operation.
@@ -557,6 +563,7 @@ PYBIND11_MODULE(_cpp, m) {
         )pbdoc");
   m.def("nccl_alltoall", &cosmos_reason1::nccl_alltoall, py::arg("sendbuff"),
         py::arg("recvbuff"), py::arg("comm_idx"),
+        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         R"pbdoc(
           Perform an NCCL alltoall operation.
 
@@ -566,8 +573,6 @@ PYBIND11_MODULE(_cpp, m) {
               comm_idx (int): Communicator index.
       )pbdoc");
 
-  m.def("nccl_timeout_in_ms", &cosmos_reason1::nccl_timeout_in_ms,
-        "Get the timeout for NCCL operations in milliseconds");
   m.def("nccl_abort", &cosmos_reason1::nccl_abort, py::arg("comm_idx"),
         R"pbdoc(
             Abort the NCCL communicator.
