@@ -59,6 +59,7 @@ class PolicyStatusManager:
     train_batch_per_replica: int
     num_data_samples: int
     total_steps: int
+    start_step: int
     train_step: Dict[str, int]
     optimize_step: Dict[str, int]
     policy_to_rank: Dict[str, int]
@@ -71,6 +72,7 @@ class PolicyStatusManager:
         self.train_batch_per_replica = 0
         self.num_data_samples = 0
         self.total_steps = 0
+        self.start_step = 0
         self.train_step = {}
         self.policy_to_rank = {}
         self.optimize_step = {}
@@ -90,6 +92,12 @@ class PolicyStatusManager:
         Set the number of data samples for policys.
         """
         self.num_data_samples = num_data_samples
+
+    def set_start_step(self, start_step: int):
+        """
+        Set the start step for policys.
+        """
+        self.start_step = start_step
 
     def set_timestamp(self, replica_name: str, timestamp: int):
         """
@@ -194,6 +202,12 @@ class PolicyStatusManager:
             raise ValueError("Total step is not set")
         return self.total_steps
 
+    def get_num_data_samples(self) -> int:
+        """
+        Get the number of remain data samples.
+        """
+        return self.num_data_samples
+
     def remove_from_ranks(self, name: str):
         """
         Remove the policy from the ranks.
@@ -250,7 +264,7 @@ class PolicyStatusManager:
         Get the train step as the minimum of all policies.
         """
         if len(self.train_step) == 0:
-            return 0
+            return self.start_step
         return min(self.train_step.values())
 
     def completed_optimize_step(self) -> int:

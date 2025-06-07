@@ -396,6 +396,7 @@ class DataFetchCommand(Command):
         items_count: int,
         global_step: int,
         total_steps: int,
+        remain_samples_num: int,
         uuid: str,
         # For profiling
         do_profile: bool,
@@ -411,6 +412,7 @@ class DataFetchCommand(Command):
         self.items_count = items_count
         self.global_step = global_step
         self.total_steps = total_steps
+        self.remain_samples_num = remain_samples_num
 
         # Profling config
         self.do_profile = do_profile
@@ -425,6 +427,7 @@ class DataFetchCommand(Command):
     items_count: Optional[int] = None
     global_step: Optional[int] = None
     total_steps: Optional[int] = None
+    remain_samples_num: Optional[int] = None
 
     do_profile: Optional[bool] = None
     active_steps: Optional[int] = None
@@ -441,6 +444,7 @@ class DataFetchCommand(Command):
         items_count: int,
         global_step: int,
         total_steps: int,
+        remain_samples_num: int,
         redis_handler: RedisStreamHandler,
     ):
         cmd = cls(
@@ -448,6 +452,7 @@ class DataFetchCommand(Command):
             items_count,
             global_step,
             total_steps,
+            remain_samples_num,
             cls.new_uuid(),
             replica.sub_profiler_config.do_profile,
             replica.sub_profiler_config.active_steps,
@@ -466,6 +471,7 @@ class DataFetchCommand(Command):
             dict_v["items_count"],
             dict_v["global_step"],
             dict_v["total_steps"],
+            dict_v["remain_samples_num"],
             dict_v["uuid"],
             # For profiling
             dict_v["do_profile"],

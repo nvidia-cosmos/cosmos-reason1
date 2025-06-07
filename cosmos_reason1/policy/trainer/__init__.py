@@ -28,7 +28,6 @@ from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.checkpoint import (
     upload_folder_to_s3,
     CheckpointMananger,
-    SaveManager,
 )
 from transformers import AutoTokenizer, AutoConfig, AutoProcessor, GenerationConfig
 from cosmos_reason1.policy.trainer.optm import build_optimizers, build_lr_schedulers
@@ -101,7 +100,9 @@ class Trainer(CommMixin):
             traceback.print_exc()
             raise e
 
-        self.ckpt_manager = CheckpointMananger(config, self.global_rank)
+        self.ckpt_manager = CheckpointMananger(
+            config, self.parallel_dims, self.global_rank
+        )
         # profiler is initialized after the init_comm()
         self.profiler = CosmosProfiler(
             config,
@@ -111,7 +112,6 @@ class Trainer(CommMixin):
                 COSMOS_API_SET_TRACE_PATH_SUFFIX
             ),
         )
-        self.save_manager = SaveManager(config, self.global_rank)
         # TODO(cjx): add `CompiledAutograd` support
         self.context = train_context(False)
         self.optimizers = build_optimizers(self.model_parts, self.config)

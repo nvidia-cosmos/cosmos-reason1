@@ -207,25 +207,6 @@ class SFTDataset(Dataset):
 class SFTTrainer(Trainer):
     def __init__(self, config: CosmosConfig, parallel_dims: ParallelDims):
         super(SFTTrainer, self).__init__(config, parallel_dims)
-        if config.train.resume:
-            try:
-                self.ckpt_manager.load_checkpoint(
-                    model=self.model,
-                    optimizer=self.optimizers,
-                    scheduler=self.lr_schedulers,
-                )
-            except Exception:
-                logger.error(
-                    f"Cannot resume from {self.config.train.resume}. Trying to load from HuggingFace..."
-                )
-                self.model.load_hf_weights(
-                    config.policy.model_name_or_path, parallel_dims, self.device
-                )
-        else:
-            self.model.load_hf_weights(
-                config.policy.model_name_or_path, parallel_dims, self.device
-            )
-        self.model.train()
 
         # Enlarge the compile cache size for validation
         if config.train.compile and config.train.enable_validation:
@@ -235,7 +216,6 @@ class SFTTrainer(Trainer):
         if parallel_dims.dp_enabled:
             self.dp_rank = parallel_dims.mesh["dp"].get_local_rank()
             self.dp_world_size = parallel_dims.mesh["dp"].size()
-
         train_dataset, val_dataset = construct_dataset(
             config.train.train_policy,
             tokenizer=self.tokenizer,
@@ -255,6 +235,7 @@ class SFTTrainer(Trainer):
         self.train_data_loader = DataLoader(
             train_dataset,
             batch_size=config.train.train_batch_per_replica,
+            shuffle=config.train.train_policy.dataloader_shuffle,
             num_workers=config.train.train_policy.dataloader_num_workers,
             prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
             sampler=train_sampler,
@@ -287,17 +268,44 @@ class SFTTrainer(Trainer):
             ),
         )
         # For iteration control
+        self.epoch = config.train.epoch
         self.total_steps = (
-            len(self.train_data_loader) * config.train.epoch // self.dp_world_size
+            len(self.train_data_loader) * self.epoch // self.dp_world_size
         )
         self.train_step = 0
+
+        # Load model
+        if config.train.resume:
+            try:
+                ckpt_extra_vars = self.ckpt_manager.load_checkpoint(
+                    model=self.model,
+                    optimizer=self.optimizers,
+                    scheduler=self.lr_schedulers,
+                )
+                ckpt_total_steps = ckpt_extra_vars.get("total_steps", 0)
+                if ckpt_total_steps != self.total_steps:
+                    logger.warning(
+                        f"Checkpoint total steps {ckpt_total_steps} does not match expected {self.total_steps}. Start training from step 0"
+                    )
+                else:
+                    self.train_step = ckpt_extra_vars.get("step", 0)
+            except Exception:
+                logger.error(
+                    f"Cannot resume from {self.config.train.resume}. Trying to load from HuggingFace..."
+                )
+                self.model.load_hf_weights(
+                    config.policy.model_name_or_path, parallel_dims, self.device
+                )
+        else:
+            self.model.load_hf_weights(
+                config.policy.model_name_or_path, parallel_dims, self.device
+            )
+        self.model.train()
 
         self.loss_fn = torch.nn.CrossEntropyLoss()
 
     def validate(self):
-        logger.info(
-            f"[Policy] Validation at step {self.train_step}/{self.total_steps}..."
-        )
+        logger.info(f"Validation at step {self.train_step}/{self.total_steps}...")
         self.model.eval()
         with torch.no_grad():
             val_total_loss = 0.0
@@ -338,7 +346,8 @@ class SFTTrainer(Trainer):
 
                         if pp_first_stage:
                             self.pp_scheduler_val.step(
-                                **val_batch, position_ids=val_position_ids,
+                                **val_batch,
+                                position_ids=val_position_ids,
                                 pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
                                 seq_len_multiple=self.seq_len_multiple,
                             )
@@ -367,204 +376,231 @@ class SFTTrainer(Trainer):
                         )
                     val_total_loss += val_loss.item() * val_inputs.size(0)
             val_avg_loss = val_total_loss / len(self.val_data_loader.dataset)
-            logger.info(f"[Policy] Validation loss: {val_avg_loss}")
+            logger.info(f"Validation loss: {val_avg_loss}")
         return val_avg_loss
 
     def train(self):
         self.profiler.start()
         pp_last_stage = False
 
-        for batch in self.train_data_loader:
-            self.model.train()
-            start_time = time.time()
-            for k, v in batch.items():
-                batch[k] = v.to(self.device) if isinstance(v, torch.Tensor) else v
-
-            inputs = batch["input_ids"]
-            labels = batch.pop("label_ids")
-
-            position_ids, input_ids, pos_seq_dim = self.model.get_position_ids(**batch)
-
-            self.optimizers.zero_grad()
-
-            cp_context = (
-                create_context_parallel_ctx(
-                    cp_mesh=self.parallel_dims.mesh["cp"],
-                    cp_buffers=[inputs, labels, position_ids],
-                    cp_seq_dims=[1, 1, pos_seq_dim],
-                    cp_no_restore_buffers={inputs, labels, position_ids},
-                    cp_rotate_method=self.config.parallelism.cp_rotate_method,
-                )
-                if self.parallel_dims.cp_enabled
-                else None
+        start_epoch = 0
+        data_loader_bias = 0
+        # Resume training from the last checkpoint if needed
+        if self.config.train.resume and self.train_step > 0:
+            logger.info(
+                f"Resuming training from step {self.train_step}/{self.total_steps}..."
             )
+            start_epoch = self.train_step // len(self.train_data_loader)
+            data_loader_bias = self.train_step % len(self.train_data_loader)
 
-            with self.context(cp_context):
-                if self.parallel_dims.pp_enabled:
-                    pp_last_stage = (
-                        self.parallel_dims.pp_coord[0]
-                        == self.parallel_dims.pp_coord[1] - 1
+        for cur_epoch in range(start_epoch, self.epoch):
+            logger.info(f"Training epoch {cur_epoch + 1}/{self.epoch}")
+            for batch in self.train_data_loader:
+                if data_loader_bias > 0:
+                    data_loader_bias -= 1
+                    continue
+                self.model.train()
+                start_time = time.time()
+                for k, v in batch.items():
+                    batch[k] = v.to(self.device) if isinstance(v, torch.Tensor) else v
+
+                inputs = batch["input_ids"]
+                labels = batch.pop("label_ids")
+
+                position_ids, input_ids, pos_seq_dim = self.model.get_position_ids(
+                    **batch
+                )
+
+                self.optimizers.zero_grad()
+
+                cp_context = (
+                    create_context_parallel_ctx(
+                        cp_mesh=self.parallel_dims.mesh["cp"],
+                        cp_buffers=[inputs, labels, position_ids],
+                        cp_seq_dims=[1, 1, pos_seq_dim],
+                        cp_no_restore_buffers={inputs, labels, position_ids},
+                        cp_rotate_method=self.config.parallelism.cp_rotate_method,
                     )
-                    pp_first_stage = self.parallel_dims.pp_coord[0] == 0
+                    if self.parallel_dims.cp_enabled
+                    else None
+                )
 
-                    # Pipeline Parallel forward / backward inside step() call
-                    targets, losses = (labels, []) if pp_last_stage else (None, None)
-                    if pp_first_stage:
-                        self.pp_scheduler.step(
-                            **batch, position_ids=position_ids,
-                            pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
-                            seq_len_multiple=self.seq_len_multiple,
+                with self.context(cp_context):
+                    if self.parallel_dims.pp_enabled:
+                        pp_last_stage = (
+                            self.parallel_dims.pp_coord[0]
+                            == self.parallel_dims.pp_coord[1] - 1
+                        )
+                        pp_first_stage = self.parallel_dims.pp_coord[0] == 0
+
+                        # Pipeline Parallel forward / backward inside step() call
+                        targets, losses = (
+                            (labels, []) if pp_last_stage else (None, None)
+                        )
+                        if pp_first_stage:
+                            self.pp_scheduler.step(
+                                **batch,
+                                position_ids=position_ids,
+                                pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
+                                seq_len_multiple=self.seq_len_multiple,
+                            )
+                        else:
+                            # FWD + BWD if it is 1F1B-like scheduler
+                            self.pp_scheduler.step(
+                                position_ids=position_ids,
+                                target=targets,
+                                losses=losses,
+                                pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
+                                seq_len_multiple=self.seq_len_multiple,
+                            )
+                        loss = (
+                            torch.mean(torch.stack(losses)).to(self.device)
+                            if pp_last_stage
+                            else torch.tensor([-1.0], device=self.device)
                         )
                     else:
-                        # FWD + BWD if it is 1F1B-like scheduler
-                        self.pp_scheduler.step(
-                            position_ids=position_ids, target=targets, losses=losses,
-                            pp_dynamic_shape_enabled=self.parallel_dims.pp_dynamic_shape_enabled,
-                            seq_len_multiple=self.seq_len_multiple,
+                        logits = self.model(**batch, position_ids=position_ids)[
+                            :, :-1
+                        ].contiguous()
+                        loss = self.loss_fn(
+                            logits.view(-1, logits.size(-1)),
+                            labels[:, 1:].contiguous().view(-1),
                         )
-                    loss = (
-                        torch.mean(torch.stack(losses)).to(self.device)
-                        if pp_last_stage
-                        else torch.tensor([-1.0], device=self.device)
+                        loss.backward()
+                loss = loss.detach()
+
+                for model_part in self.model_parts:
+                    """
+                    Do gradient clipping in group for unsymmetric sharding compatibility
+                    """
+                    dist_util.gradient_norm_clipping(
+                        # Must pass empty list even if model_part is None,
+                        # GradNorm across pp stages will fail if some rank does not join the barrier
+                        [p for p in model_part.parameters()]
+                        if model_part is not None
+                        else [],
+                        self.config.train.optm_grad_norm_clip,
+                        foreach=True,
+                        pp_mesh=self.parallel_dims.mesh["pp"]
+                        if self.parallel_dims.pp_enabled
+                        else None,
+                    )
+
+                self.optimizers.step()
+                self.lr_schedulers.step()
+
+                self.train_step += 1
+                end_time = time.time()
+
+                if (
+                    self.parallel_dims.dp_replicate_enabled
+                    or self.parallel_dims.dp_shard_enabled
+                    or self.parallel_dims.cp_enabled
+                ):
+                    global_avg_loss, global_max_loss = (  # noqa: F841
+                        dist_util.dist_mean(loss, self.parallel_dims.mesh["dp_cp"]),
+                        dist_util.dist_max(loss, self.parallel_dims.mesh["dp_cp"]),
                     )
                 else:
-                    logits = self.model(**batch, position_ids=position_ids)[
-                        :, :-1
-                    ].contiguous()
-                    loss = self.loss_fn(
-                        logits.view(-1, logits.size(-1)),
-                        labels[:, 1:].contiguous().view(-1),
-                    )
-                    loss.backward()
-            loss = loss.detach()
+                    global_avg_loss = global_max_loss = loss.item()  # noqa: F841
 
-            for model_part in self.model_parts:
-                """
-                Do gradient clipping in group for unsymmetric sharding compatibility
-                """
-                dist_util.gradient_norm_clipping(
-                    # Must pass empty list even if model_part is None,
-                    # GradNorm across pp stages will fail if some rank does not join the barrier
-                    [p for p in model_part.parameters()]
-                    if model_part is not None
-                    else [],
-                    self.config.train.optm_grad_norm_clip,
-                    foreach=True,
-                    pp_mesh=self.parallel_dims.mesh["pp"]
-                    if self.parallel_dims.pp_enabled
-                    else None,
-                )
+                step_logging = True
+                if self.config.logging.enable_logging:
+                    step_logging = is_wandb_available()
+                    if util.is_master_rank(self.parallel_dims, self.global_rank):
+                        iter_time = end_time - start_time
+                        report_data = {
+                            "train/loss_avg": global_avg_loss,
+                            "train/loss_max": global_max_loss,
+                            "train/learning_rate": self.lr_schedulers.get_last_lr()[0],
+                            "train/iteration_time": iter_time,
+                        }
 
-            self.optimizers.step()
-            self.lr_schedulers.step()
+                        # FIXME(dinghaoy): only compute MFU of rank 0, if enable tp or pp,
+                        # it will be inaccurate. Need a reduce for all the metrics.
+                        if self.config.logging.report_mfu:
+                            mfu = compute_mfu(
+                                model=self.model,
+                                n_tokens=np.prod(input_ids.shape),
+                                iter_time=iter_time,
+                                num_gpus=self.world_size,
+                                dtype=self.config.train.param_dtype,
+                            )
+                            for k, v in mfu.items():
+                                report_data[f"train/{k}"] = v
+                        if is_wandb_available():
+                            log_wandb(
+                                data=report_data,
+                                step=self.train_step,
+                            )
+                        else:
+                            logger.info(
+                                f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s."
+                            )
 
-            self.train_step += 1
-            end_time = time.time()
-
-            if (
-                self.parallel_dims.dp_replicate_enabled
-                or self.parallel_dims.dp_shard_enabled
-                or self.parallel_dims.cp_enabled
-            ):
-                global_avg_loss, global_max_loss = (  # noqa: F841
-                    dist_util.dist_mean(loss, self.parallel_dims.mesh["dp_cp"]),
-                    dist_util.dist_max(loss, self.parallel_dims.mesh["dp_cp"]),
-                )
-            else:
-                global_avg_loss = global_max_loss = loss.item()  # noqa: F841
-
-            step_logging = True
-            if self.config.logging.enable_logging:
-                step_logging = is_wandb_available()
-                if self.global_rank == 0:
-                    iter_time = end_time - start_time
-                    report_data = {
-                        "train/loss_avg": global_avg_loss,
-                        "train/loss_max": global_max_loss,
-                        "train/learning_rate": self.lr_schedulers.get_last_lr()[0],
-                        "train/iteration_time": iter_time,
-                    }
-
-                    # FIXME(dinghaoy): only compute MFU of rank 0, if enable tp or pp,
-                    # it will be inaccurate. Need a reduce for all the metrics.
-                    if self.config.logging.report_mfu:
-                        mfu = compute_mfu(
-                            model=self.model,
-                            n_tokens=np.prod(input_ids.shape),
-                            iter_time=iter_time,
-                            num_gpus=self.world_size,
-                            dtype=self.config.train.param_dtype,
-                        )
-                        for k, v in mfu.items():
-                            report_data[f"train/{k}"] = v
-                    if is_wandb_available():
-                        log_wandb(
-                            data=report_data,
-                            step=self.train_step,
-                        )
-                    else:
-                        logger.info(
-                            f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s."
-                        )
-
-            if step_logging:
-                logger.info(
-                    f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5e}"
-                )
-
-            # For profiling
-            self.profiler.step()
-
-            val_score = None
-            # validation
-            if (
-                self.config.train.enable_validation
-                and self.train_step % self.config.train.validation_freq == 0
-            ):
-                val_score = self.validate()
-
-            # save checkpoint
-            if (
-                self.config.train.ckpt.enable_checkpoint
-                and self.train_step % self.config.train.ckpt.save_freq == 0
-                and self.train_step > 0
-            ):
-                # TODO(dinghaoy): support export safetensors asynchronously.
-                if self.config.train.ckpt.export_safetensors:
+                if step_logging and (
+                    (not self.parallel_dims.pp_enabled)
+                    or (self.parallel_dims.pp_enabled and pp_last_stage)
+                ):
                     logger.info(
-                        f"[Policy] Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
+                        f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5e}"
                     )
-                    self.export_safetensors(
-                        output_dir=self.config.train.output_dir,
-                        rel_path=os.path.join(
-                            "safetensors",
-                            f"step_{self.train_step}",
-                        ),
-                        trainable_only=False,
-                    )
-                logger.info(
-                    f"[Policy] Saving cosmos checkpoint at step {self.train_step}..."
-                )
-                self.ckpt_manager.save_checkpoint(
-                    model=self.model,
-                    optimizer=self.optimizers,
-                    scheduler=self.lr_schedulers,
-                    step=self.train_step,
-                )
-                self.save_manager.save_check(
-                    step=self.train_step,
-                    val_score=val_score,
-                    pp_enabled=self.parallel_dims.pp_enabled,
-                    pp_last_stage=pp_last_stage,
-                )
 
-            if self.train_step >= self.total_steps:
-                break
+                # For profiling
+                self.profiler.step()
+
+                val_score = None
+                # validation
+                if (
+                    self.config.train.enable_validation
+                    and self.train_step % self.config.train.validation_freq == 0
+                ):
+                    val_score = self.validate()
+
+                # save checkpoint
+                if (
+                    self.config.train.ckpt.enable_checkpoint
+                    and self.train_step % self.config.train.ckpt.save_freq == 0
+                    and self.train_step > 0
+                ):
+                    # TODO(dinghaoy): support export safetensors asynchronously.
+                    if self.config.train.ckpt.export_safetensors:
+                        logger.info(
+                            f"Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
+                        )
+                        self.export_safetensors(
+                            output_dir=self.config.train.output_dir,
+                            rel_path=os.path.join(
+                                "safetensors",
+                                f"step_{self.train_step}",
+                            ),
+                            trainable_only=False,
+                        )
+                    logger.info(
+                        f"Saving cosmos checkpoint at step {self.train_step}..."
+                    )
+                    self.ckpt_manager.save_checkpoint(
+                        model=self.model,
+                        optimizer=self.optimizers,
+                        scheduler=self.lr_schedulers,
+                        step=self.train_step,
+                        total_steps=self.total_steps,
+                    )
+                    self.ckpt_manager.save_check(
+                        step=self.train_step,
+                        val_score=val_score,
+                        pp_enabled=self.parallel_dims.pp_enabled,
+                        pp_last_stage=pp_last_stage,
+                        pp_master_rank=self.parallel_dims.world_size
+                        - self.parallel_dims.world_size / self.parallel_dims.pp,
+                    )
+
         # process the final step
-        val_score = self.validate()
+        if self.config.train.enable_validation:
+            val_score = self.validate()
         if self.config.train.ckpt.export_safetensors:
             logger.info(
-                f"[Policy] Saving final huggingface checkpoint to {self.config.train.output_dir}..."
+                f"Saving final huggingface checkpoint to {self.config.train.output_dir}..."
             )
             self.export_safetensors(
                 output_dir=self.config.train.output_dir,
@@ -575,23 +611,26 @@ class SFTTrainer(Trainer):
                 trainable_only=False,
                 is_final=True,
             )
-
-        logger.info(
-            f"[Policy] Training finished at step {self.train_step}/{self.total_steps}, saving final cosmos checkpoint..."
-        )
-        self.ckpt_manager.save_checkpoint(
-            model=self.model,
-            optimizer=self.optimizers,
-            scheduler=self.lr_schedulers,
-            step=self.train_step,
-            is_final=True,
-        )
-        self.save_manager.save_check(
-            step=self.train_step,
-            val_score=val_score,
-            pp_enabled=self.parallel_dims.pp_enabled,
-            pp_last_stage=pp_last_stage,
-        )
+        if self.config.train.ckpt.enable_checkpoint:
+            logger.info(
+                f"Training finished at step {self.train_step}/{self.total_steps}, saving final cosmos checkpoint..."
+            )
+            self.ckpt_manager.save_checkpoint(
+                model=self.model,
+                optimizer=self.optimizers,
+                scheduler=self.lr_schedulers,
+                step=self.train_step,
+                total_steps=self.total_steps,
+                is_final=True,
+            )
+            self.ckpt_manager.save_check(
+                step=self.train_step,
+                val_score=val_score,
+                pp_enabled=self.parallel_dims.pp_enabled,
+                pp_last_stage=pp_last_stage,
+                pp_master_rank=self.parallel_dims.world_size
+                - self.parallel_dims.world_size / self.parallel_dims.pp,
+            )
 
     @property
     def pp_loss_fn(self):

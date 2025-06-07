@@ -47,6 +47,7 @@ from cosmos_reason1.dispatcher.status import (
     RolloutStatus,
     RolloutStatusManager,
 )
+from cosmos_reason1.utils.checkpoint import CheckpointMananger
 from cosmos_reason1.policy.config import Config, SubProfilerConfig
 from cosmos_reason1.dispatcher.protocol import SetProfileRequest
 from transformers import AutoTokenizer
@@ -71,7 +72,7 @@ class Controller:
     def _init_status(self):
         self.policy_status_manager = PolicyStatusManager()
         self.rollout_status_manager = RolloutStatusManager()
-        self.epoch = 0
+        self.epoch = 1
         self.controller_step = 0
         self.stat_prompt_tokens_count = 0
         self.stat_completion_tokens_count = 0
@@ -151,20 +152,63 @@ class Controller:
             self.train_dataloader = DataLoader(
                 self.dataset.train_set,
                 batch_size=1,  # batch size is 1 is mandatory
-                shuffle=True,
+                shuffle=config.train.train_policy.dataloader_shuffle,
                 num_workers=config.train.train_policy.dataloader_num_workers,
                 prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
                 collate_fn=RLPayload.collate_fn,
             )
             self.train_dataloader_iter = iter(self.train_dataloader)
-            self.policy_status_manager.set_num_data_samples(
+            self.policy_status_manager.set_train_batch_per_replica(
+                config.train.train_batch_per_replica
+            )
+            num_data_samples = (
                 len(self.dataset.train_set)
                 * config.rollout.n_generation
                 * self.config.train.epoch
             )
-            self.policy_status_manager.set_train_batch_per_replica(
-                config.train.train_batch_per_replica
-            )
+            # Resume from checkpoint if needed
+            if config.train.resume:
+                self.ckpt_manager = CheckpointMananger(config)
+                command.PolicyToRolloutUnicastCommand.do_weight_sync_check_flag = False
+                try:
+                    ckpt_path = self.ckpt_manager.get_ckpt_path()
+                    ckpt_extra_vars = self.ckpt_manager.load_extra_info(
+                        os.path.join(ckpt_path, "extra_info_rank_0.pth")
+                    )
+                    ckpt_start_step = ckpt_extra_vars.get("step", 0)
+                    num_data_samples = ckpt_extra_vars["remain_samples_num"]
+                    self.policy_status_manager.set_start_step(ckpt_start_step)
+                    self.epoch = (
+                        config.train.epoch
+                        - (
+                            math.ceil(
+                                num_data_samples
+                                / (
+                                    len(self.dataset.train_set)
+                                    * config.rollout.n_generation
+                                )
+                            )
+                        )
+                        + 1
+                    )
+                    if config.train.train_policy.dataloader_shuffle:
+                        logger.warning(
+                            "Since dataloader_shuffle is True, the dataloader status cannot be resumed identically."
+                        )
+                    data_loader_bias = (
+                        num_data_samples // config.rollout.n_generation
+                    ) % len(self.dataset.train_set)
+                    for _ in range(data_loader_bias):
+                        try:
+                            next(self.train_dataloader_iter)
+                        except StopIteration:
+                            logger.warning(
+                                "[Controller] Data loader bias adjustment: reached end of dataset."
+                            )
+                            self.train_dataloader_iter = iter(self.train_dataloader)
+                except Exception as e:
+                    logger.error(f"Failed to resume from checkpoint: {e}")
+            self.policy_status_manager.set_num_data_samples(num_data_samples)
         else:
             self.rl_algo = None
 
@@ -298,7 +342,7 @@ class Controller:
             except StopIteration:
                 logger.info(f"[Controller] Epoch {self.epoch} finished.")
                 self.epoch += 1
-                if self.epoch < self.config.train.epoch:
+                if self.epoch <= self.config.train.epoch:
                     logger.info(f"[Controller] Epoch {self.epoch} start.")
                     self.train_dataloader_iter = iter(self.train_dataloader)
                     idx, payload = next(self.train_dataloader_iter)
@@ -379,6 +423,10 @@ class Controller:
             )
             and self.policy_status_manager.all_ready_or_reduced()
         ):
+            remain_samples_num = (
+                self.policy_status_manager.get_num_data_samples()
+                - self.config.train.train_batch_per_replica * len(sorted_replicas)
+            )
             for replica in sorted_replicas:
                 """
                 Here we need to trigger a new data fetch commands for continuing training
@@ -388,6 +436,7 @@ class Controller:
                     items_count=self.config.train.train_batch_per_replica,
                     global_step=self.policy_status_manager.completed_train_step() + 1,
                     total_steps=self.policy_status_manager.get_total_steps(),
+                    remain_samples_num=remain_samples_num,
                     redis_handler=self.redis_controller,
                 )
                 self.policy_status_manager.set_status(

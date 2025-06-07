@@ -25,7 +25,9 @@ import concurrent.futures as futures
 from dataclasses import asdict
 from botocore.exceptions import ClientError
 from botocore.config import Config as BotoConfig
+from cosmos_reason1.utils.util import is_master_rank
 from cosmos_reason1.utils.logging import logger
+from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
 
 
@@ -69,9 +71,18 @@ def upload_folder_to_s3(
 
 
 class CheckpointMananger:
-    def __init__(self, config: CosmosConfig, global_rank: int = 0):
+    def __init__(
+        self,
+        config: CosmosConfig,
+        parallel_dims: ParallelDims = None,
+        global_rank: int = 0,
+        metric: str = "val_loss",
+    ):
         self.config = config
+        self.parallel_dims = parallel_dims
         self.global_rank = global_rank
+        self.max_keep = config.train.ckpt.max_keep
+        self.metric = metric
         self.save_mode = config.train.ckpt.save_mode
         self.ckpt_output_dir = os.path.join(config.train.output_dir, "checkpoints")
         if self.config.train.ckpt.upload_s3:
@@ -84,10 +95,29 @@ class CheckpointMananger:
             if self.save_mode == "async":
                 self.executor = futures.ThreadPoolExecutor(max_workers=4)
         self.pre_save_futures = []
+        self.saved_steps = []
+        self.best_score = float("inf") if "loss" in metric else -float("inf")
 
     @staticmethod
     def ckpt_path_check(ckpt_path: str):
         return os.path.exists(os.path.join(ckpt_path, "cosmos_config"))
+
+    def get_ckpt_path(self):
+        # find the latest checkpoint under output_dir
+        if self.config.train.resume == True:  # noqa: E712
+            root_output_dir = os.path.dirname(self.ckpt_output_dir)
+            timestamps = os.listdir(root_output_dir)
+            timestamps.sort()
+            steps = os.listdir(
+                os.path.join(root_output_dir, timestamps[-1], "checkpoints")
+            )
+            steps.sort()
+            base_path = os.path.join(
+                root_output_dir, timestamps[-1], "checkpoints", steps[-1], "policy"
+            )
+        else:
+            base_path = self.config.train.resume
+        return base_path
 
     @staticmethod
     def get_rng_state():
@@ -106,7 +136,16 @@ class CheckpointMananger:
         random.setstate(rng_state["python"])
 
     @staticmethod
-    def offload_state_dict_cpu(state_dict: dict):
+    def load_extra_info(extra_info_path: str):
+        if os.path.exists(extra_info_path):
+            with open(extra_info_path, "rb") as f:
+                extra_info = torch.load(f, weights_only=False)
+            return extra_info
+        else:
+            logger.warning(f"Extra info file {extra_info_path} does not exist.")
+            return {}
+
+    def offload_state_dict_cpu(self, state_dict: dict):
         state_dict_cpu = {}
         for key, value in state_dict.items():
             if isinstance(value, torch.Tensor):
@@ -121,6 +160,7 @@ class CheckpointMananger:
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler._LRScheduler,
         step: int,
+        total_steps: int,
         **kwargs,
     ):
         """
@@ -159,7 +199,11 @@ class CheckpointMananger:
             os.path.join(self.ckpt_output_dir, cur_step_ckpt_dir, "cosmos_config"), "w"
         ) as f:
             f.write(json.dumps(asdict(self.config), indent=4))
-        extra_info = {"rng_state": self.get_rng_state()}
+        extra_info = {
+            "rng_state": self.get_rng_state(),
+            "step": step,
+            "total_steps": total_steps,
+        }
         for key, value in kwargs.items():
             if key in extra_info:
                 extra_info[key] = value
@@ -247,20 +291,8 @@ class CheckpointMananger:
         optimizer: torch.optim.Optimizer,
         scheduler: torch.optim.lr_scheduler._LRScheduler,
     ):
-        # find the latest checkpoint under output_dir
-        if self.config.train.resume == "True":
-            root_output_dir = os.path.dirname(self.ckpt_output_dir)
-            timestamps = os.listdir(root_output_dir)
-            timestamps.sort()
-            steps = os.listdir(
-                os.path.join(root_output_dir, timestamps[-1], "checkpoints")
-            )
-            steps.sort()
-            base_path = os.path.join(
-                root_output_dir, timestamps[-1], "checkpoints", steps[-1], "policy"
-            )
-        else:
-            base_path = self.config.train.resume
+        extra_vars = {}
+        base_path = self.get_ckpt_path()
         # check whether checkpoint existing
         is_ckpt_path = self.ckpt_path_check(base_path)
         if is_ckpt_path:
@@ -281,35 +313,25 @@ class CheckpointMananger:
             model.load_state_dict(torch.load(model_path, weights_only=False))
             optimizer.load_state_dict(torch.load(optimizer_path, weights_only=False))
             scheduler.load_state_dict(torch.load(scheduler_path, weights_only=False))
-            extra_info = torch.load(extra_info_path, weights_only=False)
-            if "rng_state" in extra_info:
-                self.set_rng_state(extra_info["rng_state"])
+            extra_info = self.load_extra_info(extra_info_path)
+            for key in extra_info:
+                if key == "rng_state":
+                    self.set_rng_state(extra_info["rng_state"])
+                else:
+                    extra_vars[key] = extra_info[key]
             logger.info(f"[Policy] Checkpoint loaded successfully from {base_path}.")
         else:
             raise FileNotFoundError(f"No checkpoint found at {base_path}")
 
-
-# Used for the management of checkpoint and safetensors
-class SaveManager:
-    def __init__(self, config: CosmosConfig, global_rank: int = 0, metric="val_loss"):
-        self.config = config
-        self.global_rank = global_rank
-        self.max_keep = config.train.ckpt.max_keep
-        self.metric = metric
-        self.saved_steps = []
-        self.best_score = float("inf") if "loss" in metric else -float("inf")
+        return extra_vars
 
     def save_check(self, step: int, **kwargs):
-        pp_enabled = kwargs.get("pp_enabled", False)
-        pp_last_stage = kwargs.get("pp_last_stage", False)
-        if (self.global_rank == 0 and not pp_enabled) or (pp_enabled and pp_last_stage):
+        if is_master_rank(self.parallel_dims, self.global_rank):
             heapq.heappush(self.saved_steps, step)
             # remove the old checkpoints
             if len(self.saved_steps) > self.max_keep:
                 oldest = heapq.heappop(self.saved_steps)
-                ckpt_dir = os.path.join(
-                    self.config.train.output_dir, "checkpoints", f"step_{oldest}"
-                )
+                ckpt_dir = os.path.join(self.ckpt_output_dir, f"step_{oldest}")
                 safetensors_dir = os.path.join(
                     self.config.train.output_dir, "safetensors", f"step_{oldest}"
                 )

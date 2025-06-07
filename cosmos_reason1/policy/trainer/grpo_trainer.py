@@ -62,7 +62,7 @@ import types
 from functools import partial
 import msgpack
 from cosmos_reason1.utils.network_util import make_request_with_retry
-from cosmos_reason1.utils.util import seperate_nccl_comm_needed
+from cosmos_reason1.utils.util import is_master_rank, seperate_nccl_comm_needed
 from cosmos_reason1.utils import constant
 from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
 from cosmos_reason1.utils.api_suffix import (
@@ -175,6 +175,7 @@ class GRPOTrainer(Trainer):
         self.optimize_step = 0
         self.repilca_batch_for_this_step = 0
         self.mini_batch = self.grpo_config.mini_batch
+        self.remain_samples_num = None
 
         # For Polocy to Rollout weight mapping
         self.parallel_mapper = None
@@ -734,6 +735,7 @@ class GRPOTrainer(Trainer):
         self.repilca_batch_for_this_step = command.items_count
         self.train_step = command.global_step
         self.total_steps = command.total_steps
+        self.remain_samples_num = command.remain_samples_num
         self.train()
         self.train_ack()
         logger.debug(f"[Policy] Train ack sent for global step {command.global_step}.")
@@ -1226,7 +1228,7 @@ class GRPOTrainer(Trainer):
         step_logging = True
         if self.config.logging.enable_logging:
             step_logging = is_wandb_available()
-            if self.global_rank == 0:
+            if is_master_rank(self.parallel_dims, self.global_rank):
                 avg_rollout_len = np.mean(
                     [len(rollout["completion"]) for rollout in rollouts]
                 )
@@ -1274,7 +1276,10 @@ class GRPOTrainer(Trainer):
                         f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s, Completion length: {avg_rollout_len:.0f}, Reward: {avg_reward}"
                     )
 
-        if step_logging:
+        if step_logging and (
+            (not self.parallel_dims.pp_enabled)
+            or (self.parallel_dims.pp_enabled and pp_last_stage)
+        ):
             logger.info(
                 f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}"
             )
@@ -1312,9 +1317,11 @@ class GRPOTrainer(Trainer):
                 optimizer=self.optimizers,
                 scheduler=self.lr_schedulers,
                 step=self.train_step,
+                total_steps=self.total_steps,
+                remain_samples_num=self.remain_samples_num,
                 is_final=self.train_step == self.total_steps,
             )
-            self.save_manager.save_check(step=self.train_step)
+            self.ckpt_manager.save_check(step=self.train_step)
 
         # For profiling
         self.profiler.step()

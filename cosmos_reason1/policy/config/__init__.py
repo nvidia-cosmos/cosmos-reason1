@@ -76,6 +76,12 @@ class SFTDataConfig:
             "help": "Size of the test set. If float, it is the ratio (between 0.0 and 1.0) of the dataset; if int, it is the absolute size of the test set."
         },
     )
+    dataloader_shuffle: bool = field(
+        default=False,
+        metadata={
+            "help": "Shuffle the dataloader. If False, the dataloader will be used in the order it is loaded."
+        },
+    )
     enable_dataset_cache: bool = field(
         default=False,
         metadata={
@@ -245,6 +251,12 @@ class GrpoConfig:
     dataset_train_split: Union[str, List[str]] = field(
         default_factory=list,
         metadata={"help": "A list of dataset splits to train"},
+    )
+    dataloader_shuffle: bool = field(
+        default=True,
+        metadata={
+            "help": "Shuffle the dataloader. If False, the dataloader will be used in the order it is loaded."
+        },
     )
     enable_dataset_cache: bool = field(
         default=False,
@@ -546,7 +558,9 @@ class ParallelismConfig:
         default=-1, metadata={"help": "Data Parallelism size in sharded mode"}
     )
     pp_size: int = field(default=1, metadata={"help": "Pipeline parallelism size"})
-    pp_dynamic_shape: bool = field(default=True, metadata={"help": "Pipeline parallelism dynamic shape"})
+    pp_dynamic_shape: bool = field(
+        default=True, metadata={"help": "Pipeline parallelism dynamic shape"}
+    )
     pp_micro_batch_size: int = field(
         default=1,
         metadata={

@@ -795,3 +795,11 @@ def do_once(func):
 
 
 do_once.dones = set()
+
+
+def is_master_rank(parallel_dims, global_rank: int):
+    return (not parallel_dims.pp_enabled and global_rank == 0) or (
+        parallel_dims.pp_enabled
+        and global_rank
+        == (parallel_dims.world_size - parallel_dims.world_size / parallel_dims.pp)
+    )
