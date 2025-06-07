@@ -711,7 +711,7 @@ class HighAvailabilitylNccl:
         self.__do_nccl_op_with_retry(
             func=cosmos_c.nccl_send,
             tensor=tensor,
-            dst_rank=dst_rank,
+            peer=dst_rank,
             timeout_ms=timeout_ms,
         )
 
@@ -720,7 +720,7 @@ class HighAvailabilitylNccl:
         self.__do_nccl_op_with_retry(
             func=cosmos_c.nccl_recv,
             tensor=tensor,
-            src_rank=src_rank,
+            peer=src_rank,
             timeout_ms=timeout_ms,
         )
 
@@ -830,9 +830,7 @@ class DistKVStore:
                     time.sleep(3)
                     continue
 
-    def broadcast_command(
-        self, command: Command, src: int = 0, timeout: float = 0
-    ) -> Command:
+    def broadcast_command(self, command: Command, src: int = 0) -> Command:
         """
         Broadcast a command to all ranks.
         """
@@ -844,31 +842,30 @@ class DistKVStore:
 
         __last_key = f"#BROADCAST-{self.counter - 1}"
         __last_key_dones = [f"{__last_key}-done-{i}" for i in range(self.world_size)]
-        self.counter += 1
 
-        _wait_hook = (
-            partial(self.local_store.wait, timeout=timeout)
-            if timeout > 0
-            else self.local_store.wait
-        )
+        error_raised = False
+        while True:
+            try:
+                if src == self.rank:
+                    self.local_store.set(__key, command.pack())
+                else:
+                    self.local_store.wait([__key])
 
-        if src == self.rank:
-            self.local_store.set(__key, command.pack())
-        else:
-            _wait_hook([__key])
+                cmd_raw = self.local_store.get(__key)
+                cmd = Command.depack(cmd_raw)
 
-        cmd_raw = self.local_store.get(__key)
-        cmd = Command.depack(cmd_raw)
-
-        try:
-            self.local_store.set(__key_dones[self.rank], "1")
-            _wait_hook(__key_dones)
-        except Exception as e:
-            logger.error(f"Failed to broadcast command: {e}")
-            raise e
-        finally:
-            if self.rank == self.master_rank:
-                self.local_store.delete_key(__last_key)
-                for _d in __last_key_dones:
-                    self.local_store.delete_key(_d)
+                self.local_store.set(__key_dones[self.rank], "1")
+                self.local_store.wait(__key_dones)
+            except Exception as e:
+                logger.error(f"Failed to broadcast command: {e}")
+                error_raised = True
+                continue
+            finally:
+                if not error_raised:
+                    if self.rank == src:
+                        self.local_store.delete_key(__last_key)
+                        for _d in __last_key_dones:
+                            self.local_store.delete_key(_d)
+                    self.counter += 1
+                    break
         return cmd

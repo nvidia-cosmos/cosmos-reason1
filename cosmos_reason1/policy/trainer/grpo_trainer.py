@@ -794,11 +794,11 @@ class GRPOTrainer(Trainer):
                         if isinstance(command, StopCommand):
                             encountered_stop = True
                             # broadcast the stop command to all other ranks to let them exit this loop
-                            cmd = self.kv_store.broadcast_command(command, 0)
+                            cmd = self.kv_store.broadcast_command(command, src=0)
                         elif isinstance(command, BuildMeshCommand):
                             """ directly push the buildmesh command to the nccl comm, will not block main thread """
                             # broadcast the buildmesh command to all ranks
-                            cmd = self.kv_store.broadcast_command(command, 0)
+                            cmd = self.kv_store.broadcast_command(command, src=0)
                             self.is_master_replica = (
                                 cmd.replica_name_to_rank[self.replica_name] == 0
                             )
@@ -813,18 +813,21 @@ class GRPOTrainer(Trainer):
                     raise e
 
             else:
-                # receive buildmesh command from rank 0
-                bmcmd = self.kv_store.broadcast_command(None, 0)
-                if isinstance(bmcmd, StopCommand):
-                    # Stop command received from rank 0, means exiting the whole program, so break to exit the loop
-                    break
-                assert isinstance(
-                    bmcmd, BuildMeshCommand
-                ), "Only buildmesh command is supported"
-                self.is_master_replica = (
-                    bmcmd.replica_name_to_rank[self.replica_name] == 0
-                )
-                self.inter_policy_nccl.push_cmd(bmcmd)
+                try:
+                    bmcmd = self.kv_store.broadcast_command(None, src=0)
+                    if isinstance(bmcmd, StopCommand):
+                        # Stop command received from rank 0, means exiting the whole program, so break to exit the loop
+                        break
+                    assert isinstance(
+                        bmcmd, BuildMeshCommand
+                    ), "Only buildmesh command is supported"
+                    self.is_master_replica = (
+                        bmcmd.replica_name_to_rank[self.replica_name] == 0
+                    )
+                    self.inter_policy_nccl.push_cmd(bmcmd)
+                except Exception as e:
+                    logger.error(f"Failed to broadcast on slave workers: {e}")
+                    raise e
 
     @Trainer.register_policy_command_handler(StopCommand)
     def execute_stop(self, command):
