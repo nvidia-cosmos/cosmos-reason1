@@ -20,7 +20,7 @@ This script is launched by slurm job.
 import argparse
 import logging
 from typing import List
-import subprocess
+import subprocess, time
 import os, sys; sys.path.append(os.path.dirname(os.path.realpath(__file__)))
 from util import NodeLaunchMetadata, ReplicaLaunchMetadata
 
@@ -63,10 +63,32 @@ if __name__ == "__main__":
     procs = [subprocess.Popen(cmd, env=env) for cmd, env in zip(cmds, envs)]
     # block until every process finishes, and propagate any non-zero exit codes
     exit_code = 0
-    for p in procs:
-        ret = p.wait()
-        if ret and exit_code == 0:   # keep the first failing code
-            exit_code = ret
+    while len(procs) > 0:
+        for i, p in enumerate(procs):
+            try:
+                # Check if process has finished without blocking
+                if p.poll() is not None:
+                    returncode = p.returncode
+                    if returncode != 0:
+                        # Kill and exit if any process fails
+                        for p in procs:
+                            try:
+                                p.kill()
+                            except Exception:
+                                pass
+                        sys.exit(returncode)
+                    # Remove completed process from list
+                    procs.remove(p)
+            except Exception:
+                # Terminate all remaining processes
+                for p in procs:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+                sys.exit(1)
+        # Small sleep to prevent busy waiting
+        time.sleep(0.1)
     sys.exit(exit_code)              # mimic “all-good” or the first failure
 
 

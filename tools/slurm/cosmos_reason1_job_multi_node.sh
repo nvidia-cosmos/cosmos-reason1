@@ -58,9 +58,10 @@ srun \
     # Start the controller
     export COSMOS_LOG_LEVEL=DEBUG
     cd /opt/cosmos-reason1
-    ./tools/launch_controller.sh --port ${CONTROLLER_PORT} --config [[CONFIG_PATH]] --log ${OUTDIR}/${SLURM_JOB_ID}/redis_server.log
+    ./tools/launch_controller.sh --port ${CONTROLLER_PORT} --config [[CONFIG_PATH]]
     ' \
     &
+pid_controller=$!
 
 export LOCAL_NODE_LIST=${POLICY_NODES}
 # Start policy nodes
@@ -102,10 +103,78 @@ srun \
 pid_rollout=$!
 
 echo "Waiting for policy and rollout jobs to end. If fails, will cancel at ${SLURM_JOB_ID}"
-wait $pid_policy $pid_rollout
-if [ $? -ne 0 ]; then
-    scancel $SLURM_JOB_ID
-    exit 1
-else
-    echo "All jobs succeeded"
-fi
+
+# Monitor both
+while true; do
+    kill -0 $pid_policy 2>/dev/null
+    pol_alive=$?
+
+    kill -0 $pid_rollout 2>/dev/null
+    roll_alive=$?
+
+    kill -0 $pid_controller 2>/dev/null
+    crl_alive=$?
+
+    if [ $pol_alive -ne 0 ] && [ $roll_alive -ne 0 ] && [ $crl_alive -ne 0 ]; then
+        # Both are no longer running — check their exit codes
+        wait $pid_policy
+        exit_code_policy=$?
+
+        wait $pid_rollout
+        exit_code_rollout=$?
+
+        wait $pid_controller
+        exit_code_controller=$?
+
+        if [ $exit_code_policy -ne 0 ] || [ $exit_code_rollout -ne 0 ] || [ $exit_code_controller -ne 0 ]; then
+            echo "One or both jobs failed"
+            scancel $SLURM_JOB_ID
+            exit 1
+        else
+            echo "All jobs succeeded"
+            exit 0
+        fi
+    fi
+
+    # If one finished, check its status
+    if [ $pol_alive -ne 0 ]; then
+        # Policy ended — check if it failed
+        wait $pid_policy
+        ec=$?
+        if [ $ec -ne 0 ]; then
+            echo "Policy failed. Killing rollout."
+            kill $pid_rollout 2>/dev/null || true
+            kill $pid_controller 2>/dev/null || true
+            scancel $SLURM_JOB_ID
+            exit $ec
+        fi
+    fi
+
+    if [ $roll_alive -ne 0 ]; then
+        # Rollout ended — check if it failed
+        wait $pid_rollout
+        ec=$?
+        if [ $ec -ne 0 ]; then
+            echo "Rollout failed. Killing policy."
+            kill $pid_policy 2>/dev/null || true
+            kill $pid_controller 2>/dev/null || true
+            scancel $SLURM_JOB_ID
+            exit $ec
+        fi
+    fi
+
+    if [ $crl_alive -ne 0 ]; then
+        # Controller ended — check if it failed
+        wait $pid_controller
+        ec=$?
+        if [ $ec -ne 0 ]; then
+            echo "Controller failed. Killing policy and rollout."
+            kill $pid_policy 2>/dev/null || true
+            kill $pid_rollout 2>/dev/null || true
+            scancel $SLURM_JOB_ID
+            exit $ec
+        fi
+    fi
+
+    sleep 1
+done
