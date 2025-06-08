@@ -335,7 +335,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
         with torch.cuda.stream(self.inference_stream):
             # recv the weight from policy
-            st = time.time()
+            # st = time.time()
             total_bytes_received = 0
             for inst in insts:
                 total_bytes_received += self.weight_mapper.recv_weight_shard(
@@ -344,11 +344,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                     communicator_index,
                     command.do_weight_sync_check,
                 )
-            time_eclapsed = time.time() - st
+            # time_eclapsed = time.time() - st
 
-            logger.debug(
-                f"[Rolout] All {len(insts)} recv operations finished in {time_eclapsed:.3f} seconds with {total_bytes_received / (1024 * 1024)} MB received."
-            )
+            # This time is not accurate, because the recv operations are not blocking.
+            # logger.debug(
+            #     f"[Rolout] All {len(insts)} recv operations finished in {time_eclapsed:.3f} seconds with {total_bytes_received / (1024 * 1024)} MB received."
+            # )
 
             self.weight_synced_event.set()
 

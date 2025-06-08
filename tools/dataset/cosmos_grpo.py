@@ -27,6 +27,9 @@ from cosmos_reason1.utils.util import basename_from_modelpath
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 from cosmos_reason1.dispatcher.data.packer.qwen2_5_vlm_data_packer import Qwen2_5_VLM_DataPacker
 
+FPS = 1
+MAX_PIXELS = 81920
+
 class CosmosGRPODataset(Dataset):
     def get_mm_files_paths(self, dataset_name: str, dataset_subset: str):
         cosmos_cache_dir = os.environ.get(
@@ -65,7 +68,7 @@ class CosmosGRPODataset(Dataset):
             else:
                 assert isinstance(config.train.train_policy.dataset_train_split, str)
                 self.dataset = self.dataset[config.train.train_policy.dataset_train_split]
-        util.prepare_cosmos_data(config=config)
+        util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
         self.mm_files_paths = self.get_mm_files_paths(config.train.train_policy.dataset_name, config.train.train_policy.dataset_subset)
 
     def __len__(self):
@@ -103,8 +106,8 @@ class CosmosGRPODataset(Dataset):
                 multi_modal_content = {
                     "type": "video",
                     "video": self.mm_files_paths[payload["video"].split("/")[-1]],
-                    "max_pixels": grpo_config.max_pixels,
-                    "fps": grpo_config.fps,
+                    "max_pixels": MAX_PIXELS,
+                    "fps": FPS,
                 }
             else:
                 multi_modal_content = {

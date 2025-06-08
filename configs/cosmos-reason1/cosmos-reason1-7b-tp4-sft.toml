@@ -44,9 +44,9 @@ enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
 conversation_column_name = "conversations"
-vision_asset_column_name = "video"
-fps = 1
-max_pixels = 81920 # 320*256
+
+
+
 
 [train.ckpt]
 enable_checkpoint = true

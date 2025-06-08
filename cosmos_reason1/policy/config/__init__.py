@@ -107,25 +107,6 @@ class SFTDataConfig:
             "help": "System prompt for the model, which will be prepended to the prompt",
         },
     )
-    max_pixels: int = field(
-        default=320 * 256,
-        metadata={
-            "help": "Maximum number of pixels in the image, used for video/image preprocessed data",
-        },
-    )
-    fps: int = field(
-        default=2,
-        metadata={
-            "help": "Frames per second for the video, 0 for no downsampling, default to 2 which is the same as the qwen-vl implementation",
-        },
-    )
-    vision_asset_column_name: str = field(
-        default="",
-        metadata={
-            "help": "Column name for vision-LM asset data, such as `video_id`"
-            " or `image_id`, content of this column should be image or video file name(s) located in `vision_asset_path`",
-        },
-    )
 
     def __post_init__(self):
         if self.dataloader_num_workers <= 0:
@@ -281,26 +262,6 @@ class GrpoConfig:
         default="",
         metadata={"help": "Column name for response/reference answer"},
     )
-    max_pixels: int = field(
-        default=320 * 256,
-        metadata={
-            "help": "Maximum number of pixels in the image, used for video/image preprocessed data",
-        },
-    )
-    fps: int = field(
-        default=2,
-        metadata={
-            "help": "Frames per second for the video, 0 for no downsampling, default to 2 which is the same as the qwen-vl implementation",
-        },
-    )
-    vision_asset_column_name: str = field(
-        default="",
-        metadata={
-            "help": "Column name for vision-LM asset data, such as `video_id`"
-            " or `image_id`, content of this column should be image or video file name(s) located in `vision_asset_path`",
-        },
-    )
-
     reward_function: List[str] = field(
         default_factory=list,
         metadata={

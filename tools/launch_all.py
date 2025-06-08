@@ -1023,14 +1023,14 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
         controller_cmd = f"{controller_script} --config {tmpfile_toml}"
         controller_cmd += f" --port {port}"
         control_url = f"localhost:{port}"
-    else:
-        if "cosmos" in cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", "").lower():
-            logger.info("Prepare data for Lepton job, please wait...")
-            from cosmos_reason1.policy.config import Config as PolicyConfig
-            policy_config = PolicyConfig.from_dict(cosmos_config)
-            from cosmos_reason1.utils.modelscope import update_config_if_modelscope
-            policy_config = update_config_if_modelscope(policy_config)
-            util.prepare_cosmos_data(config=policy_config)
+    # else:
+    #     if "cosmos" in cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", "").lower():
+    #         logger.info("Prepare data for Lepton job, please wait...")
+    #         from cosmos_reason1.policy.config import Config as PolicyConfig
+    #         policy_config = PolicyConfig.from_dict(cosmos_config)
+    #         from cosmos_reason1.utils.modelscope import update_config_if_modelscope
+    #         policy_config = update_config_if_modelscope(policy_config)
+    #         util.prepare_cosmos_data(config=policy_config)
 
     def get_lepton_ip(worker_idx: int) -> str:
         if "LEPTON_JOB_WORKER_INDEX" in os.environ:

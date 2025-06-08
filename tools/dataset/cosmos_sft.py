@@ -25,6 +25,9 @@ from cosmos_reason1.policy.config import Config
 from transformers import AutoTokenizer 
 from cosmos_reason1.utils.util import basename_from_modelpath
 
+FPS = 1
+MAX_PIXELS = 81920
+
 class CosmosSFTDataset(Dataset):
     def __init__(self, dataset: Dataset):
         self.dataset = dataset
@@ -91,8 +94,8 @@ class CosmosSFTDataset(Dataset):
                     {
                         "type": "video",
                         "video": self.mm_files_paths[payload["video"].split("/")[-1]],
-                        "max_pixels": grpo_config.max_pixels,
-                        "fps": grpo_config.fps
+                        "max_pixels": MAX_PIXELS,
+                        "fps": FPS
                     },
                     {
                         "type": "text",
@@ -113,7 +116,7 @@ if __name__ == "__main__":
     # Download HF dataset only on launcher worker
     dataset = load_dataset(config.train.train_policy.dataset_name, config.train.train_policy.dataset_subset)
     # Prepare video files
-    util.prepare_cosmos_data(config=config)
+    util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
 
     launch_dispatcher(
         dataset=CosmosSFTDataset(dataset=dataset),

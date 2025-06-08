@@ -378,10 +378,7 @@ def if_use_modelscope(path: str) -> bool:
     return path.startswith(modelscope_cache_dir)
 
 
-def prepare_cosmos_data(config):
-    fps = config.train.train_policy.fps
-    max_pixels = config.train.train_policy.max_pixels
-
+def prepare_cosmos_data(config, fps=1, max_pixels=81920):
     cache_dir = os.environ.get(
         "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
     )

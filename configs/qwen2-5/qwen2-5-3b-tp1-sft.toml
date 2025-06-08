@@ -38,7 +38,7 @@ dataset_subset = ""
 dataset_train_split = "train"
 dataset_test_split = "test"
 conversation_column_name = "conversation"
-vision_asset_column_name = ""
+
 
 [train.ckpt]
 enable_checkpoint = true
