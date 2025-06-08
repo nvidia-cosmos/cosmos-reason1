@@ -221,6 +221,9 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 )
 
         # update the cached communicator index
+        logger.debug(
+            f"[Rollout] Creating nccl communicator for global mesh: {unique_rollout_group_key}"
+        )
         self.global_commnicator_idex = _C.create_nccl_comm(
             nccl_group_id, self.rank_in_rollout_repicas, len(replica_name_to_rank)
         )
@@ -293,10 +296,16 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             if need_sep_comm:
                 nccl_unique_id_key += f"_{p_rank}_{self.global_rank}"
             if nccl_unique_id_key in self.policy_to_rollout_nccl_communicators:
+                logger.debug(
+                    f"[Rollout] Reusing cached communicator for {nccl_unique_id_key}"
+                )
                 communicator_index[p_rank] = self.policy_to_rollout_nccl_communicators[
                     nccl_unique_id_key
                 ]
             else:
+                logger.debug(
+                    f"[Rollout] Querying nccl group id for {nccl_unique_id_key}"
+                )
                 # query the nccl group id from controller
                 nccl_group_id = self.query_nccl_unique_id_from_controller(
                     nccl_unique_id_key

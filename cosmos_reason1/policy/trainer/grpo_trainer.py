@@ -579,6 +579,9 @@ class GRPOTrainer(Trainer):
             if mesh_key not in self.rollouts_comm:
                 assert mesh_key in self.p2r_nccl_uuids
                 nccl_uuid = self.p2r_nccl_uuids[mesh_key]
+                logger.debug(
+                    f"[Policy] Creating nccl communicator for `P2R` with mesh_key: {mesh_key}"
+                )
                 comm_id[r_rank] = cosmos_c.create_nccl_comm(
                     nccl_uuid,
                     0 if need_sep_comm else self.global_rank,
@@ -587,7 +590,7 @@ class GRPOTrainer(Trainer):
                     else (self.world_size + command.dst_replica_size),
                 )
                 logger.debug(
-                    f"[Policy] Create policy to rollout nccl comm: {comm_id[r_rank]} for {mesh_key}"
+                    f"[Policy] `P2R` nccl comm: {comm_id[r_rank]} for `P2R` with mesh_key: {mesh_key} is created."
                 )
                 self.rollouts_comm[mesh_key] = comm_id[r_rank]
             else:
