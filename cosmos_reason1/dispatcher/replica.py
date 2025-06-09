@@ -267,6 +267,7 @@ class Replica:
     in_mesh: bool = False
     pending_rollouts: int = 0
     weight_step: int = -1
+    start_time: int = -1
 
     # For profiling
     sub_profiler_config: SubProfilerConfig = field(default_factory=SubProfilerConfig)

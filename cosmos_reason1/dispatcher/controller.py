@@ -640,6 +640,18 @@ class Controller:
 
         return mesh_names, group_sizes
 
+    def get_start_time_sorted_policies(self) -> List[Replica]:
+        """
+        Get the policy replicas sorted by their start time.
+        """
+        return sorted(self.policy_replicas.values(), key=lambda x: x.start_time)
+
+    def get_start_time_sorted_rollouts(self) -> List[Replica]:
+        """
+        Get the rollout replicas sorted by their start time.
+        """
+        return sorted(self.rollout_replicas.values(), key=lambda x: x.start_time)
+
     async def update_policies_initialize(
         self, valid_replicas: List[Replica], target_replica: Replica
     ):
@@ -665,8 +677,12 @@ class Controller:
             if len(valid_replicas) > 1:
                 # Only broadcast when there are multiple policy replicas
                 initialized_replica = None
-                for replica in valid_replicas:
-                    if replica.weights_loaded_in_view_of_command:
+                for replica in self.get_start_time_sorted_policies():
+                    # We will select the first replica that has weights loaded in view of command
+                    if (
+                        replica.weights_loaded_in_view_of_command
+                        and replica in valid_replicas
+                    ):
                         initialized_replica = replica
                         break
                 assert (
@@ -689,8 +705,13 @@ class Controller:
                 return
             # This occurs when new dynamic scaling is triggered
             initialized_replica = None
-            for replica in valid_replicas:
-                if replica.weights_loaded_in_view_of_command:
+            for replica in self.get_start_time_sorted_policies():
+                if (
+                    replica.weights_loaded_in_view_of_command
+                    and replica in valid_replicas
+                ):
+                    # We will select the first replica that has weights loaded in view of command
+                    # to broadcast weights
                     initialized_replica = replica
                     break
             assert (
@@ -714,8 +735,10 @@ class Controller:
     ):
         assert target_replica in valid_replicas
         any_loaded_policy_replica = None
-        for replica in self.policy_replicas.values():
+        for replica in self.get_start_time_sorted_policies():
             if replica.weights_loaded_in_view_of_command:
+                # We will select the first replica that has weights loaded in view of command
+                # to broadcast weights
                 any_loaded_policy_replica = replica
                 break
         if any_loaded_policy_replica is None:
@@ -755,8 +778,13 @@ class Controller:
                 if not was_already_initialized:
                     # Trigger RolloutToRolloutBroadcastCommand only once after all initial rollout replicas are loaded
                     any_loaded_rollout_replica = None
-                    for replica in valid_replicas:
-                        if replica.weights_loaded_in_view_of_command:
+                    for replica in self.get_start_time_sorted_rollouts():
+                        if (
+                            replica.weights_loaded_in_view_of_command
+                            and replica in valid_replicas
+                        ):
+                            # We will select the first replica that has weights loaded in view of command
+                            # to broadcast weights
                             any_loaded_rollout_replica = replica
                             break
                     assert any_loaded_rollout_replica is not None
@@ -799,7 +827,7 @@ class Controller:
         ), "The replica that is responsible for weight initialization is not the same as the one that sent the weight ready command"
         valid_rollout_replicas = [
             replica
-            for replica in self.rollout_replicas.values()
+            for replica in self.get_start_time_sorted_rollouts()
             if replica.all_atoms_arrived
         ]
         if len(valid_rollout_replicas) > 0:
@@ -820,7 +848,7 @@ class Controller:
     ):
         any_loaded_rollout_replica = None
         valid_rollout_replicas = []
-        for rollout_replica in self.rollout_replicas.values():
+        for rollout_replica in self.get_start_time_sorted_rollouts():
             if rollout_replica.all_atoms_arrived:
                 if any_loaded_rollout_replica is None:
                     any_loaded_rollout_replica = rollout_replica
@@ -871,7 +899,7 @@ class Controller:
             # All replicas have been reduced, trigger weight sync
             if need_sync_weight:
                 any_loaded_replica = None
-                for replica in self.policy_replicas.values():
+                for replica in self.get_start_time_sorted_policies():
                     if not replica.all_atoms_arrived:
                         continue
                     # update the weight version of policy
@@ -1002,6 +1030,8 @@ class Controller:
 
         # Check if all atoms of the replica have arrived
         if atom.replica.all_atoms_arrived:
+            if atom.replica.start_time == -1:
+                atom.replica.start_time = int(time.time())
             logger.info(
                 f"[Controller] All atoms of {role} Replica {atom.replica.name} has been set."
             )
