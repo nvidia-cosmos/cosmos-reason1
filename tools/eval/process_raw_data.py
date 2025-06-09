@@ -328,6 +328,25 @@ def save_clip(images: List[np.ndarray], data_dir: str, dataset: str, clip_name: 
     log.info(f"Saved clip to {clip_path}")
 
 
+def get_video_fps(video_path: str) -> float:
+    """Get FPS using ffmpeg, fallback to 30.0 if failed."""
+    try:
+        probe = ffmpeg.probe(video_path)
+        video_stream = next((stream for stream in probe['streams'] if stream['codec_type'] == 'video'), None)
+        if video_stream:
+            fps_str = video_stream['r_frame_rate']
+            # Handle fractional frame rates like "30000/1001"
+            if '/' in fps_str:
+                num, den = map(int, fps_str.split('/'))
+                fps = num / den
+            else:
+                fps = float(fps_str)
+            return fps if fps > 0 else 30.0
+    except:
+        pass
+    return 30.0
+
+
 def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str] = None, split: str = "val", hf_token: Optional[str] = None, task: str = "benchmark") -> None:
     if dataset == "holoassist":
         video_action_map = load_holoassist_data(data_dir, dataset)
@@ -368,7 +387,7 @@ def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str]
                 'video_path': video_path
             })
         else:
-            raise ValueError("Invalid dataset specified. Choose 'holoassist' or 'bridge'.")
+            raise ValueError("Invalid dataset specified. Choose 'holoassist', 'bridgev2', or 'agibot'.")
 
     if dataset == "bridgev2":
         ds = tfds.load("bridge_dataset", split=split, data_dir=f"{data_dir}/raw/{dataset}")
@@ -393,32 +412,43 @@ def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str]
         log.info(f"Number of episodes without instructions: {n_no_instruction}")
 
     elif dataset == "holoassist" or dataset == "agibot":
-        log.info(f"Number of videos in holoassist: {len(video_clip_map)}")
+        log.info(f"Number of videos in {dataset}: {len(video_clip_map)}")
+        
         for video_id, clips in video_clip_map.items():
             for clip in clips:
                 input_video_path = clip['video_path']
                 
+                # Skip processing if video file doesn't exist
+                if not os.path.exists(input_video_path):
+                    log.warning(f"Skipping clip {clip['clip_name']} - video file not found")
+                    continue
+                
                 # Calculate start and end times in seconds
-                start_time = clip['start_frame']  # Assuming start_frame is already in seconds
-                end_time = clip['end_frame']      # Assuming end_frame is already in seconds
+                if dataset == "agibot":
+                    # Get actual FPS using OpenCV
+                    fps = get_video_fps(input_video_path)
+                    start_time = clip['start_frame'] / fps
+                    end_time = clip['end_frame'] / fps
+                elif dataset == "holoassist":
+                    # For holoassist, start_frame and end_frame are already in seconds
+                    start_time = clip['start_frame']
+                    end_time = clip['end_frame']
                 
                 # Create output path using clip name
                 output_video = os.path.join(data_dir, task, dataset, "clips", f"{clip['clip_name']}")
-                
-                # Ensure output directory exists
                 os.makedirs(os.path.dirname(output_video), exist_ok=True)
                 
                 try:
-                    # Use FFmpeg to extract the clip with original codec (much faster than re-encoding)
-                    ffmpeg.input(input_video_path, ss=start_time, to=end_time).output(
-                        output_video, c="copy", vcodec="h264", acodec="aac"
+                    # Force software decoding for AV1 compatibility
+                    ffmpeg.input(input_video_path, ss=start_time, to=end_time, 
+                                hwaccel="none").output(
+                        output_video, vcodec="libx264", acodec="aac", 
+                        **{"c:v": "libx264", "preset": "fast"}
                     ).run(quiet=True, overwrite_output=True)
-                    
                     log.info(f"Saved clip to: {output_video}")
-                except ffmpeg.Error as e:
-                    log.info(f"Failed to extract clip {clip['clip_name']} from {input_video_path}")
-                    log.info(f"FFmpeg error: {e.stderr.decode() if e.stderr else 'Unknown error'}")
-    
+                except Exception as e:
+                    log.warning(f"Failed to extract clip {clip['clip_name']}: {e}")
+
 
 def main():
     parser = argparse.ArgumentParser()

@@ -7,7 +7,7 @@ This document guides you through manually downloading and preprocessing video cl
 Before preprocessing, make sure the following packages are installed:
 
 ```bash
-pip install tensorflow tensorflow_datasets ffmpeg
+pip install tensorflow tensorflow_datasets ffmpeg-python
 ```
 
 ## 📥 Get Access for AgiBot
