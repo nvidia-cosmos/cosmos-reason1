@@ -13,6 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import torch
+import requests
+import threading
+import time
+from queue import Queue
+import atexit
+import types
+from typing import List, Tuple
+from functools import partial
+from transformers import AutoConfig
+
 from cosmos_reason1.rollout import RolloutWorkerBase
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.policy.config import Config as CosmosConfig
@@ -23,8 +35,6 @@ from cosmos_reason1.utils.constant import (
 )
 from cosmos_reason1.utils.util import list_to_b64, b64_to_list
 import cosmos_reason1.utils.distributed as dist_utils
-import torch
-from transformers import AutoConfig
 from cosmos_reason1.rollout.vllm_rollout.vllm_rollout import vLLMRollout
 from cosmos_reason1.dispatcher.protocol import RolloutRequest
 from cosmos_reason1.dispatcher.command import (
@@ -36,20 +46,13 @@ from cosmos_reason1.dispatcher.command import (
     CommandType,
 )
 import cosmos_reason1._cpp as _C
-import requests
-import threading
-import time
-from queue import Queue
-import atexit
-import types
-from typing import List, Tuple
+
 from cosmos_reason1.utils.parallelism_map import (
     ParallelTopoMapperGroup,
 )
 from cosmos_reason1.rollout.weight_mapper import get_weight_mapper
 from cosmos_reason1.utils.network_util import make_request_with_retry
 import cosmos_reason1.utils.util as util
-from functools import partial
 from cosmos_reason1.utils import constant
 from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX,
@@ -109,6 +112,12 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         )
 
         self.seed = self.config.rollout.seed
+
+        # check for flashinfer
+        if self.config.rollout.vllm_use_flashinfer:
+            os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER"
+            if self.config.rollout.sampling_config.use_flashinfer:
+                os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "1"
 
         self.rollout: vLLMRollout = vLLMRollout(
             self.config,

@@ -623,6 +623,9 @@ class SamplingConfig:
     repetition_penalty: float = field(
         default=1.0, metadata={"help": "Repetition penalty for sampling."}
     )
+    use_flashinfer: bool = field(
+        default=False, metadata={"help": "Use flashinfer for sampling."}
+    )
 
 
 @dataclass
@@ -660,6 +663,10 @@ class RolloutConfig:
     seed: int = field(default=42, metadata={"help": "random seed for rollout."})
 
     sampling_config: SamplingConfig = field(default_factory=SamplingConfig)
+
+    vllm_use_flashinfer: bool = field(
+        default=False, metadata={"help": "Use flashinfer for vllm rollout."}
+    )
 
     def __post_init__(self):
         if isinstance(self.parallelism, dict):
