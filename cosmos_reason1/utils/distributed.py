@@ -857,7 +857,10 @@ class DistKVStore:
                 self.local_store.set(__key_dones[self.rank], "1")
                 self.local_store.wait(__key_dones)
             except Exception as e:
-                logger.error(f"Failed to broadcast command: {e}")
+                if self.rank == src:
+                    # Only log error when the rank is the source rank
+                    # Else it is normal if there is no command to broadcast
+                    logger.error(f"Failed to broadcast command: {e}")
                 error_raised = True
                 continue
             finally:
