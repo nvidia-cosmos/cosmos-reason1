@@ -926,37 +926,37 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
     else:
         output_dir = None
 
-    # def resolve_host(host):
-    #     try:
-    #         result = subprocess.run(
-    #             ["getent", "hosts", "--", host],
-    #             stdout=subprocess.PIPE,
-    #             stderr=subprocess.PIPE,
-    #             text=True
-    #         )
+    def resolve_host(host):
+        try:
+            result = subprocess.run(
+                ["getent", "hosts", "--", host],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
 
-    #         if result.returncode == 0:
-    #             if len(result.stdout.strip().split()) > 0:
-    #                 return result.stdout.strip().split()[0]
-    #             else:
-    #                 return None
-    #         else:
-    #             raise RuntimeError(f"Resolution failed: {result.stderr}")
-    #     except subprocess.TimeoutExpired:
-    #         raise TimeoutError("DNS resolution timed out")
+            if result.returncode == 0:
+                if len(result.stdout.strip().split()) > 0:
+                    return result.stdout.strip().split()[0]
+                else:
+                    return None
+            else:
+                raise RuntimeError(f"Resolution failed: {result.stderr}")
+        except subprocess.TimeoutExpired:
+            raise TimeoutError("DNS resolution timed out")
 
-    # def resolve_host_blocking(hostname):
-    #     try:
-    #         while True:
-    #             new_hostname = resolve_host(hostname)
-    #             if new_hostname is not None:
-    #                 hostname = new_hostname
-    #                 logger.info(f"Resolved hostname: {hostname}")
-    #                 break
-    #             time.sleep(1)
-    #     except Exception as e:
-    #         pass
-    #     return hostname
+    def resolve_host_blocking(hostname):
+        try:
+            while True:
+                new_hostname = resolve_host(hostname)
+                if new_hostname is not None:
+                    hostname = new_hostname
+                    logger.info(f"Resolved hostname: {hostname}")
+                    break
+                time.sleep(1)
+        except Exception as e:
+            pass
+        return hostname
 
     if (
         "LEPTON_JOB_WORKER_INDEX" in os.environ
@@ -995,6 +995,7 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
             )
             subdomain = os.environ.get("LEPTON_SUBDOMAIN", "")
             primary_hostname = f"{prefix}-0.{subdomain}"
+            primary_hostname = resolve_host_blocking(primary_hostname)
             control_url = f"{primary_hostname}:{args.port}"
         elif "LEPTON_JOB_WORKER_INDEX" in os.environ:
             # If we're in a Lepton job prime node, check if the port is available
@@ -1040,6 +1041,7 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
             )
             subdomain = os.environ.get("LEPTON_SUBDOMAIN", "")
             hostname = f"{prefix}-{worker_idx}.{subdomain}"
+            hostname = resolve_host_blocking(hostname)
         else:
             raise RuntimeError(
                 "Lepton job worker index not found in environment variables"
