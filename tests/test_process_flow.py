@@ -57,7 +57,6 @@ def test_process_exit_grpo():
         stderr=sys.stderr,
     )
     os.environ["COSMOS_CONTROLLER_HOST"] = f"localhost:{port}"
-    os.environ["COSMOS_CONTROLLER_LAUNCHER"] = "cosmos_reason1.dispatcher.run_web_panel"
     # Create the Python command for torchrun
     policy_cmd = [
         "torchrun",
@@ -147,7 +146,6 @@ def test_process_exit_sft():
         stderr=sys.stderr,
     )
     os.environ["COSMOS_CONTROLLER_HOST"] = f"localhost:{port}"
-    os.environ["COSMOS_CONTROLLER_LAUNCHER"] = "cosmos_reason1.dispatcher.run_web_panel"
     # Create the Python command for torchrun
     policy_cmd = [
         "torchrun",

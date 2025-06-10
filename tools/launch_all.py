@@ -603,8 +603,8 @@ def main():
         launcher = os.path.join(os.path.dirname(__file__), "dataset", "cosmos_grpo.py")
     else:
         launcher = args.launcher
+    args.launcher = launcher
     
-    os.environ["COSMOS_CONTROLLER_LAUNCHER"] = launcher
     # Get the number of GPUs required for policy and rollout
     # and the number of replicas for each
     policy_parallelism = cosmos_config.get("policy", {}).get("parallelism", {})
@@ -707,7 +707,7 @@ cat >config.toml <<EOF
 {config_content}
 EOF
 
-python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
+python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml --launcher {launcher}"""
 
         # Get all non-Lepton arguments
         non_lepton_args = []
@@ -1023,6 +1023,7 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml"""
         logger.info(f"Temporary configuration file created at {tmpfile_toml}")
         controller_cmd = f"{controller_script} --config {tmpfile_toml}"
         controller_cmd += f" --port {port}"
+        controller_cmd += f" --launcher {args.launcher}"
         control_url = f"localhost:{port}"
     # else:
     #     if "cosmos" in cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", "").lower():

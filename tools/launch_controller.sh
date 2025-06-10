@@ -3,6 +3,7 @@
 PORT=""
 CONFIG_FILE=""
 LOG_FILE=""
+LAUNCHER="cosmos_reason1.dispatcher.run_web_panel"
 
 show_help() {
   echo "Usage: $0 [options]"
@@ -11,6 +12,7 @@ show_help() {
   echo "  --port <port>       Specify the port number (if not set, automatically chosen in runtime)"
   echo "  --config <file>     Specify the configuration file"
   echo "  --log <file>        Specify the redis log file"
+  echo "  --launcher <file>   Specify the launcher file"
   echo "  --help              Show this help message and exit"
 }
 
@@ -28,6 +30,10 @@ while [[ $# -gt 0 ]]; do
       LOG_FILE="$2"
       shift 2
       ;;
+    --launcher)
+      LAUNCHER="$2"
+      shift 2
+      ;;
     --help)
       show_help
       exit 0
@@ -40,18 +46,11 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# if env var COSMOS_CONTROLLER_LAUNCHER is set, use it as the controller launcher
-# otherwise, use the default controller launcher
-# Purpose: to allow user to register custom reward functions
-if [ -n "$COSMOS_CONTROLLER_LAUNCHER" ]; then
   # Check it is ending with .py
-  if [[ "$COSMOS_CONTROLLER_LAUNCHER" == *.py ]]; then
-    CMD="python $COSMOS_CONTROLLER_LAUNCHER"
-  else
-    CMD="python -m $COSMOS_CONTROLLER_LAUNCHER"
-  fi
+if [[ "$LAUNCHER" == *.py ]]; then
+  CMD="python $LAUNCHER"
 else
-  CMD="python -m cosmos_reason1.dispatcher.run_web_panel"
+  CMD="python -m $LAUNCHER"
 fi
 
 if [[ -n "$PORT" ]]; then
