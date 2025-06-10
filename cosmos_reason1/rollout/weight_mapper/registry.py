@@ -16,7 +16,6 @@
 from typing import Dict, Type, Tuple, List
 import torch
 from torch import nn
-import cosmos_reason1._cpp as _C
 from cosmos_reason1.utils.parallelism import ParallelismConfig
 from cosmos_reason1.utils.parallelism_map import (
     slice_tensor_with_strategies,
@@ -24,6 +23,7 @@ from cosmos_reason1.utils.parallelism_map import (
 )
 from abc import ABC
 from cosmos_reason1.utils.util import seperate_nccl_comm_needed
+from cosmos_reason1.utils.pynccl import nccl_recv
 
 
 class WeightMapper(ABC):
@@ -96,7 +96,7 @@ class WeightMapper(ABC):
         # logger.info(
         #     f"[Rollout] rank {global_rank_of_rollout} recv tensor: {dest_name} from rank {p_rank} with shape: {view.shape} out of {target_tensor.shape} with dtype {view.dtype} on device {view.device}"
         # )
-        _C.nccl_recv(
+        nccl_recv(
             recv_tensor, 0 if need_sep_comm else p_rank, communicator_index[p_rank]
         )
 

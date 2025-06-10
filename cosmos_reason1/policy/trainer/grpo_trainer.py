@@ -15,7 +15,6 @@
 
 from cosmos_reason1.policy.trainer import Trainer
 from cosmos_reason1.policy.config import Config as CosmosConfig
-import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.parallelism import (
     ParallelDims,
     create_context_parallel_ctx,
@@ -71,6 +70,11 @@ from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
 )
 from cosmos_reason1.utils.util import selective_log_softmax
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+    create_nccl_comm,
+    nccl_send,
+)
 
 
 def compute_loss(
@@ -547,7 +551,7 @@ class GRPOTrainer(Trainer):
                     if self.global_rank == 0:
                         # initialize nccl handle for building mesh among policies
                         # Only create nccl group id in rank 0.
-                        nccl_uuid = cosmos_c.create_nccl_uid()
+                        nccl_uuid = create_nccl_uid()
                         base64_nccl_group_id = list_to_b64(nccl_uuid)
                         logger.debug(f"[Policy] mesh_key: {mesh_key}")
                         try:
@@ -582,7 +586,7 @@ class GRPOTrainer(Trainer):
                 logger.debug(
                     f"[Policy] Creating nccl communicator for `P2R` with mesh_key: {mesh_key}"
                 )
-                comm_id[r_rank] = cosmos_c.create_nccl_comm(
+                comm_id[r_rank] = create_nccl_comm(
                     nccl_uuid,
                     0 if need_sep_comm else self.global_rank,
                     2
@@ -646,7 +650,7 @@ class GRPOTrainer(Trainer):
                 # logger.info(
                 #     f"[Policy] rank {self.global_rank} send tensor: {dest_name} to rank {r_rank} with shape: {view.shape} out of {local_view.shape} with dtype {view.dtype} on device {view.device}"
                 # )
-                cosmos_c.nccl_send(
+                nccl_send(
                     view,
                     1 if need_sep_comm else (self.world_size + r_rank),
                     comm_id[r_rank],

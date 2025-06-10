@@ -15,13 +15,13 @@
 
 #include "cosmos_reason1.h"
 
-#include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>
 #include <pybind11/pybind11.h>
-#include <torch/extension.h>
-#include <torch/script.h>
+#include <pybind11/stl.h>
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -99,19 +99,21 @@ void async_enqueue_timeout(ncclComm_t comm, int64_t timeout_ms) {
 static std::queue<std::shared_ptr<AsyncNCCLOP>> async_nccl_ops;
 static std::mutex async_nccl_ops_mutex;
 
-void async_enqueue(int64_t timeout_ms, std::function<ncclComm_t()> functor) {
+void async_enqueue(cudaStream_t stream, int64_t timeout_ms,
+                   std::function<ncclComm_t()> functor) {
   {
     // Forbid cudagraph capture mode because timeout check will not work
-    cudaStreamCaptureStatus status;
-    cudaStreamIsCapturing(getCurrentCUDAStream(), &status);
+    cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+    if (stream != nullptr) {
+      cudaStreamIsCapturing(stream, &status);
+    }
     if (status != cudaStreamCaptureStatusNone) {
       throw std::runtime_error("Cudagraph capture mode is not allowed");
     }
   }
 
   std::unique_lock<std::mutex> lock(async_nccl_ops_mutex);
-  auto op = std::make_shared<AsyncNCCLOP>(timeout_ms, getCurrentCUDAStream(),
-                                          functor, false);
+  auto op = std::make_shared<AsyncNCCLOP>(timeout_ms, stream, functor, false);
   defer {
     if (lock.owns_lock()) {
       lock.unlock();
@@ -162,9 +164,28 @@ void worker(int current_device_index) {
 
 }  // namespace nccl
 
-cudaStream_t getCurrentCUDAStream() {
-  cudaStream_t stream = c10::cuda::getCurrentCUDAStream().stream();
-  return stream;
+// ncclDtypeSize is reverse of ncclDatatypeToString @ nccl:/src/collectives.cc
+size_t ncclDTypeSize(ncclDataType_t dtype) {
+  switch (dtype) {
+    case ncclInt8:
+    case ncclUint8:
+    case ncclFloat8e4m3:
+    case ncclFloat8e5m2:
+      return 1;
+    case ncclFloat16:
+    case ncclBfloat16:
+      return 2;
+    case ncclInt32:
+    case ncclUint32:
+    case ncclFloat32:
+      return 4;
+    case ncclInt64:
+    case ncclUint64:
+    case ncclFloat64:
+      return 8;
+    default:
+      throw std::runtime_error("Unsupported dtype");
+  }
 }
 
 std::vector<int64_t> create_nccl_uid() {
@@ -205,7 +226,7 @@ int64_t create_nccl_comm(std::vector<int64_t> uid_chars, int64_t rank,
     return comm;
   };
 
-  nccl::async_enqueue(timeout_ms, functor);
+  nccl::async_enqueue(nullptr, timeout_ms, functor);
   int64_t comm_idx = comm_idx_counter.fetch_add(1);
   shared_comms.insert({comm_idx, comm});
   return comm_idx;
@@ -232,34 +253,18 @@ int64_t get_default_timeout_ms() {
   return nccl::DEFAULT_TIMEOUT_MS;
 }
 
-void nccl_broadcast(torch::Tensor tensor, int64_t rank, int64_t comm_idx,
+void nccl_broadcast(void* tensor, size_t count, ncclDataType_t dtype,
+                    int64_t rank, int64_t comm_idx, cudaStream_t stream,
                     int64_t timeout_ms) {
-  TORCH_CHECK(tensor.is_cuda(), "Tensor must be a CUDA tensor");
-  TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
-  TORCH_CHECK(tensor.numel() > 0,
-              "Tensor must have non-zero number of elements");
-
-  int tensor_device_index = tensor.device().index();
-  int current_device_index;
-  COSMOS_CUDA_CHECK(cudaGetDevice(&current_device_index));
-  TORCH_CHECK(current_device_index == tensor_device_index,
-              "Current CUDA device does not match tensor's device. Make sure "
-              "to set the right device before using NCCL.");
+  COSMOS_CHECK_WITH_INFO(
+      tensor != nullptr,
+      "Tensor data_ptr is null (tensor likely not materialized)");
 
   ncclComm_t comm = get_nccl_comm(comm_idx);
-  size_t count = tensor.numel();
-  ncclDataType_t dtype = torch_dtype_to_nccl_dtype(tensor.scalar_type());
-
-  void* data_ptr = tensor.data_ptr();
-
-  TORCH_CHECK(data_ptr != nullptr,
-              "Tensor data_ptr is null (tensor likely not materialized)");
-
-  cudaStream_t stream = getCurrentCUDAStream();
 
   auto functor = [&]() -> ncclComm_t {
-    NCCL_CHECK(ncclBroadcast(data_ptr,  // sendbuff
-                             data_ptr,  // recvbuff
+    NCCL_CHECK(ncclBroadcast(tensor,  // sendbuff
+                             tensor,  // recvbuff
                              count, dtype, rank, comm, stream));
     return comm;
   };
@@ -270,33 +275,19 @@ void nccl_broadcast(torch::Tensor tensor, int64_t rank, int64_t comm_idx,
       .abort_func_ = nccl_abort,
   });
 
-  nccl::async_enqueue(timeout_ms, functor);
+  nccl::async_enqueue(stream, timeout_ms, functor);
 }
 
-void nccl_send(torch::Tensor tensor, int64_t peer, int64_t comm_idx,
-               int64_t timeout_ms) {
-  TORCH_CHECK(tensor.is_cuda(), "Tensor must be a CUDA tensor");
-  TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
-  TORCH_CHECK(tensor.numel() > 0,
-              "Tensor must have non-zero number of elements");
-
-  int tensor_device_index = tensor.device().index();
-  int current_device_index;
-  COSMOS_CUDA_CHECK(cudaGetDevice(&current_device_index));
-  TORCH_CHECK(current_device_index == tensor_device_index,
-              "Current CUDA device does not match tensor's device.");
+void nccl_send(void* tensor, size_t count, ncclDataType_t dtype, int64_t peer,
+               int64_t comm_idx, cudaStream_t stream, int64_t timeout_ms) {
+  COSMOS_CHECK_WITH_INFO(
+      tensor != nullptr,
+      "Tensor data_ptr is null (tensor likely not materialized)");
 
   ncclComm_t comm = get_nccl_comm(comm_idx);
-  size_t count = tensor.numel();
-  ncclDataType_t dtype = torch_dtype_to_nccl_dtype(tensor.scalar_type());
-
-  void* data_ptr = tensor.data_ptr();
-  TORCH_CHECK(data_ptr != nullptr, "Tensor data_ptr is null");
-
-  cudaStream_t stream = getCurrentCUDAStream();
 
   auto functor = [&]() {
-    NCCL_CHECK(ncclSend(data_ptr, count, dtype, peer, comm, stream));
+    NCCL_CHECK(ncclSend(tensor, count, dtype, peer, comm, stream));
     return comm;
   };
 
@@ -306,33 +297,19 @@ void nccl_send(torch::Tensor tensor, int64_t peer, int64_t comm_idx,
       .abort_func_ = nccl_abort,
   });
 
-  nccl::async_enqueue(timeout_ms, functor);
+  nccl::async_enqueue(stream, timeout_ms, functor);
 }
 
-void nccl_recv(torch::Tensor tensor, int64_t peer, int64_t comm_idx,
-               int64_t timeout_ms) {
-  TORCH_CHECK(tensor.is_cuda(), "Tensor must be a CUDA tensor");
-  TORCH_CHECK(tensor.is_contiguous(), "Tensor must be contiguous");
-  TORCH_CHECK(tensor.numel() > 0,
-              "Tensor must have non-zero number of elements");
-
-  int tensor_device_index = tensor.device().index();
-  int current_device_index;
-  COSMOS_CUDA_CHECK(cudaGetDevice(&current_device_index));
-  TORCH_CHECK(current_device_index == tensor_device_index,
-              "Current CUDA device does not match tensor's device.");
+void nccl_recv(void* tensor, size_t count, ncclDataType_t dtype, int64_t peer,
+               int64_t comm_idx, cudaStream_t stream, int64_t timeout_ms) {
+  COSMOS_CHECK_WITH_INFO(
+      tensor != nullptr,
+      "Tensor data_ptr is null (tensor likely not materialized)");
 
   ncclComm_t comm = get_nccl_comm(comm_idx);
-  size_t count = tensor.numel();
-  ncclDataType_t dtype = torch_dtype_to_nccl_dtype(tensor.scalar_type());
-
-  void* data_ptr = tensor.data_ptr();
-  TORCH_CHECK(data_ptr != nullptr, "Tensor data_ptr is null");
-
-  cudaStream_t stream = getCurrentCUDAStream();
 
   auto functor = [&]() -> ncclComm_t {
-    NCCL_CHECK(ncclRecv(data_ptr, count, dtype, peer, comm, stream));
+    NCCL_CHECK(ncclRecv(tensor, count, dtype, peer, comm, stream));
     return comm;
   };
 
@@ -341,67 +318,24 @@ void nccl_recv(torch::Tensor tensor, int64_t peer, int64_t comm_idx,
       .comm_idx_ = comm_idx,
       .abort_func_ = nccl_abort,
   });
-  nccl::async_enqueue(timeout_ms, functor);
+  nccl::async_enqueue(stream, timeout_ms, functor);
 }
 
-void nccl_allreduce(torch::Tensor sendbuff, torch::Tensor recvbuff, int64_t op,
-                    int64_t comm_idx, int64_t timeout_ms) {
-  TORCH_CHECK(sendbuff.is_cuda(), "Send Tensor must be a CUDA tensor");
-  TORCH_CHECK(sendbuff.is_contiguous(), "Send Tensor must be contiguous");
-  TORCH_CHECK(sendbuff.numel() > 0,
-              "Send Tensor must have non-zero number of elements");
-  TORCH_CHECK(recvbuff.is_cuda(), "Recv Tensor must be a CUDA tensor");
-  TORCH_CHECK(recvbuff.is_contiguous(), "Recv Tensor must be contiguous");
-  TORCH_CHECK(recvbuff.numel() > 0,
-              "Recv Tensor must have non-zero number of elements");
-  TORCH_CHECK(sendbuff.device() == recvbuff.device(),
-              "sendbuff and recvbuff must be on the same device");
-  TORCH_CHECK(sendbuff.numel() == recvbuff.numel(),
-              "sendbuff and recvbuff must have the same number of elements");
-  TORCH_CHECK(sendbuff.scalar_type() == recvbuff.scalar_type(),
-              "sendbuff and recvbuff must have the same dtype");
-
-  int tensor_device_index = sendbuff.device().index();
-  int current_device_index;
-  COSMOS_CUDA_CHECK(cudaGetDevice(&current_device_index));
-  TORCH_CHECK(current_device_index == tensor_device_index,
-              "Current CUDA device does not match tensor's device.");
+void nccl_allreduce(void* sendbuff, void* recvbuff, size_t count,
+                    ncclDataType_t dtype, ncclRedOp_t op, int64_t comm_idx,
+                    cudaStream_t stream, int64_t timeout_ms) {
+  COSMOS_CHECK_WITH_INFO(sendbuff != nullptr,
+                         "Send Tensor must be a CUDA tensor");
+  COSMOS_CHECK_WITH_INFO(recvbuff != nullptr,
+                         "Recv Tensor must be a CUDA tensor");
+  COSMOS_CHECK_WITH_INFO(count > 0,
+                         "Tensor must have non-zero number of elements");
 
   ncclComm_t comm = get_nccl_comm(comm_idx);
-  auto count = sendbuff.numel();
-  ncclDataType_t dtype = torch_dtype_to_nccl_dtype(sendbuff.scalar_type());
-
-  ncclRedOp_t red_op;
-  switch (op) {
-    case 0:
-      red_op = ncclSum;
-      break;
-    case 1:
-      red_op = ncclProd;
-      break;
-    case 2:
-      red_op = ncclMax;
-      break;
-    case 3:
-      red_op = ncclMin;
-      break;
-    case 4:
-      red_op = ncclAvg;
-      break;
-    default:
-      TORCH_CHECK(false, "Unsupported reduction operation for NCCL allreduce");
-  }
-
-  void* send_ptr = sendbuff.data_ptr();
-  TORCH_CHECK(send_ptr != nullptr, "Send tensor data_ptr is null");
-
-  void* recv_ptr = recvbuff.data_ptr();
-  TORCH_CHECK(recv_ptr != nullptr, "Recv tensor data_ptr is null");
-
-  cudaStream_t stream = getCurrentCUDAStream();
 
   auto functor = [&]() -> ncclComm_t {
-    ncclAllReduce(send_ptr, recv_ptr, count, dtype, red_op, comm, stream);
+    NCCL_CHECK(
+        ncclAllReduce(sendbuff, recvbuff, count, dtype, op, comm, stream));
     return comm;
   };
 
@@ -410,59 +344,36 @@ void nccl_allreduce(torch::Tensor sendbuff, torch::Tensor recvbuff, int64_t op,
       .comm_idx_ = comm_idx,
       .abort_func_ = nccl_abort,
   });
-  nccl::async_enqueue(timeout_ms, functor);
+  nccl::async_enqueue(stream, timeout_ms, functor);
 }
 
-void nccl_alltoall(torch::Tensor sendbuff, torch::Tensor recvbuff,
-                   int64_t comm_idx, int64_t timeout_ms) {
-  TORCH_CHECK(sendbuff.is_cuda(), "Send Tensor must be a CUDA tensor");
-  TORCH_CHECK(sendbuff.is_contiguous(), "Send Tensor must be contiguous");
-  TORCH_CHECK(sendbuff.numel() > 0,
-              "Send Tensor must have non-zero number of elements");
-  TORCH_CHECK(recvbuff.is_cuda(), "Recv Tensor must be a CUDA tensor");
-  TORCH_CHECK(recvbuff.is_contiguous(), "Recv Tensor must be contiguous");
-  TORCH_CHECK(recvbuff.numel() > 0,
-              "Recv Tensor must have non-zero number of elements");
-  TORCH_CHECK(sendbuff.device() == recvbuff.device(),
-              "sendbuff and recvbuff must be on the same device");
-  TORCH_CHECK(sendbuff.numel() == recvbuff.numel(),
-              "sendbuff and recvbuff must have the same number of elements");
-  TORCH_CHECK(sendbuff.scalar_type() == recvbuff.scalar_type(),
-              "sendbuff and recvbuff must have the same dtype");
-
-  int tensor_device_index = sendbuff.device().index();
-  int current_device_index;
-  COSMOS_CUDA_CHECK(cudaGetDevice(&current_device_index));
-  TORCH_CHECK(current_device_index == tensor_device_index,
-              "Current CUDA device does not match tensor's device.");
+void nccl_alltoall(void* sendbuff, void* recvbuff, size_t total_size,
+                   ncclDataType_t dtype, int64_t comm_idx, cudaStream_t stream,
+                   int64_t timeout_ms) {
+  COSMOS_CHECK_WITH_INFO(sendbuff != nullptr,
+                         "Send Tensor must be a CUDA tensor");
+  COSMOS_CHECK_WITH_INFO(recvbuff != nullptr,
+                         "Recv Tensor must be a CUDA tensor");
+  COSMOS_CHECK_WITH_INFO(total_size > 0,
+                         "Tensor must have non-zero number of elements");
 
   ncclComm_t comm = get_nccl_comm(comm_idx);
-  auto total_size = sendbuff.numel();
-  ncclDataType_t dtype = torch_dtype_to_nccl_dtype(sendbuff.scalar_type());
 
   int world_size;
   NCCL_CHECK(ncclCommCount(comm, &world_size));
-
   int rank;
   NCCL_CHECK(ncclCommUserRank(comm, &rank));
 
   size_t count = total_size / world_size;
-
-  void* send_ptr = sendbuff.data_ptr();
-  TORCH_CHECK(send_ptr != nullptr, "Send tensor data_ptr is null");
-
-  void* recv_ptr = recvbuff.data_ptr();
-  TORCH_CHECK(recv_ptr != nullptr, "Recv tensor data_ptr is null");
-
-  cudaStream_t stream = getCurrentCUDAStream();
+  size_t dtype_size = ncclDTypeSize(dtype);
 
   auto functor = [&]() -> ncclComm_t {
-    size_t rankOffset = count * sendbuff.element_size();
+    size_t rankOffset = count * dtype_size;
     NCCL_CHECK(ncclGroupStart());
     for (int r = 0; r < world_size; r++) {
-      NCCL_CHECK(ncclSend(((char*)send_ptr) + r * rankOffset, count, dtype, r,
+      NCCL_CHECK(ncclSend(((char*)sendbuff) + r * rankOffset, count, dtype, r,
                           comm, stream));
-      NCCL_CHECK(ncclRecv(((char*)recv_ptr) + r * rankOffset, count, dtype, r,
+      NCCL_CHECK(ncclRecv(((char*)recvbuff) + r * rankOffset, count, dtype, r,
                           comm, stream));
     }
     NCCL_CHECK(ncclGroupEnd());
@@ -474,7 +385,7 @@ void nccl_alltoall(torch::Tensor sendbuff, torch::Tensor recvbuff,
       .comm_idx_ = comm_idx,
       .abort_func_ = nccl_abort,
   });
-  nccl::async_enqueue(timeout_ms, functor);
+  nccl::async_enqueue(stream, timeout_ms, functor);
 }
 
 void nccl_abort(int64_t comm_idx) {
@@ -498,87 +409,164 @@ void watchdog_exit(bool abort) { WatchdogTLS::pop_context(abort); }
 
 PYBIND11_MODULE(_cpp, m) {
   m.doc() = "Cosmos C++/CUDA extension";
+
+  m.def("watchdog_enter", &cosmos_reason1::watchdog_enter,
+        "Enter the watchdog context");
+  m.def("watchdog_exit", &cosmos_reason1::watchdog_exit, py::arg("abort"),
+        "Exit the watchdog context");
+
   m.def("create_nccl_comm", &cosmos_reason1::create_nccl_comm,
         py::arg("uid_chars"), py::arg("rank"), py::arg("world_size"),
         py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
         py::call_guard<py::gil_scoped_release>(), "Create a NCCL communicator");
   m.def("create_nccl_uid", &cosmos_reason1::create_nccl_uid,
         "Create a NCCL unique ID");
+  m.def("nccl_abort", &cosmos_reason1::nccl_abort, py::arg("comm_idx"),
+        R"pbdoc(
+            Abort the NCCL communicator.
+        )pbdoc");
   m.def("get_nccl_comm_count", &cosmos_reason1::nccl_get_comm_count,
         py::arg("comm_idx"),
         "Get the number of ranks in the NCCL communicator");
   m.def("get_default_timeout_ms", &cosmos_reason1::get_default_timeout_ms,
         "Get the default timeout value for NCCL operations");
-  m.def("nccl_broadcast", &cosmos_reason1::nccl_broadcast, py::arg("tensor"),
-        py::arg("rank"), py::arg("comm_idx"),
-        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
-        py::call_guard<py::gil_scoped_release>(),
-        R"pbdoc(
+  m.def(
+      "nccl_broadcast",
+      [](intptr_t tensor, size_t count, int dtype, int64_t rank,
+         int64_t comm_idx, intptr_t stream, int64_t timeout_ms) {
+        void* tensor_ptr = (void*)tensor;
+        cudaStream_t stream_ptr = (cudaStream_t)stream;
+        ncclDataType_t dtype_ = (ncclDataType_t)dtype;
+        cosmos_reason1::nccl_broadcast(tensor_ptr, count, dtype_, rank,
+                                       comm_idx, stream_ptr, timeout_ms);
+      },
+      py::arg("tensor"), py::arg("count"), py::arg("dtype"), py::arg("rank"),
+      py::arg("comm_idx"), py::arg("stream"),
+      py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
+      py::call_guard<py::gil_scoped_release>(),
+      R"pbdoc(
             Perform an NCCL broadcast on the given NCCL group.
 
             Args:
-                tensor (torch.Tensor): Tensor to broadcast (must be on CUDA).
-                root (int): Root rank in the communicator.
+                tensor (void*): Tensor to broadcast (must be on CUDA).
+                count (int): Number of elements to broadcast.
+                dtype (ncclDataType_t): Data type of the tensor.
+                rank (int): Root rank in the communicator.
                 comm_idx (int): Index of the communicator (created by `create_nccl_comm`).
+                stream (cudaStream_t): CUDA stream to use for the operation.
+                timeout_ms (int): Timeout value for the operation.
         )pbdoc");
 
-  m.def("nccl_send", &cosmos_reason1::nccl_send, py::arg("tensor"),
-        py::arg("peer"), py::arg("comm_idx"),
-        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
-        py::call_guard<py::gil_scoped_release>(),
-        R"pbdoc(
+  m.def(
+      "nccl_send",
+      [](intptr_t tensor, size_t count, int dtype, int64_t peer,
+         int64_t comm_idx, intptr_t stream, int64_t timeout_ms) {
+        void* tensor_ptr = (void*)tensor;
+        ncclDataType_t dtype_ = (ncclDataType_t)dtype;
+        cudaStream_t stream_ptr = (cudaStream_t)stream;
+        cosmos_reason1::nccl_send(tensor_ptr, count, dtype_, peer, comm_idx,
+                                  stream_ptr, timeout_ms);
+      },
+      py::arg("tensor"), py::arg("count"), py::arg("dtype"), py::arg("peer"),
+      py::arg("comm_idx"), py::arg("stream"),
+      py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
+      py::call_guard<py::gil_scoped_release>(),
+      R"pbdoc(
             Perform an NCCL point-to-point send operation.
 
             Args:
-                tensor (torch.Tensor): Tensor to send (must be CUDA and contiguous).
+                tensor (void*): Tensor to send (must be CUDA and contiguous).
+                count (int): Number of elements to send.
+                dtype (ncclDataType_t): Data type of the tensor.
                 peer (int): Rank to send to.
                 comm_idx (int): Communicator index.
+                stream (cudaStream_t): CUDA stream to use for the operation.
+                timeout_ms (int): Timeout value for the operation.
         )pbdoc");
 
-  m.def("nccl_recv", &cosmos_reason1::nccl_recv, py::arg("tensor"),
-        py::arg("peer"), py::arg("comm_idx"),
-        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
-        py::call_guard<py::gil_scoped_release>(),
-        R"pbdoc(
+  m.def(
+      "nccl_recv",
+      [](intptr_t tensor, size_t count, int dtype, int64_t peer,
+         int64_t comm_idx, intptr_t stream, int64_t timeout_ms) {
+        void* tensor_ptr = (void*)tensor;
+        cudaStream_t stream_ptr = (cudaStream_t)stream;
+        ncclDataType_t dtype_ = (ncclDataType_t)dtype;
+        cosmos_reason1::nccl_recv(tensor_ptr, count, dtype_, peer, comm_idx,
+                                  stream_ptr, timeout_ms);
+      },
+      py::arg("tensor"), py::arg("count"), py::arg("dtype"), py::arg("peer"),
+      py::arg("comm_idx"), py::arg("stream"),
+      py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
+      py::call_guard<py::gil_scoped_release>(),
+      R"pbdoc(
             Perform an NCCL point-to-point recv operation.
 
             Args:
-                tensor (torch.Tensor): Tensor to receive into (must be CUDA and contiguous).
+                tensor (void*): Tensor to receive into (must be CUDA and contiguous).
+                count (int): Number of elements to receive.
+                dtype (ncclDataType_t): Data type of the tensor.
                 peer (int): Rank to receive from.
                 comm_idx (int): Communicator index.
+                stream (cudaStream_t): CUDA stream to use for the operation.
+                timeout_ms (int): Timeout value for the operation.
         )pbdoc");
 
-  m.def("nccl_allreduce", &cosmos_reason1::nccl_allreduce, py::arg("sendbuff"),
-        py::arg("recvbuff"), py::arg("op"), py::arg("comm_idx"),
-        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
-        py::call_guard<py::gil_scoped_release>(),
-        R"pbdoc(
+  m.def(
+      "nccl_allreduce",
+      [](intptr_t sendbuff, intptr_t recvbuff, size_t count, int dtype, int op,
+         int64_t comm_idx, intptr_t stream, int64_t timeout_ms) {
+        void* sendbuff_ptr = (void*)sendbuff;
+        void* recvbuff_ptr = (void*)recvbuff;
+        ncclDataType_t dtype_ = (ncclDataType_t)dtype;
+        ncclRedOp_t op_ = (ncclRedOp_t)op;
+        cudaStream_t stream_ptr = (cudaStream_t)stream;
+        cosmos_reason1::nccl_allreduce(sendbuff_ptr, recvbuff_ptr, count,
+                                       dtype_, op_, comm_idx, stream_ptr,
+                                       timeout_ms);
+      },
+      py::arg("sendbuff"), py::arg("recvbuff"), py::arg("count"),
+      py::arg("dtype"), py::arg("op"), py::arg("comm_idx"), py::arg("stream"),
+      py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
+      py::call_guard<py::gil_scoped_release>(),
+      R"pbdoc(
             Perform an NCCL allreduce operation.
 
             Args:
-                sendbuff (torch.Tensor): Tensor to send (must be CUDA and contiguous).
-                recvbuff (torch.Tensor): Tensor to receive into (must be CUDA and contiguous).
-                op (int): Reduction operation (0: sum, 1: prod, 2: max, 3: min, 4: avg).
+                sendbuff (void*): Tensor to send (must be CUDA and contiguous).
+                recvbuff (void*): Tensor to receive into (must be CUDA and contiguous).
+                count (int): Number of elements to reduce.
+                dtype (ncclDataType_t): Data type of the tensor.
+                op (ncclRedOp_t): Reduction operation.
                 comm_idx (int): Communicator index.
+                stream (cudaStream_t): CUDA stream to use for the operation.
+                timeout_ms (int): Timeout value for the operation.
         )pbdoc");
-  m.def("nccl_alltoall", &cosmos_reason1::nccl_alltoall, py::arg("sendbuff"),
-        py::arg("recvbuff"), py::arg("comm_idx"),
-        py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
-        R"pbdoc(
+
+  m.def(
+      "nccl_alltoall",
+      [](intptr_t sendbuff, intptr_t recvbuff, size_t total_size, int dtype,
+         int64_t comm_idx, intptr_t stream, int64_t timeout_ms) {
+        void* sendbuff_ptr = (void*)sendbuff;
+        void* recvbuff_ptr = (void*)recvbuff;
+        ncclDataType_t dtype_ = (ncclDataType_t)dtype;
+        cudaStream_t stream_ptr = (cudaStream_t)stream;
+        cosmos_reason1::nccl_alltoall(sendbuff_ptr, recvbuff_ptr, total_size,
+                                      dtype_, comm_idx, stream_ptr, timeout_ms);
+      },
+      py::arg("sendbuff"), py::arg("recvbuff"), py::arg("total_size"),
+      py::arg("dtype"), py::arg("comm_idx"), py::arg("stream"),
+      py::arg("timeout_ms") = cosmos_reason1::get_default_timeout_ms(),
+      py::call_guard<py::gil_scoped_release>(),
+      R"pbdoc(
           Perform an NCCL alltoall operation.
 
           Args:
-              sendbuff (torch.Tensor): Tensor to send in alltoall (must be CUDA and contiguous).
-              recvbuff (torch.Tensor): Tensor to receive into in altoall (must be CUDA and contiguous).
+              sendbuff (void*): Tensor to send in alltoall (must be CUDA and contiguous).
+              recvbuff (void*): Tensor to receive into in altoall (must be CUDA and contiguous).
+              total_size (int): Total size of the tensor.
+              dtype (ncclDataType_t): Data type of the tensor.
               comm_idx (int): Communicator index.
+              stream (cudaStream_t): CUDA stream to use for the operation.
+              timeout_ms (int): Timeout value for the operation.
       )pbdoc");
-
-  m.def("nccl_abort", &cosmos_reason1::nccl_abort, py::arg("comm_idx"),
-        R"pbdoc(
-            Abort the NCCL communicator.
-        )pbdoc");
-  m.def("watchdog_enter", &cosmos_reason1::watchdog_enter,
-        "Enter the watchdog context");
-  m.def("watchdog_exit", &cosmos_reason1::watchdog_exit, py::arg("abort"),
-        "Exit the watchdog context");
 }

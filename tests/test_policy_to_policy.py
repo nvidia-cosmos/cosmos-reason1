@@ -16,11 +16,13 @@
 import os
 import pytest
 import torch
-import cosmos_reason1._cpp as cosmos_c
 import subprocess
 import sys
 from multiprocessing import shared_memory
 import numpy as np
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+)
 
 
 def test_policy_to_policy_unicast():
@@ -28,7 +30,7 @@ def test_policy_to_policy_unicast():
     cur_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Create NCCL UID and shared memory
-    nccl_uid = cosmos_c.create_nccl_uid()
+    nccl_uid = create_nccl_uid()
     nccl_uid_tensor = torch.tensor(nccl_uid, dtype=torch.int64)
     shms = []
     world_size = 2
@@ -116,7 +118,7 @@ def test_policy_to_policy_broadcast():
     cur_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Create NCCL UID and shared memory
-    nccl_uid = cosmos_c.create_nccl_uid()
+    nccl_uid = create_nccl_uid()
     nccl_uid_tensor = torch.tensor(nccl_uid, dtype=torch.int64)
     shms = []
     world_size = 2

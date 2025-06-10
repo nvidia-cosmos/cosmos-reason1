@@ -34,6 +34,7 @@ from cosmos_reason1.policy.model import get_data_packer
 from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_REGISTER_SUFFIX,
     COSMOS_API_UNREGISTER_SUFFIX,
+    COSMOS_API_HEARTBEAT_SUFFIX,
 )
 import base64
 import cloudpickle
@@ -220,7 +221,7 @@ class CommMixin:
                             "replica_name": self.replica_name,
                         },
                     ),
-                    self.get_alternative_urls("api/heartbeat"),
+                    self.get_alternative_urls(COSMOS_API_HEARTBEAT_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
             except Exception as e:

@@ -16,12 +16,14 @@
 import os
 import pytest
 import torch
-import cosmos_reason1._cpp as cosmos_c
 import subprocess
 import sys
 from multiprocessing import shared_memory
 import numpy as np
 from tests.launch_test_worker import POLICY_WORLD_SIZE, ROLLOUT_WORLD_SIZE
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+)
 
 
 def test_policy_to_rollout_wieght_sync():
@@ -29,7 +31,7 @@ def test_policy_to_rollout_wieght_sync():
     cur_dir = os.path.dirname(os.path.abspath(__file__))
 
     # Create NCCL UID and shared memory
-    nccl_uid = cosmos_c.create_nccl_uid()
+    nccl_uid = create_nccl_uid()
     nccl_uid_tensor = torch.tensor(nccl_uid, dtype=torch.int64)
     shm = shared_memory.SharedMemory(
         create=True, size=(nccl_uid_tensor.numel() + 1) * nccl_uid_tensor.element_size()

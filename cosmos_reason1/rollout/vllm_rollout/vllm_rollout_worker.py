@@ -45,8 +45,18 @@ from cosmos_reason1.dispatcher.command import (
     Command,
     CommandType,
 )
-import cosmos_reason1._cpp as _C
-
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+    create_nccl_comm,
+    nccl_broadcast,
+)
+import requests
+import threading
+import time
+from queue import Queue
+import atexit
+import types
+from typing import List, Tuple
 from cosmos_reason1.utils.parallelism_map import (
     ParallelTopoMapperGroup,
 )
@@ -197,7 +207,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         nccl_group_id = None
         if self.rank_in_rollout_repicas == 0:
             # only replica_rank == 0 have the right to generate nccl id.
-            nccl_group_id = _C.create_nccl_uid()
+            nccl_group_id = create_nccl_uid()
             base64_nccl_group_id = list_to_b64(nccl_group_id)
             try:
                 make_request_with_retry(
@@ -233,7 +243,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         logger.debug(
             f"[Rollout] Creating nccl communicator for global mesh: {unique_rollout_group_key}"
         )
-        self.global_commnicator_idex = _C.create_nccl_comm(
+        self.global_commnicator_idex = create_nccl_comm(
             nccl_group_id, self.rank_in_rollout_repicas, len(replica_name_to_rank)
         )
         # update the replcia_name to rank dict
@@ -325,7 +335,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                     )
                 # create the communicator index
                 # p_rank is the rank in policy, r_rank is the rank in rollout
-                communicator_index[p_rank] = _C.create_nccl_comm(
+                communicator_index[p_rank] = create_nccl_comm(
                     nccl_group_id,
                     1
                     if need_sep_comm
@@ -391,7 +401,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
             cnt = 0
             for parameter in self.get_underlying_model().parameters():
-                _C.nccl_broadcast(parameter, src_rank, self.global_commnicator_idex)
+                nccl_broadcast(parameter, src_rank, self.global_commnicator_idex)
                 cnt += 1
 
             self.weight_synced_event.set()

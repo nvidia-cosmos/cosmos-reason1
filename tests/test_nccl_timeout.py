@@ -20,15 +20,19 @@ import subprocess
 
 # For testing, set the timeout to 60000ms
 os.environ["COSMOS_NCCL_TIMEOUT_MS"] = "60000"
-import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.distributed import broadcast_object_cpu, nccl_timeout_watchdog
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+    create_nccl_comm,
+    nccl_allreduce,
+)
 
 
 def routine(N: int, device: torch.device, rank: int, world_size: int):
-    nccl_uid = broadcast_object_cpu(cosmos_c.create_nccl_uid() if rank == 0 else None)
+    nccl_uid = broadcast_object_cpu(create_nccl_uid() if rank == 0 else None)
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
-        comm = cosmos_c.create_nccl_comm(nccl_uid, rank, world_size)
+        comm = create_nccl_comm(nccl_uid, rank, world_size)
         try:
             with nccl_timeout_watchdog(wait_stream=True):
                 send_buffer = torch.arange(N, dtype=torch.float32, device=device)
@@ -37,7 +41,7 @@ def routine(N: int, device: torch.device, rank: int, world_size: int):
                 if rank != 3:
                     # Simulate a failed allreduce on rank 3
                     try:
-                        cosmos_c.nccl_allreduce(send_buffer, recv_buffer, 0, comm)
+                        nccl_allreduce(send_buffer, recv_buffer, 0, comm)
                         print(f"[RANK {rank}] arrived here")
                     except Exception as e:
                         print(f"[RANK {rank}] error in nccl_allreduce: {e}")
@@ -52,12 +56,12 @@ def routine(N: int, device: torch.device, rank: int, world_size: int):
             new_group = dist.new_group(ranks=group_ranks, backend="cuda:nccl,cpu:gloo")
 
             nccl_uid = broadcast_object_cpu(
-                cosmos_c.create_nccl_uid() if rank == 0 else None, group=new_group
+                create_nccl_uid() if rank == 0 else None, group=new_group
             )
-            comm = cosmos_c.create_nccl_comm(nccl_uid, rank, world_size)
+            comm = create_nccl_comm(nccl_uid, rank, world_size)
             send_tensor = torch.arange(N, dtype=torch.float32, device=device)
             recv_tensor = torch.zeros(N, dtype=torch.float32, device=device)
-            cosmos_c.nccl_allreduce(send_tensor, recv_tensor, 0, comm)
+            nccl_allreduce(send_tensor, recv_tensor, 0, comm)
             torch.testing.assert_close(
                 recv_tensor,
                 torch.arange(N, dtype=torch.float32, device=device) * world_size,

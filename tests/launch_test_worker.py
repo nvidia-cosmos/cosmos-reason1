@@ -16,7 +16,6 @@
 import os
 import sys
 import torch
-import cosmos_reason1._cpp as cosmos_c
 import time
 from multiprocessing import shared_memory
 import numpy as np
@@ -47,6 +46,13 @@ from cosmos_reason1.policy.model.gpt.weight_converter import convert_weight_from
 from cosmos_reason1.policy.config import Config as CosmosConfig
 from cosmos_reason1.comm.base import CommMixin
 from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+    create_nccl_comm,
+    nccl_send,
+    nccl_recv,
+    nccl_broadcast,
+)
 
 POLICY_WORLD_SIZE = 4
 ROLLOUT_WORLD_SIZE = 4
@@ -210,7 +216,7 @@ def run_policy_send_to_rollout(shm_name, shm_size, rank):
 
     try:
         if rank == 0:
-            nccl_uid = cosmos_c.create_nccl_uid()
+            nccl_uid = create_nccl_uid()
             # Create shared memory for NCCL UID
             uid_array = np.ndarray((shm_size + 1,), dtype=np.int64, buffer=shm.buf)
             # Copy NCCL UID to shared memory
@@ -224,7 +230,7 @@ def run_policy_send_to_rollout(shm_name, shm_size, rank):
             nccl_uid = uid_array[:-1].tolist()
 
         # Create NCCL communicator after UID is shared
-        comm_idx = cosmos_c.create_nccl_comm(
+        comm_idx = create_nccl_comm(
             nccl_uid, rank, POLICY_WORLD_SIZE + ROLLOUT_WORLD_SIZE
         )
         policy = TestPolicy(
@@ -264,7 +270,7 @@ def run_rollout_recv_from_policy(shm_name, shm_size, rank):
         assert uid_array[-1] == 1, "Sender process did not set UID correctly"
         nccl_uid = uid_array[:-1].tolist()
         # Create NCCL communicator with shared UID
-        comm_idx = cosmos_c.create_nccl_comm(
+        comm_idx = create_nccl_comm(
             nccl_uid, rank + POLICY_WORLD_SIZE, POLICY_WORLD_SIZE + ROLLOUT_WORLD_SIZE
         )
 
@@ -308,7 +314,7 @@ def policy_to_policy_sync_common(
     try:
         # Get NCCL UID from shared memory
         if send:
-            nccl_uid = cosmos_c.create_nccl_uid()
+            nccl_uid = create_nccl_uid()
             # Create shared memory for NCCL UID
             uid_array = np.ndarray((shm_size + 1,), dtype=np.int64, buffer=shm.buf)
             # Copy NCCL UID to shared memory
@@ -323,7 +329,7 @@ def policy_to_policy_sync_common(
             nccl_uid = uid_array[:-1].tolist()
 
         # Create NCCL communicator with shared UID
-        comm_idx = cosmos_c.create_nccl_comm(nccl_uid, nccl_rank, nccl_size)
+        comm_idx = create_nccl_comm(nccl_uid, nccl_rank, nccl_size)
 
         # Construct the model and trainer
         cur_dir = os.path.dirname(os.path.abspath(__file__))
@@ -365,15 +371,15 @@ def policy_to_policy_sync_common(
 
             def broadcast(self, tensor: torch.Tensor, src_replica: str):
                 src_rank = self.get_rank(src_replica)
-                cosmos_c.nccl_broadcast(tensor, src_rank, self.comm_idx)
+                nccl_broadcast(tensor, src_rank, self.comm_idx)
 
             def send(self, tensor: torch.Tensor, dst_replica: str):
                 dst_rank = self.get_rank(dst_replica)
-                cosmos_c.nccl_send(tensor, dst_rank, self.comm_idx)
+                nccl_send(tensor, dst_rank, self.comm_idx)
 
             def recv(self, tensor: torch.Tensor, src_replica: str):
                 src_rank = self.get_rank(src_replica)
-                cosmos_c.nccl_recv(tensor, src_rank, self.comm_idx)
+                nccl_recv(tensor, src_rank, self.comm_idx)
 
             def shutdown(self):
                 pass

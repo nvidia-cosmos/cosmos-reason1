@@ -37,6 +37,11 @@ from cosmos_reason1.utils.distributed import get_controller_metadata
 from cosmos_reason1.dispatcher.protocol import MESH_NAMES
 from cosmos_reason1.comm.base import CommMixin
 from cosmos_reason1.utils.parallelism import ParallelDims
+from cosmos_reason1.utils.api_suffix import (
+    COSMOS_API_REGISTER_SUFFIX,
+    COSMOS_API_UNREGISTER_SUFFIX,
+    COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
+)
 
 
 WORK_DIR = f"/tmp/{os.path.basename(__file__)}"
@@ -115,7 +120,10 @@ class TestHANccl(CommMixin):
     def __init__(self, ctrl_ip: str, ctrl_port: int, config: Config):
         self.config = config
         self.replica_name = f"HANCCL-{dist.get_rank()}"
-        self.global_rank = dist.get_rank()
+        self.global_rank = (
+            0  # here we assume every replica only has one gpu, so the global_rank is 0
+        )
+        self.replica_rank = dist.get_rank()
         self.remote_hosts = [f"http://{os.environ["COSMOS_CONTROLLER_HOST"]}"]
         self.role = "POLICY"
         self._shutdown_event = threading.Event()
@@ -174,20 +182,20 @@ class TestHANccl(CommMixin):
                     "host_name": host_name,
                 },
             ),
-            self.__get_alternative_urls("api/register"),
+            self.__get_alternative_urls(COSMOS_API_REGISTER_SUFFIX),
             max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
         )
         self._is_registered = True
         logger.info(f"register to controller: {self.replica_name}")
 
-        if self.global_rank == 0:
+        if self.replica_rank == 0:
             # MOCK, tell the controller the weight is ready, then buildmesh and weight sync command will be triggered
             make_request_with_retry(
                 partial(
                     requests.post,
                     json={"replica_name": self.replica_name},
                 ),
-                self.__get_alternative_urls("api/policy/weight_ready"),
+                self.__get_alternative_urls(COSMOS_API_POLICY_WEIGHT_READY_SUFFIX),
             )
 
     @override
@@ -200,7 +208,7 @@ class TestHANccl(CommMixin):
                 requests.post,
                 json={"replica_name": self.replica_name},
             ),
-            self.__get_alternative_urls("api/unregister"),
+            self.__get_alternative_urls(COSMOS_API_UNREGISTER_SUFFIX),
             max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
         )
         self._is_registered = False
@@ -284,7 +292,7 @@ class TestHANccl(CommMixin):
         time.sleep(2)
 
         # 2. test intiative scale down
-        if self.global_rank == 1:
+        if self.replica_rank == 1:
             # use unregister to trigger the buildmesh command
             self.unregister_from_controller()
         else:
@@ -324,7 +332,7 @@ class TestHANccl(CommMixin):
         )
 
         # 2. trigger buildmesh command over all ranks
-        if self.global_rank == 1:
+        if self.replica_rank == 1:
             self.unregister_from_controller()
             self.register_to_controller()
             logger.info("  re-register to controller is done")
@@ -337,14 +345,16 @@ class TestHANccl(CommMixin):
         cmds = [cmd for cmd in cmds if isinstance(cmd, BuildMeshCommand)]
         assert (
             len(cmds) > 0
-        ), f"  rank {self.global_rank} should have at least one buildmesh command"
+        ), f"  replica_rank {self.replica_rank} should have at least one buildmesh command"
 
         # 3. test build mesh timeout
         # let rank 1 exit, so that other ranks will timeout, and rebuild mesh in scale down mode
-        logger.info(f"  rank {self.global_rank} prepare buildmesh timeout environment")
-        if self.global_rank == 1:
+        logger.info(
+            f"  replica_rank {self.replica_rank} prepare buildmesh timeout environment"
+        )
+        if self.replica_rank == 1:
             logger.info(
-                "  rank 1 exit, wait for other ranks to timeout and execute the build mesh command"
+                "  replica_rank 1 exit, wait for other ranks to timeout and execute the build mesh command"
             )
         else:
             # monitor that all other ranks execute the build mesh command
@@ -353,7 +363,7 @@ class TestHANccl(CommMixin):
                 len(cmd.replica_name_to_rank) == dist.get_world_size()
             ), f"buildmesh command should be {dist.get_world_size()}"
             logger.info(
-                f"  rank {self.global_rank} push the buildmesh command: {cmd.replica_name_to_rank}"
+                f"  replica_rank {self.replica_rank} push the buildmesh command: {cmd.replica_name_to_rank}"
             )
             comm.push_cmd(cmd)
 
@@ -368,7 +378,7 @@ class TestHANccl(CommMixin):
                 cmds = [cmd for cmd in cmds if isinstance(cmd, BuildMeshCommand)]
                 for cmd in cmds:
                     logger.info(
-                        f"  rank {self.global_rank} retry, push cmd: {cmd.replica_name_to_rank}"
+                        f"  replica_rank {self.replica_rank} retry, push cmd: {cmd.replica_name_to_rank}"
                     )
                     comm.push_cmd(cmd)
 

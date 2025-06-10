@@ -18,7 +18,6 @@ import torch
 
 from typing import override
 
-import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import init_wandb
 from cosmos_reason1.utils.parallelism import ParallelDims
@@ -31,6 +30,9 @@ from cosmos_reason1.utils.distributed import (
 from cosmos_reason1.policy.trainer.sft_trainer import SFTTrainer
 from cosmos_reason1.policy.trainer.grpo_trainer import GRPOTrainer
 from cosmos_reason1.policy.config import Config as PolicyConfig
+from cosmos_reason1.utils.pynccl import (
+    get_nccl_comm_nranks,
+)
 
 try:
     # for policy and rollout nccl env consistency
@@ -80,7 +82,7 @@ class mock_GRPOTrainer(GRPOTrainer):
                     inter_nccl_cnt = (
                         1
                         if self.inter_policy_nccl == -1
-                        else cosmos_c.get_nccl_comm_count(self.inter_policy_nccl)
+                        else get_nccl_comm_nranks(self.inter_policy_nccl)
                     )
                     torch.save(
                         {name: full_grad},

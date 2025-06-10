@@ -16,8 +16,13 @@
 import os
 import torch
 import torch.distributed as dist
-import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.distributed import broadcast_object_cpu
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+    create_nccl_comm,
+    nccl_send,
+    nccl_recv,
+)
 
 os.environ["NCCL_CUMEM_ENABLE"] = "0"
 
@@ -32,10 +37,8 @@ def main():
 
     print(f"Rank {global_rank} initialized")
 
-    nccl_uid = broadcast_object_cpu(
-        cosmos_c.create_nccl_uid() if global_rank == 0 else None
-    )
-    comm = cosmos_c.create_nccl_comm(nccl_uid, global_rank, world_size)
+    nccl_uid = broadcast_object_cpu(create_nccl_uid() if global_rank == 0 else None)
+    comm = create_nccl_comm(nccl_uid, global_rank, world_size)
     print(f"Rank {global_rank} created comm {comm}")
 
     stream = torch.cuda.Stream()
@@ -44,16 +47,18 @@ def main():
     with torch.cuda.stream(stream):
         if global_rank in [0, 2]:
             send_tensor = torch.randn([16008, 5120], dtype=torch.float16).to(device)
-            cosmos_c.nccl_send(send_tensor, 4, comm)
-            cosmos_c.nccl_send(send_tensor, 4, comm)
+            nccl_send(send_tensor, 4, comm)
+            nccl_send(send_tensor, 4, comm)
         elif global_rank == 4:
             recv_tensor = torch.empty([16008, 5120], dtype=torch.float16, device=device)
-            cosmos_c.nccl_recv(recv_tensor, 0, comm)
-            cosmos_c.nccl_recv(recv_tensor, 2, comm)
-            cosmos_c.nccl_recv(recv_tensor, 0, comm)
-            cosmos_c.nccl_recv(recv_tensor, 2, comm)
+            nccl_recv(recv_tensor, 0, comm)
+            nccl_recv(recv_tensor, 2, comm)
+            nccl_recv(recv_tensor, 0, comm)
+            nccl_recv(recv_tensor, 2, comm)
     torch.cuda.synchronize()
     dist.barrier()
+
+    dist.destroy_process_group()
 
 
 if __name__ == "__main__":

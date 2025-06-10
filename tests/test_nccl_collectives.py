@@ -16,8 +16,15 @@
 import pytest
 import torch
 import torch.multiprocessing as mp
-import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
+from cosmos_reason1.utils.pynccl import (
+    create_nccl_uid,
+    create_nccl_comm,
+    nccl_send,
+    nccl_recv,
+    nccl_broadcast,
+    nccl_allreduce,
+)
 
 
 def setup_nccl_comm(rank, world_size, nccl_uid):
@@ -25,7 +32,7 @@ def setup_nccl_comm(rank, world_size, nccl_uid):
     # Set device for this process (now using the visible device)
     torch.cuda.set_device(rank)  # Always use first visible device
     # Create NCCL communicator
-    comm_idx = cosmos_c.create_nccl_comm(nccl_uid, rank, world_size)
+    comm_idx = create_nccl_comm(nccl_uid, rank, world_size)
     return comm_idx
 
 
@@ -45,11 +52,11 @@ def run_bidirectional_sender(rank, world_size, nccl_uid, dtypes):
         # Send to other rank and receive from other rank
         other_rank = 1 - rank
         if rank == send_rank:
-            cosmos_c.nccl_send(send_tensor, other_rank, comm_idx)
-            cosmos_c.nccl_recv(recv_tensor, other_rank, comm_idx)
+            nccl_send(send_tensor, other_rank, comm_idx)
+            nccl_recv(recv_tensor, other_rank, comm_idx)
         else:
-            cosmos_c.nccl_recv(recv_tensor, other_rank, comm_idx)
-            cosmos_c.nccl_send(recv_tensor, other_rank, comm_idx)
+            nccl_recv(recv_tensor, other_rank, comm_idx)
+            nccl_send(recv_tensor, other_rank, comm_idx)
 
         # Verify received data
         expected = torch.ones(tensor_size, dtype=dtype, device=f"cuda:{rank}") * (
@@ -63,7 +70,7 @@ def test_nccl_bidirectional_send_recv():
     world_size = 2
 
     # Create NCCL unique ID
-    nccl_uid = cosmos_c.create_nccl_uid()
+    nccl_uid = create_nccl_uid()
 
     # Define functions for each process (same function but different rank)
     functions = run_bidirectional_sender
@@ -105,7 +112,7 @@ def run_broadcast(rank, world_size, nccl_uid, dtypes):
                 tensor = torch.zeros(tensor_size, dtype=dtype, device=f"cuda:{rank}")
 
             # Perform broadcast from current root rank
-            cosmos_c.nccl_broadcast(tensor, root_rank, comm_idx)
+            nccl_broadcast(tensor, root_rank, comm_idx)
 
             # Verify received data
             expected = torch.arange(tensor_size, dtype=dtype, device=f"cuda:{rank}") * (
@@ -121,7 +128,7 @@ def test_nccl_broadcast():
     world_size = 4
 
     # Create NCCL unique ID
-    nccl_uid = cosmos_c.create_nccl_uid()
+    nccl_uid = create_nccl_uid()
 
     # Define data types to test
     dtypes = [
@@ -157,7 +164,7 @@ def run_allreduce(rank, world_size, nccl_uid, dtypes):
         )
         op = HighAvailabilitylNccl.NCCL_REDUCE_OPS.get("sum")
         # Perform allreduce (sum)
-        cosmos_c.nccl_allreduce(tensor, tensor, op, comm_idx)
+        nccl_allreduce(tensor, tensor, op, comm_idx)
 
         # Verify result
         # For 4 ranks, the sum should be 1 + 2 + 3 + 4 = 10
@@ -170,7 +177,7 @@ def test_nccl_allreduce():
     world_size = 4
 
     # Create NCCL unique ID
-    nccl_uid = cosmos_c.create_nccl_uid()
+    nccl_uid = create_nccl_uid()
 
     # Define data types to test
     dtypes = [

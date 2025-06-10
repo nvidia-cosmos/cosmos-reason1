@@ -13,9 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 from typing import List
 
+from utils.pynccl import int
+
+def watchdog_enter() -> None: ...
+def watchdog_exit(abort: bool) -> None: ...
 def create_nccl_comm(
     uid_chars: List[int],
     rank: int,
@@ -23,24 +26,52 @@ def create_nccl_comm(
     timeout_ms: int,
 ) -> int: ...
 def create_nccl_uid() -> List[int]: ...
+def nccl_abort(comm_idx: int) -> None: ...
 def get_nccl_comm_count(comm_idx: int) -> int: ...
 def get_default_timeout_ms() -> int: ...
 def nccl_broadcast(
-    tensor: torch.Tensor, rank: int, comm_idx: int, timeout_ms: int
-) -> None: ...
-def nccl_send(
-    tensor: torch.Tensor, peer: int, comm_idx: int, timeout_ms: int
-) -> None: ...
-def nccl_recv(
-    tensor: torch.Tensor, peer: int, comm_idx: int, timeout_ms: int
-) -> None: ...
-def nccl_allreduce(
-    sendbuff: torch.Tensor,
-    recvbuff: torch.Tensor,
-    op: int,
+    tensor: int,
+    count: int,
+    dtype: int,
+    rank: int,
     comm_idx: int,
+    stream: int,
     timeout_ms: int,
 ) -> None: ...
-def nccl_abort(comm_idx: int) -> None: ...
-def watchdog_enter() -> None: ...
-def watchdog_exit(abort: bool) -> None: ...
+def nccl_send(
+    tensor: int,
+    count: int,
+    dtype: int,
+    peer: int,
+    comm_idx: int,
+    stream: int,
+    timeout_ms: int,
+) -> None: ...
+def nccl_recv(
+    tensor: int,
+    count: int,
+    dtype: int,
+    peer: int,
+    comm_idx: int,
+    stream: int,
+    timeout_ms: int,
+) -> None: ...
+def nccl_allreduce(
+    sendbuff: int,
+    recvbuff: int,
+    count: int,
+    dtype: int,
+    op: int,
+    comm_idx: int,
+    stream: int,
+    timeout_ms: int,
+) -> None: ...
+def nccl_alltoall(
+    sendbuff: int,
+    recvbuff: int,
+    total_size: int,
+    dtype: int,
+    comm_idx: int,
+    stream: int,
+    timeout_ms: int,
+) -> None: ...

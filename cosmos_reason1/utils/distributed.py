@@ -23,8 +23,6 @@ from queue import Queue, Empty
 from datetime import timedelta
 from typing import Dict, Iterable, Optional, Union, Callable
 from functools import partial
-from contextlib import contextmanager
-from importlib.metadata import version
 from urllib.parse import urljoin
 
 # Third party imports
@@ -38,15 +36,28 @@ from torch.distributed.tensor import DTensor, Replicate, distribute_module, Plac
 from torch.distributed.tensor.parallel import ParallelStyle
 
 # Local imports
-import cosmos_reason1._cpp as cosmos_c
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.network_util import make_request_with_retry
 from cosmos_reason1.utils import constant, network_util
-from cosmos_reason1.utils.util import list_to_b64, b64_to_list, do_once
+from cosmos_reason1.utils.util import list_to_b64, b64_to_list
 from cosmos_reason1.dispatcher.command import Command, BuildMeshCommand
 from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_META_SUFFIX,
     COSMOS_API_NCCL_COMM_ERROR_SUFFIX,
+    COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX,
+    COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX,
+)
+from cosmos_reason1.utils.pynccl import (
+    get_nccl_timeout_ms,
+    nccl_timeout_watchdog,
+    create_nccl_comm,
+    create_nccl_uid,
+    nccl_abort,
+    get_nccl_comm_nranks,
+    nccl_broadcast,
+    nccl_send,
+    nccl_recv,
+    nccl_allreduce,
 )
 
 
@@ -149,7 +160,7 @@ def gradient_reduce_across_dp_replicas_(
         # TODO a risk here, when comm is rebuilt, the reduce result will be wrong.
 
         # For the first time to build mesh, we set a longer timeout (30 minutes) to avoid lost some slower replicas
-        timeout_ms = nccl_timeout_in_ms()
+        timeout_ms = get_nccl_timeout_ms()
         if gradient_reduce_across_dp_replicas_.first_invoke:
             timeout_ms = 30 * 60 * 1000
             gradient_reduce_across_dp_replicas_.first_invoke = False
@@ -318,66 +329,6 @@ def broadcast_object_cpu(obj, src=0, device=torch.device("cpu"), group=None):
     return obj_lst[0]
 
 
-def nccl_timeout_in_ms():
-    timeout_ms = int(
-        os.environ.get("COSMOS_NCCL_TIMEOUT_MS", cosmos_c.get_default_timeout_ms())
-    )
-    if timeout_ms < 0:
-        raise ValueError(
-            f"COSMOS_NCCL_TIMEOUT_MS must be non-negative, but got {timeout_ms}"
-        )
-    return timeout_ms
-
-
-@contextmanager
-def nccl_timeout_watchdog(wait_stream=False, timeout_ms: int = None):
-    """
-    Context manager to monitor NCCL operations and raise an error if they take longer than a specified timeout.
-    Important: do not call any synchronous API:
-    - torch.cuda.synchronize()
-    - torch.cuda.stream.synchronize()
-    - torch.cuda.stream.wait_stream()
-    - torch.cuda.event.wait()
-    - ...
-
-    Args:
-        wait_stream (bool): If True, wait for the NCCL operation to complete before raising an error.
-        If False, just wait until all NCCL operations are enqueued to the stream.
-    """
-    nccl_v = version("nvidia-nccl-cu12")
-    if nccl_v < "2.26.2":
-
-        @do_once
-        def warn_nccl_version():
-            logger.warning(
-                "NCCL version is less than 2.26.2, which is known to hang in some cases, please upgrade to a newer version"
-            )
-
-        warn_nccl_version()
-
-    start_time = time.time()
-    threshold_ms = timeout_ms if timeout_ms is not None else nccl_timeout_in_ms()
-    # Enter the watchdog context
-    cosmos_c.watchdog_enter()
-    error_raised = False
-    try:
-        yield
-    except Exception as e:
-        error_raised = True
-        raise e
-    finally:
-        if wait_stream and not error_raised:
-            event = torch.cuda.Event()
-            event.record()
-            while not event.query():
-                if time.time() - start_time > threshold_ms / 1000:
-                    cosmos_c.watchdog_exit(abort=True)
-                    raise RuntimeError(
-                        f"NCCL operation took {time.time() - start_time} seconds, which is longer than the threshold {threshold_ms} ms"
-                    )
-        cosmos_c.watchdog_exit(abort=error_raised)
-
-
 class HighAvailabilitylNccl:
     NCCL_REDUCE_OPS = {
         "sum": 0,
@@ -397,7 +348,7 @@ class HighAvailabilitylNccl:
         self.remote_hosts = controller_hosts
         # max retry times for nccl op after nccl comm is rebuilt
         self.max_retry = 3
-        self.default_timeout_ms = nccl_timeout_in_ms()
+        self.default_timeout_ms = get_nccl_timeout_ms()
 
         # The nccl group info
         self.comm_idx: int = -1
@@ -475,8 +426,7 @@ class HighAvailabilitylNccl:
                 # most time, we don't need to abort the nccl comm, because the nccl comm is aborted by watchdog
                 # but if `nccl_timeout_watchdog` not used, we need to abort the nccl comm manually
                 if abort:
-                    cosmos_c.nccl_abort(self.comm_idx)
-                    # cosmos_c.destory_nccl_comm(self.comm_idx)
+                    nccl_abort(self.comm_idx)
             except Exception as e:
                 logger.error(f"{self.__log_prefix()} Failed in destroy nccl comm: {e}")
             finally:
@@ -500,7 +450,7 @@ class HighAvailabilitylNccl:
         if rank == 0:
             # initialize nccl handle for building mesh among policies
             # only replica_rank == 0 have the right to generate nccl id.
-            nccl_group_id = cosmos_c.create_nccl_uid()
+            nccl_group_id = create_nccl_uid()
             base64_nccl_group_id = list_to_b64(nccl_group_id)
             logger.debug(
                 f"{self.__log_prefix()} post nccl group_id to controller: {self.__get_mesh_unique_key(cmd.replica_name_to_rank)}"
@@ -516,7 +466,7 @@ class HighAvailabilitylNccl:
                             "handle_base64": base64_nccl_group_id,
                         },
                     ),
-                    self.__get_alternative_urls("api/nccl/comm_initiator"),
+                    self.__get_alternative_urls(COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
             except Exception as e:
@@ -539,7 +489,7 @@ class HighAvailabilitylNccl:
                             )
                         },
                     ),
-                    self.__get_alternative_urls("api/nccl/comm_acceptor"),
+                    self.__get_alternative_urls(COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX),
                     max_retries=constant.COSMOS_HTTP_LONG_WAIT_MAX_RETRY,
                 )
             except Exception as e:
@@ -551,7 +501,7 @@ class HighAvailabilitylNccl:
 
         # create nccl comm, any error will be reported to the controller
         try:
-            self.comm_idx = cosmos_c.create_nccl_comm(
+            self.comm_idx = create_nccl_comm(
                 nccl_group_id, rank, len(cmd.replica_name_to_rank)
             )
             self.is_first_time_build_mesh = False
@@ -668,7 +618,7 @@ class HighAvailabilitylNccl:
 
         try:
             # TODO(zjx): there will be a risk, if the nccl comm destroyed while get_nccl_comm_count,
-            ws = cosmos_c.get_nccl_comm_count(self.comm_idx)
+            ws = get_nccl_comm_nranks(self.comm_idx)
         except Exception as e:
             ws = -1
             logger.warning(
@@ -684,7 +634,7 @@ class HighAvailabilitylNccl:
     def broadcast(self, tensor: torch.Tensor, src_replica: str, timeout_ms: int = None):
         src_rank = self.get_replica_rank(src_replica)
         self.__do_nccl_op_with_retry(
-            func=cosmos_c.nccl_broadcast,
+            func=nccl_broadcast,
             tensor=tensor,
             rank=src_rank,
             timeout_ms=timeout_ms,
@@ -699,7 +649,7 @@ class HighAvailabilitylNccl:
     ):
         op = self.NCCL_REDUCE_OPS[op]
         self.__do_nccl_op_with_retry(
-            func=cosmos_c.nccl_allreduce,
+            func=nccl_allreduce,
             sendbuff=sendbuff,
             recvbuff=recvbuff,
             op=op,
@@ -709,7 +659,7 @@ class HighAvailabilitylNccl:
     def send(self, tensor: torch.Tensor, dst_replica: str, timeout_ms: int = None):
         dst_rank = self.get_replica_rank(dst_replica)
         self.__do_nccl_op_with_retry(
-            func=cosmos_c.nccl_send,
+            func=nccl_send,
             tensor=tensor,
             peer=dst_rank,
             timeout_ms=timeout_ms,
@@ -718,7 +668,7 @@ class HighAvailabilitylNccl:
     def recv(self, tensor: torch.Tensor, src_replica: str, timeout_ms: int = None):
         src_rank = self.get_replica_rank(src_replica)
         self.__do_nccl_op_with_retry(
-            func=cosmos_c.nccl_recv,
+            func=nccl_recv,
             tensor=tensor,
             peer=src_rank,
             timeout_ms=timeout_ms,

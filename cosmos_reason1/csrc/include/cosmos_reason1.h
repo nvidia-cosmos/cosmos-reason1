@@ -15,7 +15,6 @@
 
 #include <cuda_runtime.h>
 #include <nccl.h>
-#include <torch/torch.h>
 
 #include <cstdint>
 #include <stdexcept>
@@ -46,31 +45,6 @@ void check(T result, char const* const func, const char* const file,
 #define COSMOS_CUDA_CHECK(val) check((val), #val, __FILE__, __LINE__)
 
 namespace cosmos_reason1 {
-
-inline ncclDataType_t torch_dtype_to_nccl_dtype(torch::ScalarType dtype) {
-  switch (dtype) {
-    case torch::kFloat:
-      return ncclFloat;
-    case torch::kHalf:
-      return ncclHalf;
-    case torch::kBFloat16:
-      return ncclBfloat16;
-    case torch::kDouble:
-      return ncclDouble;
-    case torch::kInt:
-      return ncclInt;
-    case torch::kLong:
-      return ncclInt64;
-    case torch::kUInt8:
-      return ncclChar;
-    case torch::kInt8:
-      return ncclChar;
-    default:
-      TORCH_CHECK(false, "Unsupported tensor dtype for NCCL send");
-  }
-}
-
-cudaStream_t getCurrentCUDAStream();
 
 void nccl_abort(int64_t comm_idx);
 
