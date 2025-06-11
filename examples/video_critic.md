@@ -44,10 +44,10 @@ Cosmos-Reason1 is tasked to analyze each video element-by-element, and organize 
 
 | Video | Evaluation and Example Output |
 |-------|-------------------|
-| <img src="../assets/examples_video_critic/generation_0.gif" alt="Generation 0" width="300"> | Score: 0.0 <br><br> [Raw Output](../assets/examples_video_critic/generation_0_raw_output.txt) <br><br> [Formatted Output](placeholder_link) |
-| <img src="../assets/examples_video_critic/generation_1.gif" alt="Generation 1" width="300" style="border: 4px solid #76B900;"> | **Score: 0.75 (Best)** <br><br> [Raw Output](../assets/examples_video_critic/generation_1_raw_output.txt) <br><br> [Formatted Output](placeholder_link) |
-| <img src="../assets/examples_video_critic/generation_2.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](../assets/examples_video_critic/generation_2_raw_output.txt) <br><br> [Formatted Output](placeholder_link) |
-| <img src="../assets/examples_video_critic/generation_3.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](../assets/examples_video_critic/generation_3_raw_output.txt) <br><br> [Formatted Output](placeholder_link) |
+| <img src="../assets/examples_video_critic/generation_0.gif" alt="Generation 0" width="300"> | Score: 0.0 <br><br> [Raw Output](../assets/examples_video_critic/generation_0_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_0_formatted.md) |
+| <img src="../assets/examples_video_critic/generation_1.gif" alt="Generation 1" width="300"> | **Score: 0.75 (Best)** <br><br> [Raw Output](../assets/examples_video_critic/generation_1_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_1_formatted.md) |
+| <img src="../assets/examples_video_critic/generation_2.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](../assets/examples_video_critic/generation_2_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_2_formatted.md) |
+| <img src="../assets/examples_video_critic/generation_3.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](../assets/examples_video_critic/generation_3_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_3_formatted.md) |
 
 We provide an example [video critic inference script](#prompting-recommendations).
 
