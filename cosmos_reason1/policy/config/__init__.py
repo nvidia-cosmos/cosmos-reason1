@@ -309,6 +309,7 @@ class GrpoConfig:
             "help": "Number of iterations per batch (denoted as μ in the algorithm)."
         },
     )
+
     mini_batch: int = field(
         default=2,
         metadata={"help": "mini-batch size for GRPO training."},

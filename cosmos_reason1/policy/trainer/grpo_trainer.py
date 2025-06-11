@@ -1013,6 +1013,7 @@ class GRPOTrainer(Trainer):
             )
             for i in range(len(payloads_list))
         ]
+
         # user_info_keys = list(kwargs.keys())
         advantages_t = torch.tensor(advantages_list).to(self.device)
         # Currently, we only support no cp parallelism for policy training.
@@ -1025,6 +1026,22 @@ class GRPOTrainer(Trainer):
             batch_size % mini_batch_size == 0
         ), "Batch size should be divided evenly by mini_batch"
         num_mini_batch = batch_size // mini_batch_size
+
+        # Get each input length of processed_samples
+        seq_lengths = [
+            self.data_packer.policy_compute_max_len([sample])
+            for sample in processed_samples
+        ]
+        # sort `processed_samples` by `seq_lengths` in descending order
+        processed_samples = [
+            x
+            for _, x in sorted(
+                zip(seq_lengths, processed_samples),
+                key=lambda pair: pair[0],
+                reverse=True,
+            )
+        ]
+
         self.old_per_token_logps = [None for _ in range(num_mini_batch)]
 
         acc_n_tokens = 0
