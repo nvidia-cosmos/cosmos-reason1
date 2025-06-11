@@ -103,7 +103,11 @@ Based on the video, turning right may not be entirely safe due to the following 
   </tr>
 </table>
 
+### Examples
+
 <!-- ![Demo GIF](assets/sample.gif) -->
+* [Using Cosmos-Reason1 as Video Critic for Rejection Sampling](examples/video_critic.md)
+
 ### SFT and RL Training
 Please check our [User Guide](docs/UserGuide.md).
 
