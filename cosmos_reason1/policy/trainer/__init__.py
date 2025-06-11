@@ -81,14 +81,16 @@ class Trainer(CommMixin):
 
         self.train_stream = torch.cuda.current_stream()
         model = build_model(config)
-
+        if config.train.fsdp_offload:
+            model.to_empty(device="cpu")
         try:
             # Apply parallelism to the model
             parallelize_fn, _ = model.parallelize_fn
             self.pp_scheduler, self.pp_scheduler_val = parallelize_fn(
                 model, parallel_dims, config, pp_loss_fn=self.pp_loss_fn
             )
-            model.to_empty(device=self.device)
+            if not config.train.fsdp_offload:
+                model.to_empty(device=self.device)
             model.post_to_empty_hook(config)
             torch.cuda.empty_cache()
             self.model_parts = model.separate_model_parts()

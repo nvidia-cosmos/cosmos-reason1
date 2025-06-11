@@ -351,13 +351,17 @@ class GRPOTrainer(Trainer):
         self_state_dict = self.model.state_dict()
         for dest_name in sorted(self_state_dict.keys()):
             obj = self_state_dict[dest_name]
-            local_view = self.wrap_to_cuda_tensor(dest_name, obj, in_place=True)
+            assert isinstance(obj, torch.Tensor)
+            local_view = self.wrap_to_cuda_tensor(dest_name, obj, in_place=obj.is_cuda)
             if is_send:
                 # nccl send
                 send_hook(local_view)
             else:
                 # nccl recv
                 recv_hook(local_view)
+                # Copy again for FSDP offloaded tensor
+                if not obj.is_cuda:
+                    obj.copy_(local_view)
             len_params += 1
         optimizer_state = self.optimizers.state_dict()
         for dest_name in sorted(optimizer_state.keys()):
@@ -642,14 +646,12 @@ class GRPOTrainer(Trainer):
                 assert (
                     local_view.nelement() == int(np.prod(shape))
                 ), f"Number of elements mismatch: {local_view.nelement()} != {np.prod(shape)} for {dest_name}"
-                view = slice_tensor_with_strategies(
-                    local_view, tensor_split_strategys
-                ).contiguous()
+                view = (
+                    slice_tensor_with_strategies(local_view, tensor_split_strategys)
+                    .contiguous()
+                    .cuda()
+                )
                 assert self.global_rank == p_rank
-                # send local view to rollout r_rank
-                # logger.info(
-                #     f"[Policy] rank {self.global_rank} send tensor: {dest_name} to rank {r_rank} with shape: {view.shape} out of {local_view.shape} with dtype {view.dtype} on device {view.device}"
-                # )
                 nccl_send(
                     view,
                     1 if need_sep_comm else (self.world_size + r_rank),

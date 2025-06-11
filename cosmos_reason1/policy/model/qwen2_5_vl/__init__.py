@@ -1234,8 +1234,10 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
         return position_ids, kwargs["input_ids"], seq_dim_idx
 
     def post_to_empty_hook(self, cosmos_config: CosmosConfig):
+        self.model.rotary_emb.to(torch.cuda.current_device())
         self.model.rotary_emb.reset_inv_freq()
         if self.visual is not None:
+            self.visual.rotary_pos_emb.to(torch.cuda.current_device())
             self.visual.rotary_pos_emb.reset_inv_freq()
 
     def apply_pipeline_split(self, pp_rank, pp_size):

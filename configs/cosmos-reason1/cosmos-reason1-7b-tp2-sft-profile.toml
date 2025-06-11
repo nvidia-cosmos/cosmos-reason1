@@ -56,9 +56,6 @@ dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
 conversation_column_name = "conversations"
 
-
-
-
 [train.ckpt]
 enable_checkpoint = true
 save_freq = 100

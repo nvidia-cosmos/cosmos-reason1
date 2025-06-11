@@ -22,7 +22,7 @@ import math
 import tempfile
 import subprocess
 import json
-
+import toml
 
 logging.basicConfig(level=logging.INFO)
 
@@ -96,8 +96,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-name", type=str, default="cosmos_job")
     parser.add_argument("--ngpu-per-node", type=int, default=8, help="Number of GPUs per compute node.")
-    parser.add_argument("--ngpu-per-policy", type=int, required=True, help="Number of GPUs per policy replica, must be compatible with parallelism config in the controller config file")
-    parser.add_argument("--ngpu-per-rollout", type=int, required=True, help="Number of GPUs per rollout replica, must be compatible with parallelism config in the controller config file")
     parser.add_argument("--n-policy-replicas", type=int, default=1, help="Number of policy replicas to launch")
     parser.add_argument("--n-rollout-replicas", type=int, default=1, help="Number of rollout replicas to launch")
     parser.add_argument("--slurm-partition", type=str, default="batch", help="SLURM partition to use")
@@ -108,8 +106,31 @@ def main():
     parser.add_argument("--cosmos-container", type=str, required=True, help="Path to the cosmos container")
     args = parser.parse_args()
 
-    policy_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_node, args.ngpu_per_policy, args.n_policy_replicas, "policy")
-    rollout_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_node, args.ngpu_per_rollout, args.n_rollout_replicas, "rollout")
+    with open(args.config_path, "r") as f:
+        config = toml.load(f)
+    min_n_gpus_policy = (
+        config['policy']['parallelism']['tp_size']
+        * config['policy']['parallelism']['dp_replicate_size']
+        * config['policy']['parallelism']['pp_size']
+        * config['policy']['parallelism']['cp_size']
+    )
+    min_n_gpus_rollout = (
+        config['rollout']['parallelism']['tp_size']
+        * config['rollout']['parallelism']['dp_replicate_size']
+        * config['rollout']['parallelism']['pp_size']
+        * config['rollout']['parallelism']['cp_size']
+    )
+    if config['policy']['parallelism']['dp_shard_size'] >= 1:
+        min_n_gpus_policy = (
+            min_n_gpus_policy * config['policy']['parallelism']['dp_shard_size']
+        )
+    if config['rollout']['parallelism']['dp_shard_size'] >= 1:
+        min_n_gpus_rollout = (
+            min_n_gpus_rollout * config['rollout']['parallelism']['dp_shard_size']
+        )
+
+    policy_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_node, min_n_gpus_policy, args.n_policy_replicas, "policy")
+    rollout_node_launch_metadata: List[NodeLaunchMetadata] = compute_nodes(args.ngpu_per_node, min_n_gpus_rollout, args.n_rollout_replicas, "rollout")
     
     n_policy_nodes = len(policy_node_launch_metadata)
     n_rollout_nodes = len(rollout_node_launch_metadata)

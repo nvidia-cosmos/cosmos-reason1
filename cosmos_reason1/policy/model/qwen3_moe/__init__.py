@@ -760,6 +760,7 @@ class Qwen3MoE(nn.Module, BaseModel):
 
         # rotary.inv_freq could get deleted and not re-initialized
         # so we need to delete it manually
+        self.rotary_emb.to(torch.cuda.current_device())
         self.rotary_emb.reset_inv_freq()
         # Basically, max_seq_len * 2 is enough for all-to-all-v communication.
         overflow = 2

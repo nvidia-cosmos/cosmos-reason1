@@ -479,6 +479,7 @@ class GPT(nn.Module, BaseModel):
     def post_to_empty_hook(self, cosmos_config: CosmosConfig):
         # rotary.inv_freq could get deleted and not re-initialized
         # so we need to delete it manually
+        self.rotary_emb.to(torch.cuda.current_device())
         self.rotary_emb.reset_inv_freq()
 
     @property
