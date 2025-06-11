@@ -18,21 +18,21 @@ Using the same input, the world model generates multiple video rollouts. Among t
   <tr>
     <td align="center">
       <strong>Generation 0</strong><br>
-      <img src="../assets/examples_video_critic/cashier_seed14_output_video_2B.gif" alt="Generation 0">
+      <img src="../assets/examples_video_critic/generation_0.gif" alt="Generation 0">
     </td>
     <td align="center">
       <strong>Generation 1</strong><br>
-      <img src="../assets/examples_video_critic/cashier2_seed46_output_video_2B.gif" alt="Generation 1">
+      <img src="../assets/examples_video_critic/generation_1.gif" alt="Generation 1">
     </td>
   </tr>
   <tr>
     <td align="center">
       <strong>Generation 2</strong><br>
-      <img src="../assets/examples_video_critic/cashier_seed0_output_video_2B.gif" alt="Generation 2">
+      <img src="../assets/examples_video_critic/generation_2.gif" alt="Generation 2">
     </td>
     <td align="center">
       <strong>Generation 3</strong><br>
-      <img src="../assets/examples_video_critic/cashier_seed1_output_video_2B.gif" alt="Generation 3">
+      <img src="../assets/examples_video_critic/generation_3.gif" alt="Generation 3">
     </td>
   </tr>
 </table>
@@ -44,10 +44,10 @@ Cosmos-Reason1 is tasked to analyze each video element-by-element, and organize 
 
 | Video | Evaluation |
 |-------|-------------------|
-| <img src="../assets/examples_video_critic/cashier_seed14_output_video_2B.gif" alt="Generation 0" width="300"> | Score: 0.0 <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
-| <img src="../assets/examples_video_critic/cashier2_seed46_output_video_2B.gif" alt="Generation 1" width="300" style="border: 4px solid #76B900;"> | **Score: 0.75 (Best)** <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
-| <img src="../assets/examples_video_critic/cashier_seed0_output_video_2B.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
-| <img src="../assets/examples_video_critic/cashier_seed1_output_video_2B.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
+| <img src="../assets/examples_video_critic/generation_0.gif" alt="Generation 0" width="300"> | Score: 0.0 <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
+| <img src="../assets/examples_video_critic/generation_1.gif" alt="Generation 1" width="300" style="border: 4px solid #76B900;"> | **Score: 0.75 (Best)** <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
+| <img src="../assets/examples_video_critic/generation_2.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
+| <img src="../assets/examples_video_critic/generation_3.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](placeholder_link) <br><br> [Formatted Output](placeholder_link) |
 
 We provide an example [video critic inference script](#prompting-recommendations).
 
