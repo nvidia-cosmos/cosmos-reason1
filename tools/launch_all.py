@@ -1005,6 +1005,11 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml --launcher {launc
                 port = args.port
         else:
             port = util.find_available_port(args.port)
+    
+    if control_url is None:
+        logger.info(f"Controller will be launched locally on port {port}.")
+    else:
+        logger.info(f"Controller will be launched on another node. This node will connect to {control_url} for control.")
 
     controller_cmd = None
     tmpfile_toml = None
@@ -1069,7 +1074,9 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml --launcher {launc
         elif args.node_ip_list is not None:
             return get_ip_from_list(worker_idx)
         else:
-            return get_local_ip()[0]
+            raise RuntimeError(
+                "Replica with GPUs larger than 8 occurs but not on Lepton job, please specify --node-ip-list to provide the IPs of all nodes to enable conenctions to each Rendezvous head node."
+            )
 
     global_launch_settings = replica_placement(
         available_gpus,
@@ -1086,6 +1093,8 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml --launcher {launc
 
     num_workers = len(global_launch_settings)
     logger.info(f"Number of workers required: {num_workers}")
+    if num_workers > 1:
+        logger.info("Multiple worker nodes will be used. Ensure that the launch script is excuted on all worker nodes.")
     assert (
         len(available_gpus) * num_workers
         >= min_n_gpus_policy * n_policy + min_n_gpus_rollout * n_rollouts
