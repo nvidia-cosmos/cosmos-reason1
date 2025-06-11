@@ -531,7 +531,7 @@ class ParallelismConfig:
     dp_replicate_size: int = skip_ui_field(
         default=1,
         metadata={
-            "help": "Data Parallelism size in replica mode, only 1 is supported for dynamic scaling purpose.",
+            "help": "Data Parallelism size in replica mode. Only configurable in SFT type job, must be 1 in GRPO type job for dynamic scaling support purpose.",
             "choices": [1],
         },
     )
@@ -773,9 +773,6 @@ class Config:
             self.policy.parallelism.dp_shard_size >= -1
             and self.policy.parallelism.dp_shard_size != 0
         ), "dp_shard_size must be greater than 0 or -1 to be auto-inferred"
-        assert (
-            self.policy.parallelism.dp_replicate_size == 1
-        ), "dp_replicate_size must be 1 for dynamic scaling purpose"
         if self.policy.parallelism.pp_size > 1:
             assert (
                 self.policy.parallelism.pp_micro_batch_size > 0
