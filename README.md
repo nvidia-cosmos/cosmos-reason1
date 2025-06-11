@@ -88,7 +88,7 @@ print(generated_text)
     </td>
     <td style="vertical-align: top; padding-left: 20px;">
       <!-- Text on the right -->
-      <p>Assistant response:</p>
+      <p>Assistant response: </p>
       <p>
 &lt;think&gt;
 Okay, let's see. The user is asking if it's safe to turn right based on the video provided. First, I need to ...
@@ -101,9 +101,28 @@ Based on the video, turning right may not be entirely safe due to the following 
       </p>
     </td>
   </tr>
+  <tr>
+    <td>
+      <p>User prompt: Analyze the video for any artifacts or anomalies.</p>
+      <img src="assets/examples_video_critic/generation_3.gif" alt="Demo GIF" width="400" /><br/>
+    </td>
+    <td style="vertical-align: top; padding-left: 20px;">
+      <!-- Text on the right -->
+      <p>Assistant response:</p>
+      <p>
+&lt;component name="Orange Bottle Interaction"&gt;<br>
+&lt;analysis&gt;
+The left robot arm approaches the orange bottle and makes contact with it. However, instead of grasping the bottle firmly, the gripper wraps around it in an awkward manner, failing to secure a proper hold ... suggesting a glitch in the interaction physics. &lt;/analysis&gt;<br>
+&lt;/component&gt;<br>
+...
+      </p>
+    </td>
+  </tr>
 </table>
 
-<!-- ![Demo GIF](assets/sample.gif) -->
+### Tutorial
+[Using Cosmos-Reason1 as Video Critic for Rejection Sampling](examples/video_critic.md).
+
 ### SFT and RL Training
 Please check our [User Guide](docs/UserGuide.md).
 
