@@ -339,17 +339,6 @@ class Replica:
                 tp_size * cp_size * dp_shard_size * pp_size == len(self.atoms)
             ), f"Group sizes must be consistent with the number of atoms, got {tp_size} * {cp_size} * {dp_shard_size} * {pp_size} = {tp_size * cp_size * dp_shard_size * pp_size} and {len(self.atoms)}"
 
-            dp_shard_atoms = []
-
-            for atom in self.atoms.values():
-                if atom.tp_rank() == 0 and atom.cp_rank() == 0 and atom.pp_rank() == 0:
-                    dp_shard_atoms.append(atom)
-            assert (
-                len(dp_shard_atoms) == dp_shard_size
-            ), f"Number of dp_shard atoms must be equal to dp_shard size, got {len(dp_shard_atoms)} and {dp_shard_size}"
-            self.dp_shard_atoms = dp_shard_atoms
-            self.round_robin_atom = dp_shard_atoms[-1]
-
     @property
     def all_atoms_arrived(self) -> bool:
         assert len(self.atoms) > 0, f"Replica {self.name} has no atoms"

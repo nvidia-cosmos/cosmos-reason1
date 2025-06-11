@@ -520,7 +520,7 @@ class ParallelismConfig:
     )
     pp_size: int = field(default=1, metadata={"help": "Pipeline parallelism size"})
     pp_dynamic_shape: bool = field(
-        default=True, metadata={"help": "Pipeline parallelism dynamic shape"}
+        default=False, metadata={"help": "Pipeline parallelism dynamic shape"}
     )
     pp_micro_batch_size: int = field(
         default=1,
