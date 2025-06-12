@@ -4,11 +4,11 @@
 #SBATCH -t 04:00:00 
 #SBATCH --nodes=[[TOTAL_NODES]]
 #SBATCH --mem=0 
-#SBATCH --gres=gpu:8
 #SBATCH --dependency=singleton
 #SBATCH -p [[SLURM_PARTITION]]
 #SBATCH --output=[[OUTPUT_ROOT_PATH]]/%j/x.out
 #SBATCH --error=[[OUTPUT_ROOT_PATH]]/%j/x.err
+[[EXTRA_SBATCH_ARGS]]
 
 # Prerequisite of using this slurm script
 # 1. Build the cosmos_reason1._cpp module. Most likely need to use srun to schedule an interactive node, and then run the following commands under the interactive node to build the cosmos_reason1._cpp module in the root cosmos-reason1 path.

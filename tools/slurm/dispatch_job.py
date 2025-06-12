@@ -105,6 +105,7 @@ def main():
     parser.add_argument("--output-root-path", type=str, required=True, help="Path to the output root")
     parser.add_argument("--cosmos-container", type=str, required=True, help="Path to the cosmos container")
     parser.add_argument("--launcher", type=str, required=True, default="cosmos_reason1.dispatcher.run_web_panel", help="Launcher to use")
+    parser.add_argument("--extra-sbatch-args", type=str, nargs="*", default=["--gres=gpu:8"], help="Extra #SBATCH arguments")
     args = parser.parse_args()
 
     with open(args.config_path, "r") as f:
@@ -147,6 +148,7 @@ def main():
         "SLURM_JOB_NAME": args.job_name,
         "CONFIG_PATH": args.config_path,
         "LAUNCHER": args.launcher,
+        "EXTRA_SBATCH_ARGS": "\n".join(f"#SBATCH {arg}" for arg in args.extra_sbatch_args),
     }
 
     # Environment variables
