@@ -63,20 +63,12 @@ class GSM8kDataset(Dataset):
         question = self.dataset[idx]["question"]
         assert isinstance(
             question, str
-        ), f"Prompt should be a string, but got {type(question)}， {question}"
+        ), f"Prompt should be a string, but got {type(question)}, {question}"
         # Convert to templated prompt
         conversation = [
             {
-                "role": "system",
-                "content": """You are an AI math expert, you will be given a question and required to answer. 
-Final answer should be like
-```
-#### [ANS]
-``` where [ANS] is your answer"""
-            },
-            {
                 "role": "user",
-                "content": question,
+                "content": f"{question} Let\'s think step by step and output the final answer after \"####\".",
             }
         ]
         prompt = self.tokenizer.apply_chat_template(

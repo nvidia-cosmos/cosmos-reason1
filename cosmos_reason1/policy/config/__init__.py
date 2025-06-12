@@ -269,7 +269,7 @@ class GrpoConfig:
         },
     )
     temperature: float = field(
-        default=0.9,
+        default=1.0,
         metadata={
             "help": "Temperature for sampling. The higher the temperature, the more random the completions."
         },
@@ -316,7 +316,7 @@ class GrpoConfig:
     )
 
     allowed_outdated_steps: int = field(
-        default=10,
+        default=4,
         metadata={
             "help": "Allowed outdated-async steps for rollout engine. "
             "If the number of left pending rollouts is larger than the `allowed_outdated_steps * n_policy_replicas * train_batch_per_replica`, "
