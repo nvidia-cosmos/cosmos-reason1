@@ -396,14 +396,17 @@ class TrainingConfig:
         default="AdamW",
         metadata={"choices": ["AdamW", "Adam"], "help": "Optimizer name"},
     )
-    optm_lr: float = field(
-        default=1e-6, metadata={"help": "Learning rate for optimizer"}
+    optm_lr: Union[float, List[float]] = field(
+        default=1e-6,
+        metadata={
+            "help": "Learning rate for optimizer, can be a float or a list of floats for multiple optimizers"
+        },
     )
-    optm_impl: str = field(
+    optm_impl: Union[str, List[str]] = field(
         default="fused",
         metadata={
             "choices": ["fused", "foreach", "for-loop"],
-            "help": "More info: https://pytorch.org/docs/stable/optim.html",
+            "help": "More info: https://pytorch.org/docs/stable/optim.html, can be a list of strings for multiple optimizers",
         },
     )
     optm_weight_decay: float = field(

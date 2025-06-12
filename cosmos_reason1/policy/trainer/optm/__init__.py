@@ -60,9 +60,9 @@ class OptimizersContainer(Optimizer, Generic[T]):
     resharding for the optimizer state but not for the lr scheduler state, hence the limitation.
 
     Args:
+        optimizer_cls (type[T]): Class of the optimizers.
         model_parts (List[nn.Module]): List of model parts to be optimized.
-        optimizer_kwargs (Dict[str, Any]): Keyword arguments for the optimizers.
-        name (str): Name of the optimizers.
+        optimizer_kwargs (List[Dict[str, Any]]): Keyword arguments for the optimizers.
     """
 
     optimizers: List[T]
@@ -70,18 +70,18 @@ class OptimizersContainer(Optimizer, Generic[T]):
 
     def __init__(
         self,
-        model_parts: List[nn.Module],
         optimizer_cls: type[T],
-        optimizer_kwargs: Dict[str, Any],
+        model_parts: List[nn.Module],
+        optimizer_kwargs: List[Dict[str, Any]],
     ) -> None:
         all_params = []
         self.optimizers: List[T] = []
         self.model_parts = model_parts
-        for model in self.model_parts:
+        for model, optimizer_kwargs_i in zip(self.model_parts, optimizer_kwargs):
             if model is None:
                 continue
             params = [p for p in model.parameters() if p.requires_grad]
-            self.optimizers.append(optimizer_cls(params, **optimizer_kwargs))
+            self.optimizers.append(optimizer_cls(params, **optimizer_kwargs_i))
             all_params.extend(params)
         self._post_init(all_params, optimizer_kwargs)
 
@@ -124,7 +124,18 @@ class OptimizersContainer(Optimizer, Generic[T]):
     ) -> None:
         # We need to call Optimizer.__init__() to initialize some necessary optimizer
         # functionality such as hooks.
-        Optimizer.__init__(self, all_params, optimizer_kwargs)
+        if len(optimizer_kwargs) == 1:
+            Optimizer.__init__(self, all_params, optimizer_kwargs[0])
+        else:
+            # This won't affect the optimizer behavior, since all methods just forward
+            # the arguments to the sub-optimizers.
+            Optimizer.__init__(
+                self,
+                all_params,
+                {
+                    "optimizers_args": optimizer_kwargs,
+                },
+            )
 
 
 def build_optimizers(
@@ -147,24 +158,44 @@ def build_optimizers(
     Args:
         model_parts (List[nn.Module]): List of model parts to be optimized.
     """
-    name = config.train.optm_name
     lr = config.train.optm_lr
-    eps = config.train.epsilon
+    if isinstance(lr, float):
+        lr = [lr] * len(model_parts)
+    elif isinstance(lr, list):
+        assert len(lr) == len(
+            model_parts
+        ), "The length of lr and model_parts must be the same"
+    else:
+        raise ValueError(f"Invalid lr: {lr}")
 
     optm_impl = config.train.optm_impl
-    assert optm_impl in ["fused", "foreach", "for-loop"]
+    if isinstance(optm_impl, str):
+        assert optm_impl in ["fused", "foreach", "for-loop"], "Invalid optm_impl"
+        optm_impl = [optm_impl] * len(model_parts)
+    elif isinstance(optm_impl, list):
+        assert len(optm_impl) == len(
+            model_parts
+        ), "The length of optm_impl and model_parts must be the same"
+        assert all(
+            optm_impl_i in ["fused", "foreach", "for-loop"] for optm_impl_i in optm_impl
+        ), "Invalid optm_impl"
+    else:
+        raise ValueError(f"Invalid optm_impl: {optm_impl}")
 
-    fused = optm_impl == "fused"
-    foreach = optm_impl == "foreach"
+    fused = [optm_impl_i == "fused" for optm_impl_i in optm_impl]
+    foreach = [optm_impl_i == "foreach" for optm_impl_i in optm_impl]
 
-    optimizer_kwargs = {
-        "lr": lr,
-        "eps": eps,
-        "betas": config.train.optm_betas,
-        "weight_decay": config.train.optm_weight_decay,
-        "fused": fused,
-        "foreach": foreach,
-    }
+    optimizer_kwargs = [
+        {
+            "lr": lr_i,
+            "eps": config.train.epsilon,
+            "betas": config.train.optm_betas,
+            "weight_decay": config.train.optm_weight_decay,
+            "fused": fused_i,
+            "foreach": foreach_i,
+        }
+        for lr_i, fused_i, foreach_i in zip(lr, fused, foreach)
+    ]
 
     optimizer_classes = {
         "Adam": torch.optim.Adam,
@@ -173,6 +204,7 @@ def build_optimizers(
         "AdamW8bit": AdamW8bit,
     }
 
+    name = config.train.optm_name
     if name not in optimizer_classes:
         raise NotImplementedError(f"Optimizer {name} not added.")
     elif optimizer_classes[name] is None:
@@ -186,14 +218,19 @@ def build_optimizers(
         for name, param in parameters.items()
         if param.default != inspect.Parameter.empty
     ]
-    # Filter for kwargs
-    optimizer_kwargs = {k: v for k, v in optimizer_kwargs.items() if k in kwarg_names}
-    # Warn if any kwargs are not used
-    unused_kwargs = set(optimizer_kwargs.keys()) - set(kwarg_names)
-    if unused_kwargs:
-        logger.warning(f"Unused kwargs in optimizer-{name}: {unused_kwargs}")
 
-    return OptimizersContainer(model_parts, optimizer_cls, optimizer_kwargs)
+    filtered_optimizer_kwargs = []
+    for optimizer_kwargs_i in optimizer_kwargs:
+        # Filter for kwargs
+        optimizer_kwargs_i = {
+            k: v for k, v in optimizer_kwargs_i.items() if k in kwarg_names
+        }
+        # Warn if any kwargs are not used
+        unused_kwargs = set(optimizer_kwargs_i.keys()) - set(kwarg_names)
+        if unused_kwargs:
+            logger.warning(f"Unused kwargs in optimizer-{name}: {unused_kwargs}")
+        filtered_optimizer_kwargs.append(optimizer_kwargs_i)
+    return OptimizersContainer(optimizer_cls, model_parts, filtered_optimizer_kwargs)
 
 
 class LRSchedulersContainer(Stateful):
