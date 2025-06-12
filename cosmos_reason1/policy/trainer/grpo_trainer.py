@@ -20,6 +20,7 @@ from cosmos_reason1.utils.parallelism import (
     create_context_parallel_ctx,
 )
 import torch
+import inspect
 import os
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
@@ -56,7 +57,7 @@ from cosmos_reason1.utils.parallelism_map import (
     slice_tensor_with_strategies,
 )
 from functools import cached_property
-from typing import List, Callable, Dict, Any, Tuple
+from typing import List, Callable, Dict, Any, Tuple, Optional
 import types
 from functools import partial
 import msgpack
@@ -80,7 +81,9 @@ from cosmos_reason1.utils.pynccl import (
 def compute_loss(
     current_token_logps: torch.Tensor,  # per-token logprobs of shape `[n_token_interested]`
     old_per_token_logps: torch.Tensor,  # per-token logprobs of shape `[n_token_interested]`
-    ref_per_token_logps: torch.Tensor,  # per-token logprobs of shape `[n_token_interested]`
+    ref_per_token_logps: Optional[
+        torch.Tensor
+    ],  # per-token logprobs of shape `[n_token_interested]`
     current_advantages: torch.Tensor,  # of shape `[n_token_interested]`
     config: CosmosConfig,
 ) -> torch.Tensor:
@@ -90,6 +93,13 @@ def compute_loss(
     assert (
         old_per_token_logps.shape == current_token_logps.shape
     ), "old_per_token_logps and ref_per_token_logps should have the same shape"
+    if ref_per_token_logps is not None:
+        assert (
+            ref_per_token_logps.shape == current_token_logps.shape
+        ), "ref_per_token_logps and current_token_logps should have the same shape, but got {} and {}".format(
+            ref_per_token_logps.shape, current_token_logps.shape
+        )
+
     # Compute the KL divergence between the model and the reference model
     if config.train.train_policy.kl_beta != 0.0:
         assert (
@@ -128,6 +138,8 @@ def compute_loss(
 class GRPOTrainer(Trainer):
     def __init__(self, config: CosmosConfig, parallel_dims: ParallelDims):
         super().__init__(config, parallel_dims)
+        self.reference_state_dict = {}
+
         if parallel_dims.dp_replicate > 1:
             raise ValueError(
                 f"DP replicate size {parallel_dims.dp_replicate} is not supported for GRPO"
@@ -348,21 +360,38 @@ class GRPOTrainer(Trainer):
         Sync all states of the model and optimizer.
         """
         len_params = 0
-        self_state_dict = self.model.state_dict()
-        for dest_name in sorted(self_state_dict.keys()):
-            obj = self_state_dict[dest_name]
-            assert isinstance(obj, torch.Tensor)
-            local_view = self.wrap_to_cuda_tensor(dest_name, obj, in_place=obj.is_cuda)
-            if is_send:
-                # nccl send
-                send_hook(local_view)
-            else:
-                # nccl recv
-                recv_hook(local_view)
-                # Copy again for FSDP offloaded tensor
-                if not obj.is_cuda:
-                    obj.copy_(local_view)
-            len_params += 1
+        model_state_dict = [self.model.state_dict()]
+
+        # If KL-divergence is enabled, we need to also sync the reference model state dict
+        if self.config.train.train_policy.kl_beta != 0.0:
+            if len(self.reference_state_dict) == 0:
+                assert (
+                    not is_send
+                ), "Reference model state dict should be populated before sending"
+                for key, value in model_state_dict[0].items():
+                    self.reference_state_dict[key] = torch.empty_like(
+                        value, device="cpu"
+                    )
+            model_state_dict.append(self.reference_state_dict)
+
+        # 1. Sync all model states
+        for state_to_sync in model_state_dict:
+            for dest_name in sorted(state_to_sync.keys()):
+                obj = state_to_sync[dest_name]
+                assert isinstance(obj, torch.Tensor)
+                local_view = self.wrap_to_cuda_tensor(
+                    dest_name, obj, in_place=obj.is_cuda
+                )
+                if is_send:
+                    send_hook(local_view)
+                else:
+                    recv_hook(local_view)
+                    # Copy again for offloaded tensor since it is not inplace
+                    if not obj.is_cuda:
+                        obj.copy_(local_view)
+                len_params += 1
+
+        # 2. Sync optimizer states
         optimizer_state = self.optimizers.state_dict()
         for dest_name in sorted(optimizer_state.keys()):
             obj = optimizer_state[dest_name]
@@ -382,6 +411,8 @@ class GRPOTrainer(Trainer):
             len_params += 1
         if not is_send:
             self.optimizers.load_state_dict(optimizer_state)
+
+        # 3. Sync lr_scheduler states
         lr_sheduler_state = self.lr_schedulers.state_dict()
         for dest_name in sorted(lr_sheduler_state.keys()):
             obj = lr_sheduler_state[dest_name]
@@ -398,6 +429,8 @@ class GRPOTrainer(Trainer):
             len_params += 1
         if not is_send:
             self.lr_schedulers.load_state_dict(lr_sheduler_state)
+
+        # 4. Sync rng_state
         rng_state = self.ckpt_manager.get_rng_state()
         for dest_name in sorted(rng_state.keys()):
             obj = rng_state[dest_name]
@@ -667,8 +700,20 @@ class GRPOTrainer(Trainer):
 
     @Trainer.register_policy_command_handler(WeightResumeCommand)
     def execute_weight_resume(self, command: WeightResumeCommand = None):
+        # If KL-divergence is enabled, hf model should always be loaded from checkpoint
+        model_loaded = False
+        if self.config.train.train_policy.kl_beta != 0.0:
+            self.model_load_from_hf()
+            model_loaded = True
+            # Clone the state dict of hf model so that it can be used for KL-divergence calculation
+            self.reference_state_dict = {}
+            state_dict = self.model.state_dict()
+            for key, value in state_dict.items():
+                self.reference_state_dict[key] = value.detach().cpu()
+
         if self.config.train.resume:
             try:
+                # Need to reload again from checkpoint to make sure the model is in the correct state
                 self.model_resume_from_checkpoint()
             except Exception as e:
                 if isinstance(e, FileNotFoundError):
@@ -679,10 +724,15 @@ class GRPOTrainer(Trainer):
                     logger.error(
                         f"Cannot resume from {self.config.train.resume} {e}. Trying to load from HuggingFace..."
                     )
-                self.model_load_from_hf()
-        else:
+                if not model_loaded:
+                    self.model_load_from_hf()
+                    model_loaded = True
+        elif not model_loaded:
             logger.info("Resume not set. Trying to load from HuggingFace...")
             self.model_load_from_hf()
+            model_loaded = True
+
+        assert model_loaded, "Model weight must be populated before training starts."
         logger.info("[Policy] Model loaded from checkpoint.")
         assert (
             self.map_w_from_policy_to_rollout is not None
@@ -757,13 +807,16 @@ class GRPOTrainer(Trainer):
         """
         for model_part in self.model_parts:
             # Do allreduce of gradient in all policy replicas.
-            dist_util.gradient_reduce_across_dp_replicas_(
-                [p for p in model_part.parameters()], self.inter_policy_nccl
-            )
+            if model_part is not None:
+                dist_util.gradient_reduce_across_dp_replicas_(
+                    [p for p in model_part.parameters()], self.inter_policy_nccl
+                )
 
             # Then clipping gradient norm
             dist_util.gradient_norm_clipping(
-                [p for p in model_part.parameters()],
+                # Must pass empty list even if model_part is None,
+                # GradNorm across pp stages will fail if some rank does not join the barrier
+                [p for p in model_part.parameters()] if model_part is not None else [],
                 self.config.train.optm_grad_norm_clip,
                 foreach=True,
                 pp_mesh=self.parallel_dims.mesh["pp"]
@@ -977,6 +1030,23 @@ class GRPOTrainer(Trainer):
         logps = selective_log_softmax(logits, input_ids_of_interest)
         return logps, advantages_of_interest
 
+    def _swap_model_state_dict(self):
+        kl_beta = self.config.train.train_policy.kl_beta
+        if kl_beta != 0.0:
+            with torch.cuda.stream(self.train_stream):
+                model_state_dict = self.model.state_dict()
+                reference_state_dict = self.reference_state_dict
+                for key, value in model_state_dict.items():
+                    # clone the reference state dict to avoid inplace operation
+                    ref_clone = reference_state_dict[key].clone()
+                    # copy the current model state dict to the reference state dict
+                    reference_state_dict[key].copy_(value)
+                    # copy the reference state dict to the current model state dict
+                    value.copy_(ref_clone)
+            return True, kl_beta
+        else:
+            return False, 0.0
+
     def train(self):
         pp_last_stage = (
             self.parallel_dims.pp_coord[0] == self.parallel_dims.pp_coord[1] - 1
@@ -1044,7 +1114,9 @@ class GRPOTrainer(Trainer):
             )
         ]
 
+        # Initialize placeholder for old per-token logprobs
         self.old_per_token_logps = [None for _ in range(num_mini_batch)]
+        self.ref_per_token_logps = [None for _ in range(num_mini_batch)]
 
         acc_n_tokens = 0
         # Validate the PP parallelism configuration
@@ -1056,182 +1128,254 @@ class GRPOTrainer(Trainer):
                 n_microbatches % self.parallel_dims.pp == 0
             ), f"n_microbatches {n_microbatches} should be divided evenly by pp size of {self.parallel_dims.pp}"
 
-        for i_mu in range(self.mu_iterations):
-            local_mini_step = 0
-            with torch.cuda.stream(self.train_stream):
-                for i in range(0, batch_size, mini_batch_size):
-                    end = min(i + mini_batch_size, batch_size)
-                    # Convert advantages from [batch_size] -> [batch_size, max_len] via expanding
+        need_compute_ref, kl_beta = self._swap_model_state_dict()
 
-                    minibatched_processed_samples = processed_samples[i:end]
+        is_computing_refs = [True, False] if need_compute_ref else [False]
+        for is_computing_ref in is_computing_refs:
+            # Set model to eval mode if reference model is being used
+            if is_computing_ref:
+                self.model.eval()
+            else:
+                if need_compute_ref:
+                    # Swap model state dict back to the original model
+                    need_compute_ref = False
+                    self._swap_model_state_dict()
+                self.model.train()
 
-                    # TODO(jiaxin): support variable length in PP
-                    computed_max_len = (
-                        self.config.policy.model_max_length
-                        if self.parallel_dims.pp_enabled
-                        else self.data_packer.policy_compute_max_len(
-                            minibatched_processed_samples
-                        )
-                    )
+            with torch.set_grad_enabled(not is_computing_ref):
+                for i_mu in range(1 if is_computing_ref else self.mu_iterations):
+                    local_mini_step = 0
+                    with torch.cuda.stream(self.train_stream):
+                        for i in range(0, batch_size, mini_batch_size):
+                            end = min(i + mini_batch_size, batch_size)
+                            # Convert advantages from [batch_size] -> [batch_size, max_len] via expanding
 
-                    computed_max_len = (
-                        (computed_max_len + self.seq_len_multiple - 1)
-                        // self.seq_len_multiple
-                        * self.seq_len_multiple
-                    )
-                    minibatched_advantages = (
-                        advantages_t[i:end]
-                        .unsqueeze(1)
-                        .expand(-1, computed_max_len)
-                        .to(self.device)
-                    )
+                            minibatched_processed_samples = processed_samples[i:end]
 
-                    user_mini_batch: Dict[str, Any] = (
-                        self.data_packer.policy_collate_fn(
-                            minibatched_processed_samples,
-                            computed_max_len=computed_max_len,
-                        )
-                    )
+                            # TODO(jiaxin): support variable length in PP
+                            computed_max_len = (
+                                self.config.policy.model_max_length
+                                if self.parallel_dims.pp_enabled
+                                else self.data_packer.policy_compute_max_len(
+                                    minibatched_processed_samples
+                                )
+                            )
 
-                    # Move all tensor to device
-                    for k in user_mini_batch.keys():
-                        v = user_mini_batch[k]
-                        if isinstance(v, torch.Tensor) and v.device != self.device:
-                            user_mini_batch[k] = v.to(self.device)
+                            computed_max_len = (
+                                (computed_max_len + self.seq_len_multiple - 1)
+                                // self.seq_len_multiple
+                                * self.seq_len_multiple
+                            )
+                            minibatched_advantages = (
+                                advantages_t[i:end]
+                                .unsqueeze(1)
+                                .expand(-1, computed_max_len)
+                                .to(self.device)
+                            )
 
-                    position_ids, input_ids, pos_seq_dim = self.model.get_position_ids(
-                        **user_mini_batch
-                    )
-                    acc_n_tokens += np.prod(input_ids.shape)
-                    user_mini_batch["position_ids"] = position_ids
-                    cp_context = (
-                        create_context_parallel_ctx(
-                            cp_mesh=self.parallel_dims.mesh["cp"],
-                            cp_buffers=[input_ids, user_mini_batch["position_ids"]],
-                            cp_seq_dims=[1, pos_seq_dim],
-                            cp_no_restore_buffers={
-                                input_ids,
-                                user_mini_batch["position_ids"],
-                            },
-                            cp_rotate_method=self.config.policy.parallelism.cp_rotate_method,
-                        )
-                        if self.parallel_dims.cp_enabled
-                        else None
-                    )
-                    with self.context(cp_context):
-                        if self.parallel_dims.pp_enabled:
-                            if pp_last_stage:
-                                if self.old_per_token_logps[local_mini_step] is None:
-                                    assert (
-                                        i_mu == 0
-                                    ), "Only first `mu_iteration` should append `old_per_token_logps`"
-                                else:
-                                    assert (
-                                        i_mu > 0
-                                    ), "Only `mu_iteration > 0` should reuse `old_per_token_logps`"
-                                    assert (
-                                        len(self.old_per_token_logps[local_mini_step])
-                                        == n_microbatches
+                            user_mini_batch: Dict[str, Any] = (
+                                self.data_packer.policy_collate_fn(
+                                    minibatched_processed_samples,
+                                    computed_max_len=computed_max_len,
+                                )
+                            )
+
+                            # Move all tensor to device
+                            for k in user_mini_batch.keys():
+                                v = user_mini_batch[k]
+                                if (
+                                    isinstance(v, torch.Tensor)
+                                    and v.device != self.device
+                                ):
+                                    user_mini_batch[k] = v.to(self.device)
+
+                            position_ids, input_ids, pos_seq_dim = (
+                                self.model.get_position_ids(**user_mini_batch)
+                            )
+                            acc_n_tokens += np.prod(input_ids.shape)
+                            user_mini_batch["position_ids"] = position_ids
+                            cp_context = (
+                                create_context_parallel_ctx(
+                                    cp_mesh=self.parallel_dims.mesh["cp"],
+                                    cp_buffers=[
+                                        input_ids,
+                                        user_mini_batch["position_ids"],
+                                    ],
+                                    cp_seq_dims=[1, pos_seq_dim],
+                                    cp_no_restore_buffers={
+                                        input_ids,
+                                        user_mini_batch["position_ids"],
+                                    },
+                                    cp_rotate_method=self.config.policy.parallelism.cp_rotate_method,
+                                )
+                                if self.parallel_dims.cp_enabled
+                                else None
+                            )
+                            with self.context(cp_context):
+                                if self.parallel_dims.pp_enabled:
+                                    if pp_last_stage:
+                                        if (
+                                            self.old_per_token_logps[local_mini_step]
+                                            is None
+                                        ):
+                                            assert (
+                                                i_mu == 0
+                                            ), "Only first `mu_iteration` should append `old_per_token_logps`"
+                                        else:
+                                            assert (
+                                                i_mu > 0
+                                            ), "Only `mu_iteration > 0` should reuse `old_per_token_logps`"
+                                            assert (
+                                                len(
+                                                    self.old_per_token_logps[
+                                                        local_mini_step
+                                                    ]
+                                                )
+                                                == n_microbatches
+                                            )
+
+                                    # [mini_batch_size, 1]: indicating the index of mini-batch
+                                    mini_batch_ids_cpu = torch.Tensor(
+                                        [[local_mini_step]] * mini_batch_size
+                                    ).int()
+                                    micro_batch_ids_list = []
+                                    for i in range(mini_batch_size):
+                                        micro_batch_ids_list.append(
+                                            [
+                                                i
+                                                // self.config.policy.parallelism.pp_micro_batch_size
+                                            ]
+                                        )
+                                    micro_batch_ids_cpu = torch.Tensor(
+                                        micro_batch_ids_list
+                                    ).int()
+                                    loss_scaling_cpu = torch.tensor(
+                                        [
+                                            [
+                                                1
+                                                / num_mini_batch
+                                                / self.config.policy.parallelism.pp_micro_batch_size
+                                            ]
+                                        ]
+                                        * mini_batch_size,
+                                        dtype=torch.float32,
+                                    )
+                                    is_computing_ref_cpu = torch.tensor(
+                                        [is_computing_ref] * mini_batch_size,
+                                        dtype=torch.bool,
                                     )
 
-                            # [mini_batch_size, 1]: indicating the index of mini-batch
-                            mini_batch_ids_cpu = torch.Tensor(
-                                [[local_mini_step]] * mini_batch_size
-                            ).int()
-                            micro_batch_ids_list = []
-                            for i in range(mini_batch_size):
-                                micro_batch_ids_list.append(
-                                    [
-                                        i
-                                        // self.config.policy.parallelism.pp_micro_batch_size
-                                    ]
-                                )
-                            micro_batch_ids_cpu = torch.Tensor(
-                                micro_batch_ids_list
-                            ).int()
-                            loss_scaling_cpu = torch.tensor(
-                                [
-                                    [
-                                        1
-                                        / num_mini_batch
-                                        / self.config.policy.parallelism.pp_micro_batch_size
-                                    ]
-                                ]
-                                * mini_batch_size,
-                                dtype=torch.float32,
-                            )
+                                    pp_first_stage = self.parallel_dims.pp_coord[0] == 0
+                                    # Pipeline Parallel forward / backward inside step() call
+                                    losses = [] if pp_last_stage else None
+                                    if pp_last_stage:
+                                        # Inject the `mini-batch` and `micro-batch` ids to the input so that the last stage can know which microbatch it is processing
+                                        user_mini_batch["mini_batch_ids"] = (
+                                            mini_batch_ids_cpu
+                                        )
+                                        user_mini_batch["micro_batch_ids"] = (
+                                            micro_batch_ids_cpu
+                                        )
+                                        user_mini_batch["loss_scaling"] = (
+                                            loss_scaling_cpu
+                                        )
+                                        user_mini_batch["is_computing_ref"] = (
+                                            is_computing_ref_cpu
+                                        )
+                                    if pp_first_stage or pp_last_stage:
+                                        # First/Last stage: pass all inputs
+                                        self.pp_scheduler.step(
+                                            **user_mini_batch,
+                                            advantages=minibatched_advantages,
+                                            losses=losses,
+                                            target=torch.empty(
+                                                [mini_batch_size, 1], device=self.device
+                                            ),
+                                        )
+                                    else:
+                                        # Middle stages: forward data from previous stage
+                                        self.pp_scheduler.step(
+                                            position_ids=position_ids
+                                        )
 
-                            pp_first_stage = self.parallel_dims.pp_coord[0] == 0
-                            # Pipeline Parallel forward / backward inside step() call
-                            losses = [] if pp_last_stage else None
-                            if pp_last_stage:
-                                # Inject the `mini-batch` and `micro-batch` ids to the input so that the last stage can know which microbatch it is processing
-                                user_mini_batch["mini_batch_ids"] = mini_batch_ids_cpu
-                                user_mini_batch["micro_batch_ids"] = micro_batch_ids_cpu
-                                user_mini_batch["loss_scaling"] = loss_scaling_cpu
-                            if pp_first_stage or pp_last_stage:
-                                # First/Last stage: pass all inputs
-                                self.pp_scheduler.step(
-                                    **user_mini_batch,
-                                    advantages=minibatched_advantages,
-                                    losses=losses,
-                                    target=torch.empty(
-                                        [mini_batch_size, 1], device=self.device
-                                    ),
-                                )
-                            else:
-                                # Middle stages: forward data from previous stage
-                                self.pp_scheduler.step(position_ids=position_ids)
-                            loss = (
-                                torch.mean(torch.stack(losses)).to(self.device)
-                                if pp_last_stage
-                                else torch.tensor([-1.0], device=self.device)
-                            )
-                        else:
-                            raw_logits = self.model(**user_mini_batch)
-                            if self.config.train.train_policy.temperature > 1e-6:
-                                raw_logits = (
-                                    raw_logits
-                                    / self.config.train.train_policy.temperature
-                                )
+                                    if is_computing_ref:
+                                        # Continue to next mini-batch since loss is not needed for reference model
+                                        continue
+                                    else:
+                                        loss = (
+                                            torch.mean(torch.stack(losses)).to(
+                                                self.device
+                                            )
+                                            if pp_last_stage
+                                            else torch.tensor(
+                                                [-1.0], device=self.device
+                                            )
+                                        )
+                                else:
+                                    raw_logits = self.model(**user_mini_batch)
+                                    if (
+                                        self.config.train.train_policy.temperature
+                                        > 1e-6
+                                    ):
+                                        raw_logits = (
+                                            raw_logits
+                                            / self.config.train.train_policy.temperature
+                                        )
 
-                            current_per_token_logprobs, current_advantages = (
-                                self.compute_logprobs_and_advantages(
-                                    user_mini_batch,
-                                    full_logits=raw_logits,
-                                    advantages=minibatched_advantages,
-                                )
-                            )
-                            if self.old_per_token_logps[local_mini_step] is None:
-                                assert (
-                                    i_mu == 0
-                                ), "Only first iteration should append `old_per_token_logps`"
-                                self.old_per_token_logps[local_mini_step] = (
-                                    current_per_token_logprobs.detach()
-                                )
-                            else:
-                                assert (
-                                    i_mu > 0
-                                ), "Only inner iteration should reuse `old_per_token_logps`"
+                                    current_per_token_logprobs, current_advantages = (
+                                        self.compute_logprobs_and_advantages(
+                                            user_mini_batch,
+                                            full_logits=raw_logits,
+                                            advantages=minibatched_advantages,
+                                        )
+                                    )
 
-                            loss, kl_loss = compute_loss(
-                                current_per_token_logprobs,
-                                self.old_per_token_logps[local_mini_step],
-                                user_mini_batch.get("ref_per_token_logps", None),
-                                current_advantages,
-                                self.config,
+                                    # Compute ref per-token logprobs if needed
+                                    if is_computing_ref:
+                                        assert (
+                                            i_mu == 0
+                                        ), "Only first iteration should compute ref"
+                                        self.ref_per_token_logps[local_mini_step] = (
+                                            current_per_token_logprobs.detach()
+                                        )
+                                        # Skip the rest of the loop
+                                        local_mini_step += 1
+                                        continue
+                                    else:
+                                        if (
+                                            self.old_per_token_logps[local_mini_step]
+                                            is None
+                                        ):
+                                            assert (
+                                                i_mu == 0
+                                            ), "Only first iteration should append `old_per_token_logps`"
+                                            self.old_per_token_logps[
+                                                local_mini_step
+                                            ] = current_per_token_logprobs.detach()
+                                        else:
+                                            assert (
+                                                i_mu > 0
+                                            ), "Only inner iteration should reuse `old_per_token_logps`"
+
+                                    loss, kl_loss = compute_loss(
+                                        current_per_token_logprobs,
+                                        self.old_per_token_logps[local_mini_step],
+                                        self.ref_per_token_logps[local_mini_step],
+                                        current_advantages,
+                                        self.config,
+                                    )
+                                    if num_mini_batch > 1:
+                                        loss /= num_mini_batch
+                                        kl_loss /= num_mini_batch
+                                    loss.backward()
+                            logger.debug(
+                                f"[Policy] Minibatch backward step {self.mini_step + 1} at train step {self.train_step + 1} finished."
                             )
-                            if num_mini_batch > 1:
-                                loss /= num_mini_batch
-                                kl_loss /= num_mini_batch
-                            loss.backward()
-                    logger.debug(
-                        f"[Policy] Minibatch backward step {self.mini_step + 1} at train step {self.train_step + 1} finished."
-                    )
-                    self.mini_step += 1
-                    local_mini_step += 1
-                self.execute_all_reduce()
+                            self.mini_step += 1
+                            local_mini_step += 1
+                        self.execute_all_reduce()
         self.old_per_token_logps = []
+        self.ref_per_token_logps = []
         end_time = time.time()
 
         if (
@@ -1381,11 +1525,13 @@ def _swizzle_pp_grpo_forward(
     mini_batch_ids = kwargs.pop("mini_batch_ids")
     micro_batch_ids = kwargs.pop("micro_batch_ids")
     loss_scaling = kwargs.pop("loss_scaling")
+    is_computing_ref = kwargs.pop("is_computing_ref")
     advantages = kwargs.pop("advantages")
 
     micro_batch_id = micro_batch_ids[0].item()
     mini_batch_id = mini_batch_ids[0].item()
     loss_scaling = loss_scaling[0].item()
+    is_computing_ref = is_computing_ref[0].item()
 
     # User defined input
     user_input = kwargs.copy()
@@ -1398,7 +1544,6 @@ def _swizzle_pp_grpo_forward(
     ), f"mini_batch_ids are not all the same: {mini_batch_ids}"
     del micro_batch_ids, mini_batch_ids
 
-    ref_per_token_logprobs = kwargs.get("ref_per_token_logps", None)
     # assert (
     #     logprobs_mask.ndim == 2
     # ), f"logprobs_mask.ndim: {logprobs_mask.ndim}, while it should be 2"
@@ -1415,19 +1560,39 @@ def _swizzle_pp_grpo_forward(
     #     full_token_ids.shape[0] == advantages.shape[0]
     # ), f"full_token_ids.shape[0]: {full_token_ids.shape[0]}, while it should be {advantages.shape[0]}"
 
+    n_args = len(args)
+    if n_args > 0:
+        # remove the first `n_args` arguments from kwargs
+        signature = list(inspect.signature(ori_forward).parameters.keys())[:n_args]
+        for key in signature:
+            kwargs.pop(key)
+
     raw_logits = ori_forward(*args, **kwargs)
     if config.train.train_policy.temperature > 1e-6:
         raw_logits = raw_logits / config.train.train_policy.temperature
     # [n_tokens, n_vocab]
     current_per_token_logprobs, current_advantages = (
         trainer.compute_logprobs_and_advantages(
-            input={
+            minibatch={
                 **user_input,
             },
             full_logits=raw_logits,
             advantages=advantages,
         )
     )
+
+    if is_computing_ref:
+        if trainer.ref_per_token_logps[mini_batch_id] is not None:
+            assert isinstance(trainer.ref_per_token_logps[mini_batch_id], list)
+            trainer.ref_per_token_logps[mini_batch_id].append(
+                current_per_token_logprobs.detach()
+            )
+        else:
+            trainer.ref_per_token_logps[mini_batch_id] = [
+                current_per_token_logprobs.detach()
+            ]
+        # Skip the rest logic since we are computing ref
+        return None
 
     if (
         trainer.old_per_token_logps[mini_batch_id] is not None
@@ -1454,9 +1619,11 @@ def _swizzle_pp_grpo_forward(
             assert isinstance(trainer.old_per_token_logps[mini_batch_id], list)
             trainer.old_per_token_logps[mini_batch_id].append(old_per_token_logprobs)
 
-    # print(f"old_per_token_logprobs: {old_per_token_logprobs.shape if old_per_token_logprobs is not None else None}, {current_per_token_logprobs.shape}")
-
-    if ref_per_token_logprobs is not None:
+    ref_per_token_logprobs = None
+    if trainer.ref_per_token_logps[mini_batch_id] is not None:
+        ref_per_token_logprobs = trainer.ref_per_token_logps[mini_batch_id][
+            micro_batch_id
+        ]
         assert (
             ref_per_token_logprobs.ndim == 1
         ), f"ref_per_token_logprobs.ndim: {ref_per_token_logprobs.ndim}, while it should be 1"
