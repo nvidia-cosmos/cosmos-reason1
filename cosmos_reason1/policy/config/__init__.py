@@ -620,10 +620,10 @@ class RolloutParallelismConfig(ParallelismConfig):
 @dataclass
 class SamplingConfig:
     temperature: float = field(
-        default=0.9, metadata={"help": "Temperature for sampling."}
+        default=1.0, metadata={"help": "Temperature for sampling."}
     )
     top_p: float = field(default=1.0, metadata={"help": "Top-p for sampling."})
-    top_k: int = field(default=10, metadata={"help": "Top-k for sampling."})
+    top_k: int = field(default=-1, metadata={"help": "Top-k for sampling."})
     repetition_penalty: float = field(
         default=1.0, metadata={"help": "Repetition penalty for sampling."}
     )
