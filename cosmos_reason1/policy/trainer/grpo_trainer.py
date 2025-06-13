@@ -1119,19 +1119,19 @@ class GRPOTrainer(Trainer):
         num_mini_batch = batch_size // mini_batch_size
 
         # Get each input length of processed_samples
-        seq_lengths = [
-            self.data_packer.policy_compute_max_len([sample])
-            for sample in processed_samples
-        ]
-        # sort `processed_samples` by `seq_lengths` in descending order
-        processed_samples = [
-            x
-            for _, x in sorted(
-                zip(seq_lengths, processed_samples),
-                key=lambda pair: pair[0],
-                reverse=True,
-            )
-        ]
+        # seq_lengths = [
+        #     self.data_packer.policy_compute_max_len([sample])
+        #     for sample in processed_samples
+        # ]
+        # # sort `processed_samples` by `seq_lengths` in descending order
+        # processed_samples = [
+        #     x
+        #     for _, x in sorted(
+        #         zip(seq_lengths, processed_samples),
+        #         key=lambda pair: pair[0],
+        #         reverse=True,
+        #     )
+        # ]
 
         # Initialize placeholder for old per-token logprobs
         self.old_per_token_logps = [None for _ in range(num_mini_batch)]
