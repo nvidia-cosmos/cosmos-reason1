@@ -25,7 +25,6 @@ import dataclasses
 import base64
 import struct
 import tarfile
-import heapq
 import ctypes
 from functools import wraps
 from msgpack import ExtType
@@ -43,7 +42,6 @@ from huggingface_hub import (
 )
 import time
 import functools
-import itertools
 from cosmos_reason1.utils.logging import logger
 from safetensors import safe_open
 from cosmos_reason1.utils.constant import CACHE_DIR
@@ -313,6 +311,41 @@ class IdentityLayer(torch.nn.Module):
         return x
 
 
+@torch.compile
+def _logsumexp_fp32_backward(grad_output, input, logsumexp_values):
+    # grad_output shape: (...), need to unsqueeze to match input shape for broadcasting
+    grad_output_expanded = grad_output.unsqueeze(-1)
+    # Compute softmax: exp(input - logsumexp)
+    softmax = (input - logsumexp_values.unsqueeze(-1)).exp()
+    return (grad_output_expanded * softmax).to(input.dtype)
+
+
+class LogSumExpFp32Backward(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input):
+        logsumexp_values = torch.zeros(input.shape[:-1], dtype=torch.float32, device=input.device)
+        torch.logsumexp(input, dim=-1, out=logsumexp_values)
+        ctx.save_for_backward(input, logsumexp_values)
+        ctx.input_dtype = input.dtype
+        return logsumexp_values.to(torch.bfloat16) if input.dtype == torch.bfloat16 else logsumexp_values
+
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, logsumexp_values = ctx.saved_tensors
+        return _logsumexp_fp32_backward(grad_output, input, logsumexp_values)
+
+
+def _logsumexp_fp32(input):
+    """
+    Computes the logsumexp of the input tensor in float32 precision (even if input is Bf16).
+    """
+    return LogSumExpFp32Backward.apply(input)
+
+
+_SELECTIVE_LOG_SOFTMAX_OPTIM = False
+
+
 def selective_log_softmax(logits, index):
     """
     A memory-efficient implementation of the common `log_softmax -> gather` operation.
@@ -332,6 +365,17 @@ def selective_log_softmax(logits, index):
         `torch.Tensor`:
             Gathered log probabilities with the same shape as `index`.
     """
+    if _SELECTIVE_LOG_SOFTMAX_OPTIM:
+        # NOTE: aazzolini optimized.
+        selected_logits = torch.gather(
+            logits, dim=-1, index=index.unsqueeze(-1)
+        ).squeeze(-1).to(torch.float32)
+        logsumexp_values = _logsumexp_fp32(logits)
+        return (
+            selected_logits - logsumexp_values
+        ).to(logits.dtype)  # log_softmax(x_i) = x_i - logsumexp(x)
+
+
     if logits.dtype in [torch.float32, torch.float64]:
         selected_logits = torch.gather(
             logits, dim=-1, index=index.unsqueeze(-1)
@@ -802,79 +846,3 @@ def is_master_rank(parallel_dims, global_rank: int):
         and global_rank
         == (parallel_dims.world_size - parallel_dims.world_size / parallel_dims.pp)
     )
-
-
-def karmarkar_karp(seqlen_list: List[int], k_partitions: int, equal_size: bool):
-    n = len(seqlen_list)
-    # Pair each length with its original index and sort ascending
-    sorted_pairs = sorted((length, index) for index, length in enumerate(seqlen_list))
-
-    # We'll store in the heap tuples of the form
-    #    (  -spread,    -max_sum,    unique_id,    sums_list,    items_list )
-    # where:
-    #    sums_list: length-k list of current bucket sums, sorted descending
-    #    items_list: length-k list of lists of original-indices in each bucket
-    #
-    # We negate spread and max_sum so the heapq (a min-heap) becomes
-    #  effectively a max-heap on spread, then max-heap on max_sum.
-
-    pq = []
-    uid = itertools.count()  # for tie-breaking
-
-    def push_state(sums, items):
-        # sums must be sorted descending
-        spread = sums[0] - sums[-1]
-        # priority = (−spread, −largest_sum, unique_id)
-        heapq.heappush(pq, ((-spread, -sums[0], next(uid)), sums, items))
-
-    # Initialize the heap
-    if equal_size:
-        # we group the sorted list into blocks of size=k
-        assert n % k_partitions == 0, f"{n} not divisible by {k_partitions}"
-        for start in range(0, n, k_partitions):
-            block = sorted_pairs[start : start + k_partitions]
-            sums = [length for length, _ in block]
-            # descending
-            sums.sort(reverse=True)
-            items = [[idx] for _, idx in block]
-            push_state(sums, items)
-    else:
-        # singleton blocks
-        for length, idx in sorted_pairs:
-            sums = [length] + [0] * (k_partitions - 1)
-            items = [[idx]] + [[] for _ in range(k_partitions - 1)]
-            # already descending as long as l>=0
-            push_state(sums, items)
-
-    # merge until only one state remains
-    while len(pq) > 1:
-        (_, sums0, items0) = heapq.heappop(pq)
-        (_, sums1, items1) = heapq.heappop(pq)
-
-        # Merge: bucket 0 of state0 gets bucket k-1 of state1, bucket 1 gets k-2, ...
-        k = k_partitions
-        for i in range(k):
-            j = k - 1 - i
-            if sums1[j] != 0:
-                sums0[i] += sums1[j]
-                items0[i].extend(items1[j])
-
-        # re‐sort the k buckets by their new sums, descending
-        zipped = list(zip(sums0, items0))
-        zipped.sort(key=lambda x: x[0], reverse=True)
-        sums0[:], items0[:] = zip(*zipped)
-
-        # push the merged state back
-        push_state(list(sums0), [list(lst) for lst in items0])
-
-    # unpack final state
-    _, _, final_items = pq[0]
-    # final_items is a list of k lists of original‐indices
-    if equal_size:
-        # sanity-check sizes
-        size_per_bucket = n // k_partitions
-        for bucket in final_items:
-            assert (
-                len(bucket) == size_per_bucket
-            ), f"Expected {size_per_bucket}, got {len(bucket)}"
-    return final_items
