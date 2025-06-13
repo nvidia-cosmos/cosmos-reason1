@@ -303,6 +303,14 @@ class GrpoConfig:
         },
     )
 
+    aipo_rho: Optional[float] = field(
+        default=None,
+        metadata={
+            "help": "Rho value for AIPO (Asynchronous Importance weighted Policy Optimization). The clipping constant of the importance sampling ratio, suggest [2,10]. "
+            "reference: https://arxiv.org/pdf/2505.24034"
+        },
+    )
+
     mu_iterations: int = field(
         default=1,
         metadata={

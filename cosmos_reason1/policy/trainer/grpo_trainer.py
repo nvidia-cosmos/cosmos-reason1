@@ -114,15 +114,26 @@ def compute_loss(
             - 1
         )
 
-    coef_1 = torch.exp(current_token_logps - old_per_token_logps)
-    coef_2 = torch.clamp(
-        coef_1,
-        1 - config.train.train_policy.epsilon_low,
-        1 + config.train.train_policy.epsilon_high,
-    )
-    per_token_loss1 = coef_1 * current_advantages
-    per_token_loss2 = coef_2 * current_advantages
-    per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+    if config.train.train_policy.aipo_rho is not None:
+        # Due to the asynchronous update of the reference model, the rollout is not necessarily
+        # the exact previous iterate of latest policy. So a more natural motivation is correct
+        # for the off-policyness of samples generated under previous policy, to contruct
+        # approximate on-policy update to latest policy.
+        # A difference from double-sided clipping of PPO, we use one-sided clipping.
+        rho = config.train.train_policy.aipo_rho
+        coef_1 = torch.exp(current_token_logps - old_per_token_logps)
+        per_token_loss = -torch.clamp(coef_1, max=rho) * current_advantages
+    else:
+        # the standard grpo loss
+        coef_1 = torch.exp(current_token_logps - old_per_token_logps)
+        coef_2 = torch.clamp(
+            coef_1,
+            1 - config.train.train_policy.epsilon_low,
+            1 + config.train.train_policy.epsilon_high,
+        )
+        per_token_loss1 = coef_1 * current_advantages
+        per_token_loss2 = coef_2 * current_advantages
+        per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
     if config.train.train_policy.kl_beta != 0.0:
         """
             With reference model used for KL. The logic should be further reviewed to verify.
