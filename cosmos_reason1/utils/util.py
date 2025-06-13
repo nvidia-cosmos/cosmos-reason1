@@ -323,12 +323,17 @@ def _logsumexp_fp32_backward(grad_output, input, logsumexp_values):
 class LogSumExpFp32Backward(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input):
-        logsumexp_values = torch.zeros(input.shape[:-1], dtype=torch.float32, device=input.device)
+        logsumexp_values = torch.zeros(
+            input.shape[:-1], dtype=torch.float32, device=input.device
+        )
         torch.logsumexp(input, dim=-1, out=logsumexp_values)
         ctx.save_for_backward(input, logsumexp_values)
         ctx.input_dtype = input.dtype
-        return logsumexp_values.to(torch.bfloat16) if input.dtype == torch.bfloat16 else logsumexp_values
-
+        return (
+            logsumexp_values.to(torch.bfloat16)
+            if input.dtype == torch.bfloat16
+            else logsumexp_values
+        )
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -367,14 +372,15 @@ def selective_log_softmax(logits, index):
     """
     if _SELECTIVE_LOG_SOFTMAX_OPTIM:
         # NOTE: aazzolini optimized.
-        selected_logits = torch.gather(
-            logits, dim=-1, index=index.unsqueeze(-1)
-        ).squeeze(-1).to(torch.float32)
+        selected_logits = (
+            torch.gather(logits, dim=-1, index=index.unsqueeze(-1))
+            .squeeze(-1)
+            .to(torch.float32)
+        )
         logsumexp_values = _logsumexp_fp32(logits)
-        return (
-            selected_logits - logsumexp_values
-        ).to(logits.dtype)  # log_softmax(x_i) = x_i - logsumexp(x)
-
+        return (selected_logits - logsumexp_values).to(
+            logits.dtype
+        )  # log_softmax(x_i) = x_i - logsumexp(x)
 
     if logits.dtype in [torch.float32, torch.float64]:
         selected_logits = torch.gather(

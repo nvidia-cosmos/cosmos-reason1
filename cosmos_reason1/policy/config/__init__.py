@@ -288,6 +288,18 @@ class GrpoConfig:
         },
     )
 
+    lower_bound_ratio: float = field(
+        default=3.0,
+        metadata={"help": "Lower-bound ratio for dual-clip."},
+    )
+
+    unbiased_advantage: bool = field(
+        default=False,
+        metadata={
+            "help": "Whether to divide the advantage by the standard deviation of rewards."
+        },
+    )
+
     overlong_reward: OverlongRewardConfig = field(
         default_factory=OverlongRewardConfig,
         metadata={

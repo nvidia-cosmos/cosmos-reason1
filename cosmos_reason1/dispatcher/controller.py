@@ -147,7 +147,8 @@ class Controller:
                     config=config,
                     tokenier=self.tokenizer,
                     explicit_reward_fn=reward_fns,
-                )
+                ),
+                unbiased=config.train.train_policy.unbiased_advantage,
             )
             self.train_dataloader = DataLoader(
                 self.dataset.train_set,

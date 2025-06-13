@@ -21,12 +21,10 @@ from cosmos_reason1.utils.constant import Algo
 
 class GRPO(RuleBasedAlgo):
     def __init__(
-        self, reward_fn: Callable, unbiased: bool = True, eps: float = 1e-5, **kwargs
+        self, reward_fn: Callable, unbiased: bool = False, eps: float = 1e-5, **kwargs
     ):
         super().__init__(**kwargs)
         self.reward_fn = reward_fn
-        # Inspired by [Dr.GRPO]
-        # where question level bias could be mitigated by unbiased=True
         self.unbiased = unbiased
         self.eps = eps
 

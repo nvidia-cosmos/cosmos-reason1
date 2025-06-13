@@ -124,7 +124,7 @@ def compute_loss(
         coef_1 = torch.exp(current_token_logps - old_per_token_logps)
         per_token_loss = -torch.clamp(coef_1, max=rho) * current_advantages
     else:
-        # the standard grpo loss
+        # the standard grpo loss with dual-clip PPO: https://arxiv.org/pdf/1912.09729
         coef_1 = torch.exp(current_token_logps - old_per_token_logps)
         coef_2 = torch.clamp(
             coef_1,
@@ -133,7 +133,12 @@ def compute_loss(
         )
         per_token_loss1 = coef_1 * current_advantages
         per_token_loss2 = coef_2 * current_advantages
-        per_token_loss = -torch.min(per_token_loss1, per_token_loss2)
+        per_token_loss3 = (
+            -config.train.train_policy.lower_bound_ratio * current_advantages
+        )
+        clip_losses1 = -torch.min(per_token_loss1, per_token_loss2)
+        clip_losses2 = torch.min(per_token_loss3, clip_losses1)
+        per_token_loss = torch.where(current_advantages < 0, clip_losses2, clip_losses1)
     if config.train.train_policy.kl_beta != 0.0:
         """
             With reference model used for KL. The logic should be further reviewed to verify.
