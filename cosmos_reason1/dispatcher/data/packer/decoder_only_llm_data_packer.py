@@ -72,13 +72,9 @@ class DecoderOnlyLLMDataPacker(DataPacker):
         prompt = self.get_rollout_input(sample)
         assert isinstance(prompt, str), "Prompt should be a string"
 
-        input_ids = self.tokenizer(
-            prompt, truncation=True, padding=False
-        ).input_ids  # Don't pad yet
+        input_ids = self.tokenizer(prompt).input_ids  # Don't pad yet
 
-        completion_ids = self.tokenizer(
-            completion, truncation=True, padding=False
-        ).input_ids
+        completion_ids = self.tokenizer(completion).input_ids
 
         return DecoderOnlyLLMDataPacker.RLPolicyInput(
             input_ids=input_ids + completion_ids,
@@ -126,7 +122,7 @@ class DecoderOnlyLLMDataPacker(DataPacker):
         """
         # 1. if item is a string, then assume it is a raw text
         if isinstance(sample, str):
-            token_ids = self.tokenizer(sample, truncation=True, padding=False).input_ids
+            token_ids = self.tokenizer(sample).input_ids
         # 2. if item is a list, then assume it is in conversation format of:
         # [
         #     {
