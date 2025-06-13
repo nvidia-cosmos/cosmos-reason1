@@ -235,6 +235,9 @@ class Trainer(CommMixin):
         else:
             merged_manifest = manifest
             total_tensor_size = total_chunk_size
+
+        torch.distributed.barrier()
+
         if self.global_rank == 0:
             with open(os.path.join(path, "model.safetensors.index.json"), "w") as f:
                 json.dump(
@@ -305,7 +308,4 @@ class Trainer(CommMixin):
                             os.path.join(self.config.train.ckpt.s3_prefix, rel_path),
                         ),
                     ).start()
-
-        torch.distributed.barrier()
-        if self.global_rank == 0:
             logger.info(f"\n\nExported safetensors to {path}\n\n")
