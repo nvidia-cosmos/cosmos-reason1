@@ -125,7 +125,7 @@ The SFT training can improve the model's capability on certain tasks with a simi
 In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
 
 ```shell
-python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml --launcher ./tools/dataset/cosmos_sft.py
+python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml
 ```
 
 After training finishes, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
@@ -176,7 +176,7 @@ The RL training can improve the model's reasoning capability on certain tasks wi
 In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
-python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml --launcher ./tools/dataset/cosmos_grpo.py
+python tools/launch_all.py --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 

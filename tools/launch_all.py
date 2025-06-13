@@ -175,12 +175,6 @@ def parse_args():
         description="Launch multiple processes with GPU assignments"
     )
     parser.add_argument(
-        "--launcher",
-        type=str,
-        default="cosmos_reason1.dispatcher.run_web_panel",
-        help="The launcher to use, default is `cosmos_reason1.dispatcher.run_web_panel`, a custom launcher can be provided for custom dataset and reward functions injection.",
-    )
-    parser.add_argument(
         "--config",
         type=str,
         required=True,
@@ -248,6 +242,13 @@ def parse_args():
         type=int,
         default=29345,
         help="Rendezvous endpoint port for the job, default is 29345. This is used when multi-node training are used for one replica.", 
+    )
+
+    parser.add_argument(
+        "launcher",
+        nargs="?",            # “?” means 0 or 1 occurrences
+        default="cosmos_reason1.dispatcher.run_web_panel",
+        help="The launcher to use, default is `cosmos_reason1.dispatcher.run_web_panel`, a custom launcher can be provided for custom dataset and reward functions injection."
     )
 
     parser.add_argument(
@@ -707,7 +708,7 @@ cat >config.toml <<EOF
 {config_content}
 EOF
 
-python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml --launcher {launcher}"""
+python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml {launcher}"""
 
         # Get all non-Lepton arguments
         non_lepton_args = []
@@ -1028,16 +1029,8 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml --launcher {launc
         logger.info(f"Temporary configuration file created at {tmpfile_toml}")
         controller_cmd = f"{controller_script} --config {tmpfile_toml}"
         controller_cmd += f" --port {port}"
-        controller_cmd += f" --launcher {args.launcher}"
+        controller_cmd += f" {args.launcher}"
         control_url = f"localhost:{port}"
-    # else:
-    #     if "cosmos" in cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", "").lower():
-    #         logger.info("Prepare data for Lepton job, please wait...")
-    #         from cosmos_reason1.policy.config import Config as PolicyConfig
-    #         policy_config = PolicyConfig.from_dict(cosmos_config)
-    #         from cosmos_reason1.utils.modelscope import update_config_if_modelscope
-    #         policy_config = update_config_if_modelscope(policy_config)
-    #         util.prepare_cosmos_data(config=policy_config)
 
     def get_lepton_ip(worker_idx: int) -> str:
         if "LEPTON_JOB_WORKER_INDEX" in os.environ:

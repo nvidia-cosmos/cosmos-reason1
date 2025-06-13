@@ -12,8 +12,8 @@ show_help() {
   echo "  --port <port>       Specify the port number (if not set, automatically chosen in runtime)"
   echo "  --config <file>     Specify the configuration file"
   echo "  --log <file>        Specify the redis log file"
-  echo "  --launcher <file>   Specify the launcher file"
   echo "  --help              Show this help message and exit"
+  echo "  <launcher>          Specify the launcher file"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -30,18 +30,14 @@ while [[ $# -gt 0 ]]; do
       LOG_FILE="$2"
       shift 2
       ;;
-    --launcher)
-      LAUNCHER="$2"
-      shift 2
-      ;;
     --help)
       show_help
       exit 0
       ;;
     *)
-      echo "Unknown option: $1"
-      show_help
-      exit 1
+      LAUNCHER="$1"
+      echo "Using launcher: $LAUNCHER"
+      shift
       ;;
   esac
 done

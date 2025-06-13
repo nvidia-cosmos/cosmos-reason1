@@ -297,12 +297,10 @@ class GRPOTrainer(Trainer):
         """
         wrap the object to cuda tensor for sync parameters using nccl.
         """
-        if isinstance(obj, torch.distributed.tensor.DTensor):
-            assert (
-                obj.device == self.device
-            ), "DTensor is not on the same device as the model."
-            return obj.to_local()
-        elif isinstance(obj, torch.Tensor):
+        if isinstance(obj, torch.Tensor):
+            if isinstance(obj, torch.distributed.tensor.DTensor):
+                obj = obj.to_local()
+
             if obj.device != self.device:
                 if in_place:
                     raise ValueError(
@@ -397,9 +395,14 @@ class GRPOTrainer(Trainer):
                     send_hook(local_view)
                 else:
                     recv_hook(local_view)
-                    # Copy again for offloaded tensor since it is not inplace
-                    if not obj.is_cuda:
-                        obj.copy_(local_view)
+                    if isinstance(obj, torch.distributed.tensor.DTensor):
+                        to_write = obj.to_local()
+                    else:
+                        to_write = obj
+
+                    # Copy again for offloaded tensor since it is not inplace received
+                    if not to_write.is_cuda:
+                        to_write.copy_(local_view)
                 len_params += 1
 
         # 2. Sync optimizer states
