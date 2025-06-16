@@ -30,9 +30,6 @@ from cosmos_reason1.utils.distributed import (
 from cosmos_reason1.policy.trainer.sft_trainer import SFTTrainer
 from cosmos_reason1.policy.trainer.grpo_trainer import GRPOTrainer
 from cosmos_reason1.policy.config import Config as PolicyConfig
-from cosmos_reason1.utils.pynccl import (
-    get_nccl_comm_nranks,
-)
 
 try:
     # for policy and rollout nccl env consistency
@@ -79,11 +76,7 @@ class mock_GRPOTrainer(GRPOTrainer):
                         continue
                     if self.global_rank != 0:
                         continue
-                    inter_nccl_cnt = (
-                        1
-                        if self.inter_policy_nccl == -1
-                        else get_nccl_comm_nranks(self.inter_policy_nccl)
-                    )
+                    inter_nccl_cnt = self.inter_policy_nccl.world_size()
                     torch.save(
                         {name: full_grad},
                         os.path.join(
@@ -93,7 +86,6 @@ class mock_GRPOTrainer(GRPOTrainer):
                     )
                     exit(0)
 
-        self.train_stream.wait_stream(self.sync_weight_stream)
         logger.debug(
             f"[Policy] Optimization step {self.optimize_step + 1} at train step {self.train_step + 1} finished."
         )

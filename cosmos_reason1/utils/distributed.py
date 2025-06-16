@@ -152,29 +152,50 @@ def gradient_reduce_across_dp_replicas_(
     comm.wait_comm_ready()
 
     for bucket in buckets.values():
-        tmp_buffer = torch.cat(bucket, dim=0).contiguous()
+        BUCKET_SIZE = 200 * 1024 * 1024
+        sub_buckets = []
+        current_bucket = []
+        current_size = 0
+        for tensor in bucket:
+            n_bytes = tensor.numel() * tensor.element_size()
+            if current_size + n_bytes > BUCKET_SIZE:
+                current_bucket.append(tensor)
+                sub_buckets.append(current_bucket)
+                current_bucket = []
+                current_size = 0
+                continue
+            current_bucket.append(tensor)
+            current_size += n_bytes
+        if current_size > 0:
+            sub_buckets.append(current_bucket)
+        del current_bucket
+        del current_size
 
-        # Convert to float32 to keep precision
-        original_dtype = tmp_buffer.dtype
-        tmp_buffer = tmp_buffer.float()
+        for sub_bucket in sub_buckets:
+            tmp_buffer = torch.cat(sub_bucket, dim=0).contiguous()
+            # Convert to float32 to keep precision
+            original_dtype = tmp_buffer.dtype
+            tmp_buffer = tmp_buffer.float()
 
-        # TODO a risk here, when comm is rebuilt, the reduce result will be wrong.
-        # For the first time to build mesh, we set a longer timeout (30 minutes) to avoid lost some slower replicas
-        timeout_ms = get_nccl_timeout_ms()
-        if gradient_reduce_across_dp_replicas_.first_invoke:
-            timeout_ms = 30 * 60 * 1000
-            gradient_reduce_across_dp_replicas_.first_invoke = False
+            # TODO a risk here, when comm is rebuilt, the reduce result will be wrong.
+            # For the first time to build mesh, we set a longer timeout (30 minutes) to avoid lost some slower replicas
+            timeout_ms = get_nccl_timeout_ms()
+            if gradient_reduce_across_dp_replicas_.first_invoke:
+                timeout_ms = 30 * 60 * 1000
+                gradient_reduce_across_dp_replicas_.first_invoke = False
 
-        comm.allreduce(tmp_buffer, tmp_buffer, "avg", timeout_ms=timeout_ms)
-        tmp_buffer = tmp_buffer.to(original_dtype)
+            comm.allreduce(tmp_buffer, tmp_buffer, "avg", timeout_ms=timeout_ms)
+            tmp_buffer = tmp_buffer.to(original_dtype)
 
-        # copy the result back to original grad
-        offset = 0
-        for g in bucket:
-            size = g.numel()
-            g.copy_(tmp_buffer[offset : offset + size].view_as(g))
-            offset += size
-            assert offset <= tmp_buffer.numel(), "offset should be equal to total size"
+            # copy the result back to original grad
+            offset = 0
+            for g in sub_bucket:
+                size = g.numel()
+                g.copy_(tmp_buffer[offset : offset + size].view_as(g))
+                offset += size
+                assert (
+                    offset <= tmp_buffer.numel()
+                ), "offset should be equal to total size"
 
 
 gradient_reduce_across_dp_replicas_.first_invoke = True

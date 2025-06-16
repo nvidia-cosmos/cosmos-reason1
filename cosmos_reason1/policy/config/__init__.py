@@ -673,6 +673,9 @@ class RolloutConfig:
     parallelism: RolloutParallelismConfig = field(
         default_factory=RolloutParallelismConfig
     )
+    enforce_eager: bool = field(
+        default=True, metadata={"help": "Whether to enable eager execution for vLLM."}
+    )
     gpu_memory_utilization: float = field(
         default=0.8,
         metadata={"help": "GPU memory utilization factor for rollout backend."},

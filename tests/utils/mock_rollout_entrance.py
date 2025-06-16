@@ -86,19 +86,23 @@ class mock_vLLMRolloutWorker(vLLMRolloutWorker):
         """
         Mock the rollout procedure.
         """
-        self.weight_synced_event.wait()
-        print("mock rollout_procedure")
 
         def _sendrequest_helper(response: RolloutRequest):
             try:
                 _ = requests.post(
-                    f"{self.remote_host}/{COSMOS_API_ROLLOUT_SUFFIX}",
+                    f"{self.remote_hosts[0]}/{COSMOS_API_ROLLOUT_SUFFIX}",
                     json=response.model_dump(),
                 )
             except Exception as e:
                 print(f"Failed in post rollout completion to controller: {str(e)}")
 
         while not self.shutdown_background_task_event.is_set():
+            self.consume_command()
+            if not self.weight_synced_event.is_set():
+                continue
+            self.request_new_prompts()
+            # print("mock rollout_procedure")
+
             if self._prompt_queue.empty():
                 if self.prompt_end_event.is_set():
                     # if we have no prompt and the prompt end event is set, we can stop the worker.
@@ -112,8 +116,8 @@ class mock_vLLMRolloutWorker(vLLMRolloutWorker):
                         # post end event to controller
                         response = RolloutRequest(
                             src_replica_name=self.replica_name,
-                            prompt_idx=-1,
-                            prompt="",
+                            prompt_idxs=[-1],
+                            payloads=[],
                             completions=[],
                             extra_info={"is_end": True},
                         )
@@ -127,9 +131,9 @@ class mock_vLLMRolloutWorker(vLLMRolloutWorker):
             # post mock data
             response = RolloutRequest(
                 src_replica_name=self.replica_name,
-                prompt_idx=self.mock_data[0]["prompt_idx"],
-                prompt=self.mock_data[0]["prompt"],
-                completions=[r["completion"] for r in self.mock_data],
+                prompt_idxs=[self.mock_data[0]["prompt_idx"]],
+                payloads=[self.mock_data[0]["prompt"]],
+                completions=[[r["completion"] for r in self.mock_data]],
             )
             _sendrequest_helper(response)
 

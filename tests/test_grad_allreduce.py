@@ -16,14 +16,10 @@
 import os
 import sys
 import glob
-import time
 import toml
 import atexit
 import subprocess
 import torch
-
-from tools.launch_processes import launch_processes
-
 
 WORK_DIR = "/tmp/test_grad_allreduce"
 CTRL_URL = ""
@@ -82,11 +78,11 @@ dataset_name = "JiaxinTsao/math_examples"
 prompt_column_name = "prompt"
 response_column_name = "result"
 reward_function = "boxed_math"
-temperature = 0.9
+dataset_train_split="train"
+temperature = 1
 epsilon_low = 0.2
 epsilon_high = 0.2
 kl_beta = 0.0
-mu_iterations = 1
 
 [train.ckpt]
 enable_checkpoint = true
@@ -147,16 +143,13 @@ def launch_rollout(config: str):
     """
     print("launch rollout")
 
-    return launch_processes(
-        [
-            "torchrun --nproc-per-node 2 --role rank --tee 3 "
-            "--rdzv_backend c10d --rdzv_endpoint=localhost:0 "
-            "tests/utils/mock_rollout_entrance.py"
-        ],
-        gpu_devices=["6,7"],
-        control_urls=[CTRL_URL],
-        output_files=[os.path.join(WORK_DIR, "rollout.log")],
-    )
+    cmd = f"CUDA_VISIBLE_DEVICES=6,7 COSMOS_CONTROLLER_HOST={CTRL_URL} ./tools/launch_replica.sh --type rollout --ngpus 2"
+    print(f"launch rollout with cmd: {cmd}")
+    return [
+        subprocess.Popen(
+            cmd, shell=True, stdout=sys.stdout, stderr=sys.stderr, text=True
+        )
+    ]
 
 
 def launch_policy(config: str, gpus: str):
@@ -173,16 +166,13 @@ def launch_policy(config: str, gpus: str):
     )
     assert ngpu <= 4, "for test, policy will max use 4 gpus"
 
-    return launch_processes(
-        [
-            f"torchrun --nproc-per-node {ngpu} --role rank --tee 3 "
-            "--rdzv_backend c10d --rdzv_endpoint=localhost:0 "
-            "tests/utils/mock_policy_entrance.py"
-        ],
-        gpu_devices=[gpus],
-        control_urls=[CTRL_URL],
-        output_files=[os.path.join(WORK_DIR, "policy.log")],
-    )
+    cmd = f"CUDA_VISIBLE_DEVICES={gpus} COSMOS_CONTROLLER_HOST={CTRL_URL} ./tools/launch_replica.sh --type policy --ngpus {ngpu}"
+    print(f"launch policy with cmd: {cmd}")
+    return [
+        subprocess.Popen(
+            cmd, shell=True, stdout=sys.stdout, stderr=sys.stderr, text=True
+        )
+    ]
 
 
 def compare_ckpt_grad(dp_shard_ckpt_path: str, dp_replica_ckpt_path: str):
@@ -220,7 +210,11 @@ def cleanup():
     popens.clear()
 
     # try kill created processes
-    login_user = os.getlogin()
+    try:
+        login_user = os.getlogin()
+    except Exception:
+        login_user = "root"
+
     subprocess.run(f"pkill -u {login_user} -f 'cosmos'", shell=True)
     subprocess.run(f"pkill -u {login_user} -f 'redis'", shell=True)
     subprocess.run(f"pkill -u {login_user} -f 'torchrun'", shell=True)
@@ -237,30 +231,30 @@ if __name__ == "__main__":
     # Create the work directory
     os.makedirs(WORK_DIR, exist_ok=True)
 
-    # step 1: run a normal training with dp_replica=1, dp_shard=2
-    print("step 1: run a normal training with dp_replica=1, dp_shard=2")
-    # Write the training config file
-    config = write_train_config(dp_replica=1, dp_shard=2)
-    # Launch the controller
-    popens += launch_controller(config)
-    # Launch the rollout
-    popens += launch_rollout(config)
-    # Launch the policy process
-    popens += launch_policy(config, "0,1,2,3")
-    # wait for policy finish
-    popens[-1].wait()
-    # kill all processes
-    cleanup()
+    # # step 1: run a normal training with dp_replica=1, dp_shard=2
+    # print("step 1: run a normal training with dp_replica=1, dp_shard=2")
+    # # Write the training config file
+    # config = write_train_config(dp_replica=1, dp_shard=2)
+    # # Launch the controller
+    # popens += launch_controller(config)
+    # # Launch the rollout
+    # popens += launch_rollout(config)
+    # # Launch the policy process
+    # popens += launch_policy(config, "0,1,2,3")
+    # # wait for policy finish
+    # popens[-1].wait()
+    # # kill all processes
+    # cleanup()
 
-    # wait for a while to ensure all processes are killed
-    time.sleep(2)
+    # # wait for a while to ensure all processes are killed
+    # time.sleep(2)
 
     # step 2: run a normal training with dp_replica=2, dp_shard=1
     print("step 2: run a normal training with dp_replica=2, dp_shard=1")
     # Write the training config file
     config = write_train_config(dp_replica=2, dp_shard=1)
     # Launch the controller
-    popens += launch_controller(config, 8081)
+    popens += launch_controller(config, 8300)
     # Mock rollout
     popens += launch_rollout(config)
     # Launch 2 policy process
