@@ -13,14 +13,10 @@ class DecoderOnlyLLMDataPacker(DataPacker):
     class RLPolicyInput:
         input_ids: List[int]
         logprob_masks: List[int]
-        token_masks: List[int]
 
-        def __init__(
-            self, input_ids: List[int], logprob_masks: List[int], token_masks: List[int]
-        ):
+        def __init__(self, input_ids: List[int], logprob_masks: List[int]):
             self.input_ids = input_ids
             self.logprob_masks = logprob_masks
-            self.token_masks = token_masks
 
     def get_rollout_input(self, sample: Union[str, ConversationType]) -> str:
         """
@@ -79,7 +75,6 @@ class DecoderOnlyLLMDataPacker(DataPacker):
         return DecoderOnlyLLMDataPacker.RLPolicyInput(
             input_ids=input_ids + completion_ids,
             logprob_masks=[0] * (len(input_ids) - 1) + [1] * len(completion_ids) + [0],
-            token_masks=[0] * len(input_ids) + [1] * len(completion_ids),
         )
 
     def policy_compute_max_len(self, processed_samples: List[RLPolicyInput]) -> int:
@@ -90,10 +85,9 @@ class DecoderOnlyLLMDataPacker(DataPacker):
     ) -> Dict[str, Any]:
         input_ids = [x.input_ids for x in processed_samples]
         logprob_masks = [x.logprob_masks for x in processed_samples]
-        token_masks = [x.token_masks for x in processed_samples]
-        assert (
-            len(input_ids) == len(logprob_masks) == len(token_masks)
-        ), "The length of input_ids, logprob_masks, and token_masks should be the same"
+        assert len(input_ids) == len(
+            logprob_masks
+        ), "The length of input_ids, and logprob_masks should be the same"
         device = torch.cuda.current_device()
 
         collated_dict = {}
@@ -106,10 +100,6 @@ class DecoderOnlyLLMDataPacker(DataPacker):
         ).to(device)
         collated_dict["logprob_masks"] = torch.tensor(
             [x + [0] * (max(0, computed_max_len - len(x))) for x in logprob_masks],
-            dtype=torch.bool,
-        ).to(device)
-        collated_dict["token_masks"] = torch.tensor(
-            [x + [0] * (max(0, computed_max_len - len(x))) for x in token_masks],
             dtype=torch.bool,
         ).to(device)
 

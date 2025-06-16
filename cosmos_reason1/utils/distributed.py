@@ -150,22 +150,23 @@ def gradient_reduce_across_dp_replicas_(
 
     # move all grad into one bucket
     comm.wait_comm_ready()
-    nranks = comm.world_size()
 
     for bucket in buckets.values():
         tmp_buffer = torch.cat(bucket, dim=0).contiguous()
-        # we need scale grad by 1/nranks to keep grad is mean at sample level
-        tmp_buffer = tmp_buffer / nranks
+
+        # Convert to float32 to keep precision
+        original_dtype = tmp_buffer.dtype
+        tmp_buffer = tmp_buffer.float()
 
         # TODO a risk here, when comm is rebuilt, the reduce result will be wrong.
-
         # For the first time to build mesh, we set a longer timeout (30 minutes) to avoid lost some slower replicas
         timeout_ms = get_nccl_timeout_ms()
         if gradient_reduce_across_dp_replicas_.first_invoke:
             timeout_ms = 30 * 60 * 1000
             gradient_reduce_across_dp_replicas_.first_invoke = False
 
-        comm.allreduce(tmp_buffer, tmp_buffer, "sum", timeout_ms=timeout_ms)
+        comm.allreduce(tmp_buffer, tmp_buffer, "avg", timeout_ms=timeout_ms)
+        tmp_buffer = tmp_buffer.to(original_dtype)
 
         # copy the result back to original grad
         offset = 0

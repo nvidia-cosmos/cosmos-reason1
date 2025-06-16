@@ -19,14 +19,10 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
     class RLPolicyInput:
         input_ids: List[int]
         logprob_masks: List[int]
-        token_masks: List[int]
 
-        def __init__(
-            self, input_ids: List[int], logprob_masks: List[int], token_masks: List[int]
-        ):
+        def __init__(self, input_ids: List[int], logprob_masks: List[int]):
             self.input_ids = input_ids
             self.logprob_masks = logprob_masks
-            self.token_masks = token_masks
 
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
         super().setup(config, tokenizer, *args, **kwargs)
@@ -183,7 +179,6 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
         return_dict["logprob_masks"] = (
             [0] * (len(input_ids) - 1) + [1] * len(completion_ids) + [0]
         )
-        return_dict["token_masks"] = [0] * len(input_ids) + [1] * len(completion_ids)
         return return_dict
 
     def policy_compute_max_len(self, processed_samples: List[Dict[str, Any]]) -> int:
@@ -275,7 +270,7 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
                 pixel_values_images_lengths_per_sample, dtype=torch.long
             ).view(-1, 1)
 
-        # Pad the input_ids, logprob_masks, and token_masks
+        # Pad the input_ids, logprob_masks
         batch["input_ids"] = torch.tensor(
             [
                 x["input_ids"]
@@ -293,20 +288,10 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
             ],
             dtype=torch.bool,
         )
-        batch["token_masks"] = torch.tensor(
-            [
-                x["token_masks"]
-                + [0] * (max(0, computed_max_len - len(x["token_masks"])))
-                for x in processed_samples
-            ],
-            dtype=torch.bool,
-        )
 
-        assert (
-            len(batch["input_ids"])
-            == len(batch["logprob_masks"])
-            == len(batch["token_masks"])
-        ), "The length of input_ids, logprob_masks, and token_masks should be the same"
+        assert len(batch["input_ids"]) == len(
+            batch["logprob_masks"]
+        ), "The length of input_ids, logprob_masks should be the same"
 
         return batch
 
@@ -336,7 +321,6 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
             processed_samples, computed_max_len
         )
         del model_inputs["logprob_masks"]
-        del model_inputs["token_masks"]
 
         input_ids = torch.tensor(
             [

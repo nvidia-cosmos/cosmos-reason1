@@ -293,6 +293,22 @@ class GrpoConfig:
         metadata={"help": "Lower-bound ratio for dual-clip."},
     )
 
+    loss_type: str = field(
+        default="token-mean",
+        metadata={
+            "choices": ["token-mean", "seq-mean-token-sum", "seq-mean-token-mean"],
+            "help": "The type of loss to use for GRPO training.",
+        },
+    )
+
+    unbiased_loss_max_tokens: Optional[int] = field(
+        default=None,
+        metadata={
+            "help": "Maximum number of tokens to use for unbiased loss introduced in Dr.GRPO. If set to None, will not use unbiased loss."
+            "Only available when `loss_type` is `seq-mean-token-mean`"
+        },
+    )
+
     unbiased_advantage: bool = field(
         default=False,
         metadata={

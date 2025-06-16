@@ -852,3 +852,19 @@ def is_master_rank(parallel_dims, global_rank: int):
         and global_rank
         == (parallel_dims.world_size - parallel_dims.world_size / parallel_dims.pp)
     )
+
+
+def masked_mean(values, mask, axis=None):
+    """
+    Compute the mean of `values` over elements selected by `mask`.
+
+    Args:
+        values (Tensor): Input tensor.
+        mask (Tensor): Boolean or numeric mask of the same shape as `values`.
+        axis (int or tuple of int, optional): Dimension(s) along which to compute the mean.
+            Defaults to None (over all elements).
+
+    Returns:
+        Tensor: Masked mean, with shape equal to `values` reduced over `axis`.
+    """
+    return (values * mask).sum(axis=axis) / (mask.sum(axis=axis) + 1e-8)
