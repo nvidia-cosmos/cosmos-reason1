@@ -45,6 +45,7 @@ from cosmos_reason1.dispatcher.data.packer.decoder_only_llm_data_packer import (
 )
 from transformers.modeling_rope_utils import ROPE_INIT_FUNCTIONS
 from functools import cached_property, partial
+from flash_attn import flash_attn_func
 
 
 class RMSNorm(nn.Module):
@@ -282,18 +283,11 @@ class Attention(nn.Module):
         cos, sin = position_embeddings
         xq, xk = apply_rotary_pos_emb(xq, xk, cos, sin)
 
-        # repeat k/v heads if n_kv_heads < n_heads
-        keys = repeat_kv(xk, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
-        values = repeat_kv(xv, self.n_rep)  # (bs, seqlen, n_local_heads, head_dim)
-
-        xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        xk = keys.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-        xv = values.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
-
-        output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
-        output = output.transpose(
-            1, 2
-        ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
+        output = flash_attn_func(xq, xk, xv, causal=True)
+        # output = F.scaled_dot_product_attention(xq, xk, xv, is_causal=True)
+        # output = output.transpose(
+        #     1, 2
+        # ).contiguous()  # (bs, seqlen, n_local_heads, head_dim)
         output = output.view(bs, seqlen, -1)
         return self.o_proj(output)
 
@@ -353,9 +347,14 @@ class FakeGroupMMBackwardCheck(torch.autograd.Function):
         grad_x = torch._grouped_mm(
             grad_output, w.transpose(-2, -1), m_offsets, out_dtype=out_dtype
         )
+        # remove NaNs
+        grad_x = torch.nan_to_num(grad_x)
+
         grad_w = torch._grouped_mm(
             x.transpose(-2, -1), grad_output, m_offsets, out_dtype=out_dtype
         )
+        # remove NaNs
+        grad_w = torch.nan_to_num(grad_w)
         return grad_x, grad_w, None, None
 
 
@@ -543,7 +542,6 @@ class FeedForward(nn.Module):
                 tokens_per_expert_group,
                 self.local_experts,
                 self.ep_size,
-                token_gather_buf.shape[0],
                 ALIGN_SIZE_M,
             )
         # Permute the received tokens so that tokens for the same expert are contiguous.

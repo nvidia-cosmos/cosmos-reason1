@@ -28,7 +28,7 @@ max_response_length = 2048
 n_generation = 16
 batch_size = 1
 quantization = "none"
-seed = 42
+
 
 [policy]
 model_name_or_path = "Qwen/Qwen2.5-7B-Instruct"

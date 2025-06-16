@@ -114,8 +114,6 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             maxsize=COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE
         )
 
-        self.seed = self.config.rollout.seed
-
         # check for flashinfer
         if self.config.rollout.vllm_use_flashinfer:
             os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER"
@@ -125,7 +123,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         self.rollout: vLLMRollout = vLLMRollout(
             self.config,
             tokenizer=self.tokenizer,
-            seed=self.seed,
+            seed=self.config.rollout.seed,
             load_format="dummy",
         )
         _patch_vllm_rollout_locked_step(self.rollout, self.consume_command)
@@ -392,10 +390,8 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
             src_rank = self.replica_name_to_rank[src_replica_name]
 
-            cnt = 0
             for parameter in self.get_underlying_model().parameters():
                 nccl_broadcast(parameter, src_rank, self.global_commnicator_idex)
-                cnt += 1
 
             self.weight_synced_event.set()
 

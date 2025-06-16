@@ -114,6 +114,11 @@ def compute_loss(
             - 1
         )
 
+    # Same processing as `verl`
+    # Clamp coef_1 for stability
+    coef_1 = torch.clamp(current_token_logps - old_per_token_logps, min=-20.0, max=20.0)
+    coef_1 = torch.exp(coef_1)
+
     if config.train.train_policy.aipo_rho is not None:
         # Due to the asynchronous update of the reference model, the rollout is not necessarily
         # the exact previous iterate of latest policy. So a more natural motivation is correct
@@ -121,11 +126,9 @@ def compute_loss(
         # approximate on-policy update to latest policy.
         # A difference from double-sided clipping of PPO, we use one-sided clipping.
         rho = config.train.train_policy.aipo_rho
-        coef_1 = torch.exp(current_token_logps - old_per_token_logps)
         per_token_loss = -torch.clamp(coef_1, max=rho) * current_advantages
     else:
         # the standard grpo loss with dual-clip PPO: https://arxiv.org/pdf/1912.09729
-        coef_1 = torch.exp(current_token_logps - old_per_token_logps)
         coef_2 = torch.clamp(
             coef_1,
             1 - config.train.train_policy.epsilon_low,
@@ -139,16 +142,17 @@ def compute_loss(
         clip_losses1 = -torch.min(per_token_loss1, per_token_loss2)
         clip_losses2 = torch.min(per_token_loss3, clip_losses1)
         per_token_loss = torch.where(current_advantages < 0, clip_losses2, clip_losses1)
+
     if config.train.train_policy.kl_beta != 0.0:
         """
             With reference model used for KL. The logic should be further reviewed to verify.
         """
         kl_loss = config.train.train_policy.kl_beta * per_token_kl
         per_token_loss += kl_loss
+    else:
+        kl_loss = torch.zeros_like(per_token_loss)
 
-        return per_token_loss.mean(), kl_loss.mean()
-
-    return per_token_loss.mean(), 0.0
+    return per_token_loss.mean(), kl_loss.mean()
 
 
 class GRPOTrainer(Trainer):
@@ -1118,21 +1122,6 @@ class GRPOTrainer(Trainer):
         ), "Batch size should be divided evenly by mini_batch"
         num_mini_batch = batch_size // mini_batch_size
 
-        # Get each input length of processed_samples
-        # seq_lengths = [
-        #     self.data_packer.policy_compute_max_len([sample])
-        #     for sample in processed_samples
-        # ]
-        # # sort `processed_samples` by `seq_lengths` in descending order
-        # processed_samples = [
-        #     x
-        #     for _, x in sorted(
-        #         zip(seq_lengths, processed_samples),
-        #         key=lambda pair: pair[0],
-        #         reverse=True,
-        #     )
-        # ]
-
         # Initialize placeholder for old per-token logprobs
         self.old_per_token_logps = [None for _ in range(num_mini_batch)]
         self.ref_per_token_logps = [None for _ in range(num_mini_batch)]
@@ -1149,6 +1138,9 @@ class GRPOTrainer(Trainer):
 
         need_compute_ref, kl_beta = self._swap_model_state_dict()
 
+        loss_sum = torch.tensor(0.0, device=self.device)
+        kl_loss_sum = torch.tensor(0.0, device=self.device)
+        loss_count = 0
         is_computing_refs = [True, False] if need_compute_ref else [False]
         for is_computing_ref in is_computing_refs:
             # Set model to eval mode if reference model is being used
@@ -1387,6 +1379,9 @@ class GRPOTrainer(Trainer):
                                         loss /= num_mini_batch
                                         kl_loss /= num_mini_batch
                                     loss.backward()
+                                    loss_sum += loss.item()
+                                    loss_count += 1
+                                    kl_loss_sum += kl_loss.item()
                             logger.debug(
                                 f"[Policy] Minibatch backward step {self.mini_step + 1} at train step {self.train_step + 1} finished."
                             )
@@ -1397,12 +1392,13 @@ class GRPOTrainer(Trainer):
         self.ref_per_token_logps = []
         end_time = time.time()
 
+        loss = (loss_sum / loss_count) if loss_count > 0 else loss_sum
+        kl_loss = (kl_loss_sum / loss_count) if loss_count > 0 else kl_loss_sum
         if (
             self.parallel_dims.dp_replicate_enabled
             or self.parallel_dims.dp_shard_enabled
             or self.parallel_dims.cp_enabled
         ):
-            loss = loss.detach()
             global_avg_loss, global_max_loss = (  # noqa: F841
                 dist_util.dist_mean(loss, self.parallel_dims.mesh["dp_cp"]),
                 dist_util.dist_max(loss, self.parallel_dims.mesh["dp_cp"]),
@@ -1413,9 +1409,9 @@ class GRPOTrainer(Trainer):
                     dist_util.dist_max(kl_loss, self.parallel_dims.mesh["dp_cp"]),
                 )
         else:
-            global_avg_loss = global_max_loss = loss.item()  # noqa: F841
+            global_avg_loss = global_max_loss = loss  # noqa: F841
             if self.config.train.train_policy.kl_beta != 0.0:
-                global_avg_kl_loss = global_max_kl_loss = kl_loss.item()  # noqa: F841
+                global_avg_kl_loss = global_max_kl_loss = kl_loss  # noqa: F841
 
         step_logging = True
         if self.config.logging.enable_logging:

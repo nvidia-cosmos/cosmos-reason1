@@ -28,7 +28,7 @@ n_generation = 16
 batch_size = 24 
 quantization = "none"
 max_response_length = 20480
-seed = 42
+
 
 [rollout.sampling_config]
 temperature = 1.0

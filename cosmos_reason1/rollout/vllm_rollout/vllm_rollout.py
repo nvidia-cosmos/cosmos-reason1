@@ -32,8 +32,6 @@ from cosmos_reason1.rollout.vllm_rollout.vllm_patch import (
 from cosmos_reason1.policy.config import RolloutConfig
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 
-DEFAULT_SEED_FOR_VLLM = 42
-
 
 def vllm_version_check(rollout_config: RolloutConfig):
     vllm_version = vllm.__version__
@@ -115,7 +113,7 @@ class vLLMRollout(RolloutBase):
             enable_chunked_prefill=self.rollout_config.enable_chunked_prefill,
             enable_prefix_caching=True,
             trust_remote_code=trust_remote_code,
-            seed=kwargs.get("seed", DEFAULT_SEED_FOR_VLLM),
+            seed=kwargs.get("seed") or 42,
             # Note: We set load_format="dummy" to avoid loading the HF model weights which could cause too many requests from multiple replicas.
             # This will affect:
             #      1. for the benchmark, the result won't be correct because now we have random weights. But it is fine for profiling.

@@ -684,7 +684,7 @@ class RolloutConfig:
         },
     )
 
-    seed: int = field(default=42, metadata={"help": "random seed for rollout."})
+    seed: int = field(default=None, metadata={"help": "random seed for rollout."})
 
     sampling_config: SamplingConfig = field(default_factory=SamplingConfig)
 

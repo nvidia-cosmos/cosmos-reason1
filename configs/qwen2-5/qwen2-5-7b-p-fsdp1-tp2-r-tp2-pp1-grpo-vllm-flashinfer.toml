@@ -28,7 +28,7 @@ max_response_length = 2048
 n_generation = 16
 batch_size = 1
 quantization = "none"
-seed = 42
+
 vllm_use_flashinfer = true
 
 [policy]
