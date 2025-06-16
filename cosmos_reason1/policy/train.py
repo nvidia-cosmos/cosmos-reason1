@@ -43,13 +43,12 @@ def run_train():
     init_distributed()
     parallel_dims.build_mesh(device_type="cuda")
 
-    if cosmos_config.logging.enable_logging:
-        if is_wandb_available():
-            init_wandb(cosmos_config, parallel_dims)
-        else:
-            logger.warning(
-                "Wandb is not available. Please install it to use wandb logging features."
-            )
+    if "wandb" in cosmos_config.logging.logger and is_wandb_available():
+        init_wandb(cosmos_config, parallel_dims)
+    else:
+        logger.warning(
+            "Wandb is not available. Please install it to use wandb logging features."
+        )
 
     policy_type = cosmos_config.train.train_policy.type
 

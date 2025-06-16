@@ -26,7 +26,6 @@ from cosmos_reason1.policy.config import (
 from cosmos_reason1.utils.util import compute_mfu
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
-import time
 import torch
 import numpy as np
 from torch.utils.data import Dataset
@@ -400,7 +399,9 @@ class SFTTrainer(Trainer):
                     data_loader_bias -= 1
                     continue
                 self.model.train()
-                start_time = time.time()
+                start_event = torch.cuda.Event(enable_timing=True)
+                end_event = torch.cuda.Event(enable_timing=True)
+                start_event.record()
                 for k, v in batch.items():
                     batch[k] = v.to(self.device) if isinstance(v, torch.Tensor) else v
 
@@ -490,7 +491,8 @@ class SFTTrainer(Trainer):
                 self.lr_schedulers.step()
 
                 self.train_step += 1
-                end_time = time.time()
+                end_event.record()
+                self.train_event_queue.append((start_event, end_event, self.train_step))
 
                 if (
                     self.parallel_dims.dp_replicate_enabled
@@ -504,16 +506,37 @@ class SFTTrainer(Trainer):
                 else:
                     global_avg_loss = global_max_loss = loss.item()  # noqa: F841
 
-                step_logging = True
-                if self.config.logging.enable_logging:
-                    step_logging = is_wandb_available()
+                if self.config.logging.logger:
                     if util.is_master_rank(self.parallel_dims, self.global_rank):
-                        iter_time = end_time - start_time
+                        while (
+                            len(self.train_event_queue) > 0
+                            and self.train_event_queue[0][1].query()
+                        ):
+                            iter_start_event, iter_end_event, iter_step = (
+                                self.train_event_queue.popleft()
+                            )
+                            iter_time = (
+                                iter_start_event.elapsed_time(iter_end_event) / 1000.0
+                            )  # in seconds
+                            if (
+                                "wandb" in self.config.logging.logger
+                                and is_wandb_available()
+                            ):
+                                log_wandb(
+                                    data={
+                                        "train/iteration_time": iter_time,
+                                    },
+                                    step=iter_step,
+                                )
+                            if "console" in self.config.logging.logger:
+                                logger.info(
+                                    f"Step: {iter_step}/{self.total_steps}, Iteration time: {iter_time:.3f}s."
+                                )
+
                         report_data = {
                             "train/loss_avg": global_avg_loss,
                             "train/loss_max": global_max_loss,
                             "train/learning_rate": self.lr_schedulers.get_last_lr()[0],
-                            "train/iteration_time": iter_time,
                         }
 
                         # FIXME(dinghaoy): only compute MFU of rank 0, if enable tp or pp,
@@ -528,23 +551,18 @@ class SFTTrainer(Trainer):
                             )
                             for k, v in mfu.items():
                                 report_data[f"train/{k}"] = v
-                        if is_wandb_available():
+                        if (
+                            "wandb" in self.config.logging.logger
+                            and is_wandb_available()
+                        ):
                             log_wandb(
                                 data=report_data,
                                 step=self.train_step,
                             )
-                        else:
+                        if "console" in self.config.logging.logger:
                             logger.info(
-                                f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s."
+                                f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}."
                             )
-
-                if step_logging and (
-                    (not self.parallel_dims.pp_enabled)
-                    or (self.parallel_dims.pp_enabled and pp_last_stage)
-                ):
-                    logger.info(
-                        f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5e}"
-                    )
 
                 # For profiling
                 self.profiler.step()

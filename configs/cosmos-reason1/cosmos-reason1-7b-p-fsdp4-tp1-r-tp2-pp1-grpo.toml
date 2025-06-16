@@ -42,7 +42,7 @@ model_max_length = 10240
 model_gradient_checkpointing = true
 
 [logging]
-enable_logging = true
+logger = ['console', 'wandb']
 project_name = "cosmos_reason1"
 experiment_name = "cosmos-reason1-rl"
 

@@ -24,6 +24,7 @@ import json
 import os
 import torch
 import threading
+from collections import deque
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.checkpoint import (
     upload_folder_to_s3,
@@ -80,6 +81,7 @@ class Trainer(CommMixin):
             )
 
         self.train_stream = torch.cuda.current_stream()
+        self.train_event_queue = deque()
         model = build_model(config)
         if config.train.fsdp_offload:
             model.to_empty(device="cpu")

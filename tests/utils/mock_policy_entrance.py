@@ -19,7 +19,7 @@ import torch
 from typing import override
 
 from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.wandb_logger import init_wandb
+from cosmos_reason1.utils.wandb_logger import init_wandb, is_wandb_available
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.utils.distributed import (
     init_distributed,
@@ -120,7 +120,7 @@ def run_train():
     init_distributed()
     parallel_dims.build_mesh(device_type="cuda")
 
-    if cosmos_config.logging.enable_logging:
+    if "wandb" in cosmos_config.logging.logger and is_wandb_available():
         init_wandb(cosmos_config, parallel_dims)
 
     policy_type = cosmos_config.train.train_policy.type

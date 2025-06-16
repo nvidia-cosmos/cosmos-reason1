@@ -718,9 +718,9 @@ class RolloutConfig:
 
 @dataclass
 class LoggingConfig:
-    enable_logging: bool = field(
-        default=False,
-        metadata={"help": "Enable wandb logging for training."},
+    logger: List[str] = field(
+        default_factory=list,
+        metadata={"help": "List of loggers to use, e.g., ['console', 'wandb']"},
     )
     project_name: str = field(
         default="cosmos_reason1",
@@ -854,3 +854,5 @@ class Config:
                         self.train.ckpt.upload_s3
                     )
                 )
+        if self.logging.logger:
+            self.logging.logger = [logger.lower() for logger in self.logging.logger]

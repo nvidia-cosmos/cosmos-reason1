@@ -27,11 +27,16 @@ import itertools
 import os
 import signal
 import threading
+import numpy as np
 from queue import Queue
 from cosmos_reason1.dispatcher.replica import Atom, Replica, Rollout
 from cosmos_reason1.dispatcher.protocol import Role, MESH_NAMES
 from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.wandb_logger import is_wandb_available, init_wandb
+from cosmos_reason1.utils.wandb_logger import (
+    is_wandb_available,
+    init_wandb,
+    log_wandb,
+)
 import cosmos_reason1.utils.util as util
 import cosmos_reason1.utils.network_util as network_util
 import cosmos_reason1.utils.constant as constant
@@ -95,6 +100,7 @@ class Controller:
 
         # Buffer for rollouts in case policy replicas are not ready
         self.rollout_buffer = Queue()
+        self.per_step_rollout_buffer = Queue()
         self.policy_init_done = False
         self.rollout_init_done = False
         self.shut_down_event = threading.Event()
@@ -119,13 +125,12 @@ class Controller:
             config.policy.model_name_or_path
         )
 
-        if config.logging.enable_logging:
-            if is_wandb_available():
-                init_wandb(config)
-            else:
-                logger.warning(
-                    "Wandb is not available. Please install it to use wandb logging features."
-                )
+        if "wandb" in config.logging.logger and is_wandb_available():
+            init_wandb(config)
+        else:
+            logger.warning(
+                "Wandb is not available. Please install it to use wandb logging features."
+            )
 
         self.is_rl = task_type != "sft"
         self.sft_user_dataset = dataset if not self.is_rl else None
@@ -428,6 +433,8 @@ class Controller:
                 self.policy_status_manager.get_num_data_samples()
                 - self.config.train.train_batch_per_replica * len(sorted_replicas)
             )
+            cur_train_step = self.policy_status_manager.completed_train_step() + 1
+            total_steps = self.policy_status_manager.get_total_steps()
             for replica in sorted_replicas:
                 """
                 Here we need to trigger a new data fetch commands for continuing training
@@ -435,8 +442,8 @@ class Controller:
                 command.DataFetchCommand.trigger(
                     replica=replica,
                     items_count=self.config.train.train_batch_per_replica,
-                    global_step=self.policy_status_manager.completed_train_step() + 1,
-                    total_steps=self.policy_status_manager.get_total_steps(),
+                    global_step=cur_train_step,
+                    total_steps=total_steps,
                     remain_samples_num=remain_samples_num,
                     redis_handler=self.redis_controller,
                 )
@@ -444,6 +451,9 @@ class Controller:
                     replica.name, PolicyStatus.RUNNING
                 )
                 replica.pending_rollouts -= self.config.train.train_batch_per_replica
+
+            if self.config.logging.logger:
+                self.rollout_statistic(sorted_replicas, cur_train_step, total_steps)
 
     async def handle_rollout_end_ack(
         self, extra_info: Dict[str, Any], replica_name: str
@@ -596,6 +606,7 @@ class Controller:
 
         while not self.rollout_buffer.empty():
             rollout = self.rollout_buffer.get()
+            self.per_step_rollout_buffer.put(rollout)
             history_trajectory = list(self.rollout_trajectory.queue)
 
             found = False
@@ -1148,3 +1159,31 @@ class Controller:
                 list(live_replicas.values()), redis_handler=self.redis_controller
             )
             manager.set_ranks(ranks)
+
+    def rollout_statistic(
+        self, sorted_replicas: List[Replica], train_step: int, total_steps: int
+    ):
+        rewards = []
+        completion_lengths = []
+        for _ in range(
+            self.config.train.train_batch_per_replica * len(sorted_replicas)
+        ):
+            rollout = self.per_step_rollout_buffer.get()
+            rewards.append(rollout.reward)
+            completion_lengths.append(len(self.tokenizer.encode(rollout.completion)))
+        report_data = {
+            "train/reward_mean": np.mean(rewards),
+            "train/reward_std": np.std(rewards),
+            "train/reward_max": np.max(rewards),
+            "train/reward_min": np.min(rewards),
+            "train/completion_length_mean": np.mean(completion_lengths),
+            "train/completion_length_max": np.max(completion_lengths),
+        }
+
+        if "wandb" in self.config.logging.logger and is_wandb_available():
+            log_wandb(report_data, step=train_step)
+
+        if "console" in self.config.logging.logger:
+            logger.info(
+                f"Step: {train_step}/{total_steps}, Reward Mean: {report_data['train/reward_mean']:.4f}, Reward Std: {report_data['train/reward_std']:.4f}, Reward Max: {report_data['train/reward_max']:.4f}, Reward Min: {report_data['train/reward_min']:.4f}, Completion Length Mean: {report_data['train/completion_length_mean']:.2f}, Completion Length Max: {report_data['train/completion_length_max']:.2f}"
+            )

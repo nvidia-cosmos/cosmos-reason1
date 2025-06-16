@@ -35,7 +35,7 @@ model_max_length = 1024
 model_gradient_checkpointing = true
 
 [logging]
-enable_logging = true
+logger = ['console', 'wandb']
 project_name = "echo"
 experiment_name = "qwen-32b-gsm8k-grpo"
 

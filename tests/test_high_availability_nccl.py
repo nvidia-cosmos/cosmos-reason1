@@ -67,7 +67,7 @@ epoch = 1
 output_dir = "{WORK_DIR}"
 
 [logging]
-enable_logging = false
+logger = ['console', 'wandb']
 project_name = "cosmos_reason1"
 experiment_name = "None"
 

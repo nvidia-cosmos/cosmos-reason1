@@ -1125,7 +1125,9 @@ class GRPOTrainer(Trainer):
             )
             self.swizzled_forward = True
 
-        start_time = time.time()
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        start_event.record()
         logger.debug("[Policy] Prepare training data.")
         rollouts: List[Dict] = self.dispatch_rollouts()
 
@@ -1424,7 +1426,8 @@ class GRPOTrainer(Trainer):
                         self.execute_all_reduce()
         self.old_per_token_logps = []
         self.ref_per_token_logps = []
-        end_time = time.time()
+        end_event.record()
+        self.train_event_queue.append((start_event, end_event, self.train_step))
 
         loss = (loss_sum / loss_count) if loss_count > 0 else loss_sum
         kl_loss = (kl_loss_sum / loss_count) if loss_count > 0 else kl_loss_sum
@@ -1447,30 +1450,34 @@ class GRPOTrainer(Trainer):
             if self.config.train.train_policy.kl_beta != 0.0:
                 global_avg_kl_loss = global_max_kl_loss = kl_loss  # noqa: F841
 
-        step_logging = True
-        if self.config.logging.enable_logging:
-            step_logging = is_wandb_available()
+        if self.config.logging.logger:
             if is_master_rank(self.parallel_dims, self.global_rank):
-                avg_rollout_len = np.mean(
-                    [len(rollout["completion"]) for rollout in rollouts]
-                )
-                max_rollout_len = np.max(
-                    [len(rollout["completion"]) for rollout in rollouts]
-                )
-                avg_reward = np.mean([rollout["reward"] for rollout in rollouts])
-                std_reward = np.std([rollout["reward"] for rollout in rollouts])
-                iter_time = end_time - start_time
+                while (
+                    len(self.train_event_queue) > 0
+                    and self.train_event_queue[0][1].query()
+                ):
+                    iter_start_event, iter_end_event, iter_step = (
+                        self.train_event_queue.popleft()
+                    )
+                    iter_time = (
+                        iter_start_event.elapsed_time(iter_end_event) / 1000.0
+                    )  # in seconds
+                    if "wandb" in self.config.logging.logger and is_wandb_available():
+                        log_wandb(
+                            data={
+                                "train/iteration_time": iter_time,
+                            },
+                            step=iter_step,
+                        )
+                    if "console" in self.config.logging.logger:
+                        logger.info(
+                            f"Step: {iter_step}/{self.total_steps}, Iteration time: {iter_time:.3f}s."
+                        )
 
                 report_data = {
                     "train/loss_avg": global_avg_loss,
                     "train/loss_max": global_max_loss,
                     "train/learning_rate": self.lr_schedulers.get_last_lr()[0],
-                    # TODO(dinghaoy): shall we collect the length in token
-                    "train/completion_length_avg": avg_rollout_len,
-                    "train/completion_length_max": max_rollout_len,
-                    "train/reward_avg": avg_reward,
-                    "train/reward_std": std_reward,
-                    "train/iteration_time": iter_time,
                 }
                 if self.config.train.train_policy.kl_beta != 0.0:
                     report_data["train/kl_loss_avg"] = global_avg_kl_loss
@@ -1488,23 +1495,15 @@ class GRPOTrainer(Trainer):
                     )
                     for k, v in mfu.items():
                         report_data[f"train/{k}"] = v
-                if is_wandb_available():
+                if "wandb" in self.config.logging.logger and is_wandb_available():
                     log_wandb(
                         data=report_data,
                         step=self.train_step,
                     )
-                else:
+                if "console" in self.config.logging.logger:
                     logger.info(
-                        f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}, Iteration time: {iter_time:.3f}s, Completion length: {avg_rollout_len:.0f}, Reward: {avg_reward}"
+                        f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}."
                     )
-
-        if step_logging and (
-            (not self.parallel_dims.pp_enabled)
-            or (self.parallel_dims.pp_enabled and pp_last_stage)
-        ):
-            logger.info(
-                f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}"
-            )
 
         # checkpointing
         if self.is_master_replica and (
