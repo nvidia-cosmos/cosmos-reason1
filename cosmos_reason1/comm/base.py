@@ -104,6 +104,19 @@ class CommMixin:
             logger.info(f"Using default data packer: {self.data_packer}")
         self.data_packer.setup(self.config, self.tokenizer)
 
+        user_val_data_packer = metadata.get("user_val_data_packer", None)
+        if user_val_data_packer:
+            user_val_data_packer = base64.b64decode(user_val_data_packer)
+            user_val_data_packer = cloudpickle.loads(user_val_data_packer)
+            self.val_data_packer = user_val_data_packer
+            logger.info(
+                f"Using user-provided validation data packer: {self.val_data_packer}"
+            )
+        else:
+            self.val_data_packer = get_data_packer(self.config)
+            logger.info(f"Using default validation data packer: {self.val_data_packer}")
+        self.val_data_packer.setup(self.config, self.tokenizer)
+
         self.remote_hosts = [
             f"http://{remote_ip}:{self.remote_port}" for remote_ip in self.remote_ips
         ]

@@ -20,6 +20,7 @@ from cosmos_reason1.utils.util import load_data_from_disk_or_hf
 from cosmos_reason1.utils.logging import logger
 from typing import Optional, Any, List
 from transformers import AutoTokenizer
+import torch
 
 
 class RLPayload:
@@ -99,22 +100,88 @@ class CosmosDataset:
             self.prompt_column = self.grpo_config.prompt_column_name
             self.response_column = self.grpo_config.response_column_name
             dataset = load_data_from_disk_or_hf(
-                self.grpo_config.dataset_name,
-                self.grpo_config.dataset_subset,
-                self.grpo_config.dataset_revision or None,
+                self.grpo_config.dataset.name,
+                self.grpo_config.dataset.subset,
+                self.grpo_config.dataset.revision or None,
             )
 
             dataset_list = []
-            for split_name in self.grpo_config.dataset_train_split:
+            for split_name in self.grpo_config.dataset.train_split:
                 logger.info(
                     f"Appending split {split_name}, dataset size = {len(dataset[split_name])}"
                 )
                 dataset_list.append(dataset[split_name])
             train_dataset = concatenate_datasets(dataset_list)
+
+            if self.grpo_config.dataset.test_size is not None:
+                if isinstance(self.grpo_config.dataset.test_size, float):
+                    n_test_samples = int(
+                        len(train_dataset) * self.grpo_config.dataset.test_size
+                    )
+                else:
+                    n_test_samples = self.grpo_config.dataset.test_size
+                n_test_samples = max(min(n_test_samples, len(train_dataset) - 1), 1)
+
+                # Generate deterministic indices
+                indices = list(range(len(train_dataset)))
+                train_indices = indices[n_test_samples:]
+                train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
             logger.info(f"Final dataset size = {len(train_dataset)}")
 
             self.train_set = RLInternalDataset(
                 train_dataset,
+                self.prompt_column,
+                self.response_column,
+            )
+
+
+class CosmosValidationDataset:
+    def __init__(
+        self,
+        config: CosmosConfig,
+        val_set: Optional[Dataset] = None,
+        tokenizer: AutoTokenizer = None,
+    ):
+        self.config = config
+        if val_set is not None:
+            self.val_set = RLDataset(val_set, tokenizer, config)
+        else:
+            """
+            Deprecated: for most cases, users should provide a train_set for better generalization
+            """
+            self.grpo_config = config.train.train_policy
+            self.prompt_column = self.grpo_config.prompt_column_name
+            self.response_column = self.grpo_config.response_column_name
+            dataset = load_data_from_disk_or_hf(
+                self.config.validation.dataset.name,
+                self.config.validation.dataset.subset,
+                self.config.validation.dataset.revision or None,
+            )
+            dataset_list = []
+            for split_name in self.config.validation.dataset.test_split:
+                logger.info(
+                    f"Appending split {split_name}, dataset size = {len(dataset[split_name])}"
+                )
+                dataset_list.append(dataset[split_name])
+            val_dataset = concatenate_datasets(dataset_list)
+
+            if self.config.validation.dataset.test_size is not None:
+                if isinstance(self.config.validation.dataset.test_size, float):
+                    n_test_samples = int(
+                        len(val_dataset) * self.config.validation.dataset.test_size
+                    )
+                else:
+                    n_test_samples = self.config.validation.dataset.test_size
+                n_test_samples = max(min(n_test_samples, len(val_dataset) - 1), 1)
+
+                # Generate deterministic indices
+                indices = list(range(len(val_dataset)))
+                val_indices = indices[:n_test_samples]
+                val_dataset = torch.utils.data.Subset(val_dataset, val_indices)
+            logger.info(f"Validation dataset size = {len(val_dataset)}")
+
+            self.val_set = RLInternalDataset(
+                val_dataset,
                 self.prompt_column,
                 self.response_column,
             )

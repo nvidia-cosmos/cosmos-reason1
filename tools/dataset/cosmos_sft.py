@@ -39,15 +39,15 @@ class CosmosSFTDataset(Dataset):
         self.config = config
         self.tokenizer = tokenizer
 
-        if config.train.train_policy.dataset_train_split:
-            if isinstance(config.train.train_policy.dataset_train_split, list):
+        if config.train.train_policy.dataset.train_split:
+            if isinstance(config.train.train_policy.dataset.train_split, list):
                 dataset_list = []
-                for split_name in config.train.train_policy.dataset_train_split:
+                for split_name in config.train.train_policy.dataset.train_split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.train.train_policy.dataset_train_split, str)
-                self.dataset = self.dataset[config.train.train_policy.dataset_train_split]
+                assert isinstance(config.train.train_policy.dataset.train_split, str)
+                self.dataset = self.dataset[config.train.train_policy.dataset.train_split]
 
         # get multi-modal files paths
         cosmos_cache_dir = os.environ.get(
@@ -56,8 +56,8 @@ class CosmosSFTDataset(Dataset):
         video_clips_path = os.path.join(
             cosmos_cache_dir,
             "datasets",
-            basename_from_modelpath(config.train.train_policy.dataset_name),
-            config.train.train_policy.dataset_subset,
+            basename_from_modelpath(config.train.train_policy.dataset.name),
+            config.train.train_policy.dataset.subset,
             "video_clips",
         )
         if not os.path.exists(video_clips_path):
@@ -114,7 +114,7 @@ if __name__ == "__main__":
         config = toml.load(f)
     config = Config.from_dict(config)
     # Download HF dataset only on launcher worker
-    dataset = load_dataset(config.train.train_policy.dataset_name, config.train.train_policy.dataset_subset)
+    dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
     # Prepare video files
     util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
 

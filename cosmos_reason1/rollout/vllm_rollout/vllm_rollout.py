@@ -57,6 +57,7 @@ class vLLMRollout(RolloutBase):
         self.config = config
         policy_config = self.config.policy
         self.rollout_config = self.config.rollout
+        self.validation_config = self.config.validation
 
         vllm_version_check(self.rollout_config)
 
@@ -154,11 +155,26 @@ class vLLMRollout(RolloutBase):
             repetition_penalty=self.rollout_config.sampling_config.repetition_penalty,
             max_tokens=self.rollout_config.max_response_length,
             stop_token_ids=self.eos_token_ids,
+            include_stop_str_in_output=self.rollout_config.include_stop_str_in_output,
         )
 
         kwargs["detokenize"] = True
 
         self.sampling_params = SamplingParams(**kwargs)
+
+        val_kwargs = dict(
+            n=self.validation_config.n_generation,
+            logprobs=0,
+            # Use the same sampling config for validation as well.
+            top_p=self.validation_config.top_p,
+            top_k=self.validation_config.top_k,
+            temperature=self.validation_config.temperature,
+            repetition_penalty=self.validation_config.repetition_penalty,
+            max_tokens=self.validation_config.max_response_length,
+            stop_token_ids=self.eos_token_ids,
+        )
+        val_kwargs["detokenize"] = True
+        self.val_sampling_params = SamplingParams(**val_kwargs)
 
     def reload_weight(self):
         self.rollout_engine.llm_engine.vllm_config.load_config.load_format = "auto"
@@ -170,6 +186,7 @@ class vLLMRollout(RolloutBase):
         prompt_id_and_payload_list: List[Tuple[int, Any]],
         stream: torch.cuda.Stream,
         data_packer: DataPacker,
+        is_validation: bool = False,
     ) -> List[List[str]]:
         # List of payloads.
         # [
@@ -195,10 +212,13 @@ class vLLMRollout(RolloutBase):
         try:
             with torch.cuda.stream(stream):
                 results = self.rollout_engine.generate(
-                    prompt_token_ids=prompts,
-                    sampling_params=self.sampling_params,
+                    prompts=prompts,
+                    sampling_params=self.sampling_params
+                    if not is_validation
+                    else self.val_sampling_params,
                     use_tqdm=False,
                 )
+
             for output in results:
                 response.append(
                     [output.outputs[i].text for i in range(len(output.outputs))]

@@ -29,7 +29,7 @@ import signal
 import threading
 import numpy as np
 from queue import Queue
-from cosmos_reason1.dispatcher.replica import Atom, Replica, Rollout
+from cosmos_reason1.dispatcher.replica import Atom, Replica, Rollout, RolloutGroup
 from cosmos_reason1.dispatcher.protocol import Role, MESH_NAMES
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.wandb_logger import (
@@ -42,9 +42,14 @@ import cosmos_reason1.utils.network_util as network_util
 import cosmos_reason1.utils.constant as constant
 from cosmos_reason1.dispatcher.algo.base import REGISTERED_ALGOs
 from cosmos_reason1.dispatcher.algo.reward import Reward
-from cosmos_reason1.dispatcher.data import CosmosDataset, RLPayload
+from cosmos_reason1.dispatcher.data import (
+    CosmosDataset,
+    RLPayload,
+    CosmosValidationDataset,
+)
 from torch.utils.data import DataLoader, Dataset
 import cosmos_reason1.dispatcher.command as command
+from cosmos_reason1.dispatcher.command import ProcessPhase
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
 from cosmos_reason1.dispatcher.status import (
     PolicyStatus,
@@ -58,6 +63,7 @@ from cosmos_reason1.dispatcher.protocol import SetProfileRequest
 from transformers import AutoTokenizer
 import tempfile
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
+from tqdm import tqdm
 
 
 class Controller:
@@ -86,6 +92,7 @@ class Controller:
         # nccl error check
         self.post_ncclerror_policy_invoke_id = 0
         self.post_ncclerror_rollout_invoke_id = 0
+        self.phase = ProcessPhase.TRAIN
 
     def _init_dist(self):
         self.policy_replicas: Dict[str, Replica] = {}
@@ -113,6 +120,9 @@ class Controller:
         dataset: Optional[Dataset] = None,
         reward_fns: Optional[List[Callable]] = None,
         data_packer: Optional[DataPacker] = None,
+        val_dataset: Optional[Dataset] = None,
+        val_reward_fns: Optional[List[Callable]] = None,
+        val_data_packer: Optional[DataPacker] = None,
     ):
         if self.config is not None:
             raise Exception(
@@ -126,7 +136,7 @@ class Controller:
         )
 
         if "wandb" in config.logging.logger and is_wandb_available():
-            init_wandb(config)
+            self.wandb_run = init_wandb(config)
         else:
             logger.warning(
                 "Wandb is not available. Please install it to use wandb logging features."
@@ -135,6 +145,7 @@ class Controller:
         self.is_rl = task_type != "sft"
         self.sft_user_dataset = dataset if not self.is_rl else None
         self.user_data_packer = data_packer
+        self.user_val_data_packer = val_data_packer
         if self.is_rl:
             if dataset is not None:
                 # Do simple sanity check
@@ -151,6 +162,7 @@ class Controller:
                 reward_fn=Reward(
                     config=config,
                     tokenier=self.tokenizer,
+                    reward_function=config.train.train_policy.reward_function,
                     explicit_reward_fn=reward_fns,
                 ),
                 unbiased=config.train.train_policy.unbiased_advantage,
@@ -164,6 +176,84 @@ class Controller:
                 collate_fn=RLPayload.collate_fn,
             )
             self.train_dataloader_iter = iter(self.train_dataloader)
+
+            self.val_rollouts = []
+            if config.train.enable_validation:
+                # Only when dataset is None, the config of train dataset is valid and can be used for validation dataset.
+                if not config.validation.dataset.name:
+                    config.validation.dataset.name = (
+                        config.train.train_policy.dataset.name
+                    )
+                    config.validation.dataset.subset = (
+                        config.train.train_policy.dataset.subset
+                    )
+                    config.validation.dataset.revision = (
+                        config.train.train_policy.dataset.revision
+                    )
+                if not config.validation.dataset.test_split:
+                    assert (
+                        config.train.train_policy.dataset.name
+                        == config.validation.dataset.name
+                        and config.train.train_policy.dataset.subset
+                        == config.validation.dataset.subset
+                    ), "Validation dataset must have the same dataset name and subset as training dataset if validation test_split needs use training dataset split."
+                    config.validation.dataset.test_split = (
+                        config.train.train_policy.dataset.train_split
+                    )
+                    config.validation.dataset.test_size = (
+                        config.train.train_policy.dataset.test_size
+                    )
+
+                if val_dataset is not None:
+                    # Do simple sanity check
+                    assert isinstance(val_dataset, Dataset)
+                    self.val_dataset = CosmosValidationDataset(
+                        config=config, val_set=val_dataset, tokenizer=self.tokenizer
+                    )
+                    logger.info(
+                        "[Controller] Using provided validation dataset for validation, dataset specification in the toml config will be ignored"
+                    )
+                else:
+                    self.val_dataset = CosmosValidationDataset(
+                        config=config, tokenizer=self.tokenizer
+                    )
+                if not config.validation.reward_function:
+                    if val_reward_fns is None:
+                        val_reward_fns = reward_fns
+                        if val_reward_fns is not None:
+                            logger.warning(
+                                "[Controller] No validation reward functions provided, using the same reward functions as training."
+                            )
+                    config.validation.reward_function = (
+                        config.train.train_policy.reward_function
+                    )
+                    logger.warning(
+                        "[Controller] No validation reward function config specified, using the same reward function as training."
+                    )
+                self.val_rl_algo = REGISTERED_ALGOs[constant.Algo.GRPO](
+                    reward_fn=Reward(
+                        config=config,
+                        tokenier=self.tokenizer,
+                        reward_function=config.validation.reward_function,
+                        explicit_reward_fn=val_reward_fns,
+                    )
+                )
+
+                self.val_dataloader = DataLoader(
+                    self.val_dataset.val_set,
+                    batch_size=1,  # batch size is 1 is mandatory
+                    shuffle=config.train.train_policy.dataloader_shuffle,
+                    num_workers=config.train.train_policy.dataloader_num_workers,
+                    prefetch_factor=config.train.train_policy.dataloader_prefetch_factor,
+                    collate_fn=RLPayload.collate_fn,
+                )
+                self.val_dataloader_iter = iter(self.val_dataloader)
+            else:
+                self.val_dataset = None
+                self.val_dataloader = None
+                self.val_dataloader_iter = None
+                self.val_rl_algo = None
+
             self.policy_status_manager.set_train_batch_per_replica(
                 config.train.train_batch_per_replica
             )
@@ -314,6 +404,12 @@ class Controller:
         prompt_id_and_payload_list: List[Tuple[int, str]] = []
         is_end = False
 
+        if self.phase != ProcessPhase.TRAIN:
+            return (
+                prompt_id_and_payload_list,
+                is_end,
+            )
+
         # Throttle the generation speed:
         # 1. Detect the current left pending rollouts in all policy replicas.
         # 2. Check the config.train.train_policy.allowed_outdated_steps.
@@ -365,6 +461,32 @@ class Controller:
             idx = idx.item() if isinstance(idx, torch.Tensor) else idx
             prompt_id_and_payload_list.append((idx, payload))
 
+        return prompt_id_and_payload_list, is_end
+
+    async def get_batched_validation_prompt(
+        self, n
+    ) -> Tuple[List[Tuple[int, str]], bool]:
+        assert (
+            self.val_dataloader is not None
+        ), "Validation dataloader is not initialized."
+        assert (
+            self.phase == ProcessPhase.VALIDATE
+        ), "Controller is not in validation phase."
+        prompt_id_and_payload_list: List[Tuple[int, str]] = []
+        is_end = False
+        for _ in range(n):
+            payload = None
+            try:
+                idx, payload = next(self.val_dataloader_iter)
+                assert len(idx) == 1
+                assert len(payload) == 1
+                idx = idx[0]
+                payload = payload[0].payload
+            except StopIteration:
+                is_end = True
+                break
+            idx = idx.item() if isinstance(idx, torch.Tensor) else idx
+            prompt_id_and_payload_list.append((idx, payload))
         return prompt_id_and_payload_list, is_end
 
     def query_reference_answer(self, prompt_idx: int) -> Any:
@@ -464,6 +586,39 @@ class Controller:
             self.rollout_status_manager.set_status(replica_name, RolloutStatus.END)
         await self.trigger_replica_end_signal()
 
+    async def handle_validation_end_per_replica(self, replica_name: str):
+        """
+        Handle the end of validation for a specific replica.
+        This is called when a validation rollout is finished.
+        """
+        if self.phase == ProcessPhase.VALIDATE:
+            self.rollout_status_manager.set_status(replica_name, RolloutStatus.READY)
+            if not self.rollout_status_manager.any_validate():
+                logger.debug(
+                    "[Controller] All validation rollouts are done, stop validation."
+                )
+                await self.validate_rollouts()
+                self.phase = ProcessPhase.TRAIN
+                await self.trigger_data_fetch_and_training()
+                await self.trigger_replica_end_signal()
+
+    async def handle_validation_rollout_end_ack(
+        self, extra_info: Dict[str, Any], replica_name: str
+    ):
+        if "is_end" in extra_info:
+            assert extra_info["is_end"] in [True, "True", "true"]
+            logger.debug(
+                f"[Controller] Validation rollout {replica_name} is end, stop validation."
+            )
+            assert (
+                self.phase == ProcessPhase.VALIDATE
+            ), "Controller is not in validation phase."
+            assert (
+                self.rollout_status_manager.get_status(replica_name)
+                in [RolloutStatus.VALIDATE, RolloutStatus.END_VALIDATE]
+            ), f"Validation rollout {replica_name} is not in validate status, current status: {self.rollout_status_manager.get_status(replica_name)}"
+            await self.handle_validation_end_per_replica(replica_name)
+
     async def trigger_replica_end_signal(self):
         sorted_replicas = [
             replica
@@ -555,6 +710,52 @@ class Controller:
             )
             await self.unregister(replica_name)
 
+    async def put_validation_rollouts(
+        self, rollout_groups: List[RolloutGroup], replica_name: str
+    ):
+        rollouts_list: List[List[Rollout]] = [
+            rollout_group.compute_rollouts(self.val_rl_algo)
+            for rollout_group in rollout_groups
+        ]
+        self.val_rollouts.extend(rollouts_list)
+        self.val_bar.update(sum(len(rollouts) for rollouts in rollouts_list))
+
+    async def validate_rollouts(self):
+        """
+        Validate the rollouts from the rollout replicas.
+        This is called when the validation phase is triggered.
+        """
+        assert (
+            self.phase == ProcessPhase.VALIDATE
+        ), "Controller is not in validation phase."
+        rewards = []
+        for rollouts in self.val_rollouts:
+            rewards.extend([r.reward for r in rollouts])
+        avg_reward = np.mean(rewards)
+        std_reward = np.std(rewards)
+        max_reward = np.max(rewards)
+        min_reward = np.min(rewards)
+
+        report_data = {
+            "val/reward_avg": avg_reward,
+            "val/reward_std": std_reward,
+            "val/reward_max": max_reward,
+            "val/reward_min": min_reward,
+            "val/rollout_count": len(rewards),
+            "val/step": self.policy_status_manager.completed_optimize_step(),
+        }
+        logger.info(
+            f"[Controller] Validation finished, average reward: {avg_reward}, total rollouts: {len(rewards)}, max reward: {max_reward}, min reward: {min_reward}, std reward: {std_reward} at step {self.policy_status_manager.completed_optimize_step()}"
+        )
+        if "wandb" in self.config.logging.logger and is_wandb_available():
+            log_wandb(
+                self.wandb_run,
+                data=report_data,
+                step=self.policy_status_manager.completed_optimize_step(),
+            )
+        self.val_rollouts.clear()
+        self.val_bar.close()
+
     async def put_rollouts(
         self, valid_rollouts: List[Rollout], invalid_rollouts: List[Rollout]
     ):
@@ -594,6 +795,10 @@ class Controller:
         Dispatch the rollout to the policy replicas in a round-robin manner.
         It is that replica's responsibility to dispatch the rollout to further (DP_SHARD) atoms.
         """
+        if self.config.rollout.include_stop_str_in_output:
+            if self.tokenizer.eos_token is not None and rollout.completion is not None:
+                if not rollout.completion.endswith(self.tokenizer.eos_token):
+                    rollout.completion = rollout.completion + self.tokenizer.eos_token
         self.rollout_buffer.put(rollout)
 
         sorted_replicas = [
@@ -627,6 +832,9 @@ class Controller:
             await self.policy_replicas[next_replica_name].put_rollout(
                 rollout, self.redis_controller
             )
+            if self.phase == ProcessPhase.VALIDATE:
+                # If we are in validation phase, we need to wait for the validation to finish
+                return
             await self.trigger_data_fetch_and_training()
             await self.trigger_replica_end_signal()
 
@@ -885,6 +1093,29 @@ class Controller:
                 status_manager=self.rollout_status_manager,
             )
 
+    async def trigger_validate(self):
+        train_step = self.policy_status_manager.completed_optimize_step()
+        if (
+            self.config.train.enable_validation
+            and train_step % self.config.train.validation_freq == 0
+        ):
+            logger.info(f"[Controller] Trigger validation at train step {train_step}.")
+            self.val_bar = tqdm(
+                desc="validation",
+                total=len(self.val_dataset.val_set)
+                * self.config.validation.n_generation,
+            )
+            self.val_dataloader_iter = iter(self.val_dataloader)
+            for replica in self.rollout_replicas.values():
+                if replica.all_atoms_arrived and replica.weight_step == train_step:
+                    command.ValidateCommand.trigger(
+                        replica=replica, redis_handler=self.redis_controller
+                    )
+                    self.rollout_status_manager.set_status(
+                        replica.name, RolloutStatus.VALIDATE
+                    )
+            self.phase = ProcessPhase.VALIDATE
+
     async def train_ack(
         self, replica_name: str, iteration_count: int, profile_finished: bool
     ):
@@ -899,6 +1130,11 @@ class Controller:
             need_sync_weight = (
                 optimize_step % self.config.train.sync_weight_interval == 0
                 and not self.rollout_status_manager.all_end()
+            ) or (
+                self.config.train.enable_validation
+                and self.policy_status_manager.completed_optimize_step()
+                % self.config.train.validation_freq
+                == 0
             )
 
             if profile_finished:
@@ -930,6 +1166,13 @@ class Controller:
                         self.policy_status_manager.set_status(
                             replica.name, PolicyStatus.READY
                         )
+            await self.trigger_validate()
+            if self.phase == ProcessPhase.VALIDATE:
+                # If we are in validation phase, we need to wait for the validation to finish
+                logger.debug(
+                    f"[Controller] Waiting for validation to finish at step {self.policy_status_manager.completed_optimize_step()} before triggering next round of training."
+                )
+                return
             await self.trigger_data_fetch_and_training()
             await self.trigger_replica_end_signal()
 
@@ -979,6 +1222,7 @@ class Controller:
                     for replica in self.rollout_replicas.values()
                     if replica.all_atoms_arrived
                 )
+                await self.handle_validation_end_per_replica(replica_name)
                 self.rollout_status_manager.pop(replica_name)
                 manager = self.rollout_status_manager
             else:
@@ -1181,7 +1425,7 @@ class Controller:
         }
 
         if "wandb" in self.config.logging.logger and is_wandb_available():
-            log_wandb(report_data, step=train_step)
+            log_wandb(self.wandb_run, report_data, step=train_step)
 
         if "console" in self.config.logging.logger:
             logger.info(

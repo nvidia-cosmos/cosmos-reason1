@@ -119,11 +119,11 @@ def update_config_if_modelscope(loaded_config: Any):
     loaded_config.policy.model_name_or_path = modelscope_download(
         loaded_config.policy.model_name_or_path, "model"
     )
-    loaded_config.train.train_policy.dataset_name = modelscope_download(
-        loaded_config.train.train_policy.dataset_name,
+    loaded_config.train.train_policy.dataset.name = modelscope_download(
+        loaded_config.train.train_policy.dataset.name,
         "dataset",
-        subset_name=loaded_config.train.train_policy.dataset_subset,
-        revision=loaded_config.train.train_policy.dataset_revision,
+        subset_name=loaded_config.train.train_policy.dataset.subset,
+        revision=loaded_config.train.train_policy.dataset.revision,
     )
     return loaded_config
 

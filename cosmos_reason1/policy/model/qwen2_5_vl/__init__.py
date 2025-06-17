@@ -1594,3 +1594,13 @@ class Qwen2_5_VLConditionalModel(nn.Module, BaseModel):
     @classmethod
     def data_packer(cls) -> Qwen2_5_VLM_DataPacker:
         return Qwen2_5_VLM_DataPacker()
+
+    @classmethod
+    def fqn_filter_for_fp8(cls) -> List[str]:
+        llm = [
+            "lm_head",
+        ]
+        visual = [
+            "visual",
+        ]  # Filter Linear in visual out, they will corrupt the FP8 Linear.
+        return llm + visual

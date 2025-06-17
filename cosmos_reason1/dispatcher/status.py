@@ -300,6 +300,8 @@ class RolloutStatus(StrEnum):
     There are 4 statuses:
     READY: The rollout is ready to run.
     END: The rollout has finished.
+    VALIDATE: The rollout is validating.
+    END_VALIDATE: The rollout had finished training and is validating.
     UNINITIALIZED: The rollout is uninitialized.
     PAUSE: The rollout is paused.
     """
@@ -307,6 +309,8 @@ class RolloutStatus(StrEnum):
     READY = "ready"
     END = "end"
     UNINITIALIZED = "uninitialized"
+    VALIDATE = "validate"
+    END_VALIDATE = "end_validate"
     PAUSE = "pause"
 
 
@@ -387,8 +391,16 @@ class RolloutStatusManager:
         assert (
             status != RolloutStatus.UNINITIALIZED
         ), "rollout status should not be UNINITIALIZED when already created"
-        if self.status[replica_name] != RolloutStatus.END:
+        if (
+            self.status[replica_name] == RolloutStatus.END_VALIDATE
+            and status == RolloutStatus.READY
+        ):
+            self.status[replica_name] = RolloutStatus.END
+        elif self.status[replica_name] != RolloutStatus.END:
             self.status[replica_name] = status
+        elif status == RolloutStatus.VALIDATE:
+            # If the rollout is already ended, we can set it to validate.
+            self.status[replica_name] = RolloutStatus.END_VALIDATE
 
     def get_status(self, replica_name: str):
         if replica_name not in self.status:
@@ -436,6 +448,17 @@ class RolloutStatusManager:
         Check if all rollouts are end.
         """
         return all([x == RolloutStatus.END for x in self.status.values()])
+
+    def any_validate(self) -> bool:
+        """
+        Check if any rollout is validating.
+        """
+        return any(
+            [
+                x in [RolloutStatus.VALIDATE, RolloutStatus.END_VALIDATE]
+                for x in self.status.values()
+            ]
+        )
 
     def set_ranks(self, rollout_to_rank: Dict[str, int]):
         """

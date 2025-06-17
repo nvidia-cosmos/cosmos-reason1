@@ -3,12 +3,12 @@ redis = "12800"
 [train]
 resume = false
 epoch = 150
-output_dir = "./outputs/cosmos-reason1-7b-p-fsdp1-tp2-r-tp1-pp2-grpo"
+output_dir = "./outputs/cosmos-reason1-7b-p-fsdp2-tp2-r-tp4-pp1-grpo"
 epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 2e-6
 optm_impl = "fused"
-optm_weight_decay = 0.01
+optm_weight_decay = 0.0
 optm_betas = [ 0.9, 0.95,]
 optm_warmup_steps = 20
 optm_grad_norm_clip = 1.0
@@ -20,6 +20,8 @@ fsdp_offload = false
 fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 64
 sync_weight_interval = 1
+enable_validation = true
+validation_freq = 64
 
 [rollout]
 gpu_memory_utilization = 0.7
@@ -28,7 +30,7 @@ max_response_length = 6144
 n_generation = 8
 batch_size = 4
 quantization = "none"
-
+seed = 42
 
 [rollout.sampling_config]
 temperature = 0.6
@@ -55,12 +57,14 @@ enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
 prompt_column_name = "qa_pairs"
+
+
 reward_function = ["single_choice", "format"]
 temperature = 0.9
 epsilon_low = 0.2
 epsilon_high = 0.2
 kl_beta = 0.0
-mu_iterations = 1
+mu_iterations = 2
 mini_batch = 1
 
 [train.ckpt]
@@ -70,14 +74,28 @@ save_mode = "async"
 
 [rollout.parallelism]
 n_init_replicas = 1
-tp_size = 2
+tp_size = 4
 pp_size = 1
 
 [policy.parallelism]
 n_init_replicas = 1
 tp_size = 2
 cp_size = 1
-dp_shard_size = 1
+dp_shard_size = 2
 pp_size = 1
 dp_replicate_size = 1
 cp_rotate_method = "allgather"
+
+[validation]
+temperature = 0.6
+top_p = 0.95
+top_k = 50
+repetition_penalty = 1.05
+n_generation = 1
+reward_function = ["single_choice", "format"]
+
+[validation.dataset]
+name = "nvidia/Cosmos-Reason1-Benchmark"
+subset = "robovqa"
+test_split = "benchmark"
+test_size = 0.5

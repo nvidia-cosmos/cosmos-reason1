@@ -69,7 +69,7 @@ def init_wandb(config: CosmosConfig, parallel_dims: ParallelDims = None):
         experiment_name = os.path.join(
             config.logging.experiment_name, config.train.timestamp
         )
-    wandb.init(
+    run = wandb.init(
         project=config.logging.project_name,
         name=experiment_name,
         config=asdict(config),
@@ -77,10 +77,11 @@ def init_wandb(config: CosmosConfig, parallel_dims: ParallelDims = None):
         id=config.train.timestamp,  # Use timestamp as the run ID
         resume="allow",
     )
+    return run
 
 
-def log_wandb(data: dict, step: int):
-    if wandb.run is not None:
-        wandb.log(data, step=step)
+def log_wandb(run, data: dict, step: int):
+    if run is not None:
+        run.log(data, step=step)
     else:
         logger.warning("Wandb is not initialized. Please check the configuration.")

@@ -60,7 +60,8 @@ def parallelize(
         apply_tp_ep(
             model,
             world_mesh["tp"],
-            enable_float8_tensorwise_tp=False,
+            enable_float8_tensorwise_tp=config.train.fp8.enable_fp8
+            and config.train.fp8.quant_recipe == "tensorwise",
             enable_async_tp=config.train.async_tp_enabled,
         )
 

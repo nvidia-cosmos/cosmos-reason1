@@ -86,10 +86,12 @@ def construct_dataset(
         logger.info("Using user-provided dataset, which will skip split processing.")
     else:
         dataset = util.load_data_from_disk_or_hf(
-            config.dataset_name, config.dataset_subset, config.dataset_revision or None
+            config.dataset.name,
+            config.dataset.subset,
+            config.dataset.revision or None,
         )
         dataset_list = []
-        for split_name in config.dataset_train_split:
+        for split_name in config.dataset.train_split:
             logger.info(
                 f"Appending split {split_name}, dataset size = {len(dataset[split_name])}"
             )
@@ -99,7 +101,10 @@ def construct_dataset(
 
     try:
         if dataset is not None:
-            test_dataset = dataset[config.dataset_test_split]
+            dataset_list = []
+            for split_name in config.dataset.test_split:
+                dataset_list.append(dataset[split_name])
+            test_dataset = concatenate_datasets(dataset_list)
             if len(test_dataset) == 0:
                 raise ValueError("Test dataset is empty")
         else:
@@ -107,10 +112,15 @@ def construct_dataset(
     except Exception:
         if isinstance(train_dataset, torch.utils.data.Dataset):
             # Define the split ratio (e.g., 80% train, 20% test)
-            if isinstance(config.dataset_test_size, float):
-                n_test_samples = int(len(train_dataset) * config.dataset_test_size)
+            if config.dataset.test_size is None:
+                logger.warning(
+                    "No test size specified, using 10% of the training dataset for testing."
+                )
+                config.dataset.test_size = 0.1
+            if isinstance(config.dataset.test_size, float):
+                n_test_samples = int(len(train_dataset) * config.dataset.test_size)
             else:
-                n_test_samples = config.dataset_test_size
+                n_test_samples = config.dataset.test_size
             n_test_samples = max(min(n_test_samples, len(train_dataset) - 1), 1)
 
             # Generate deterministic indices
@@ -125,7 +135,7 @@ def construct_dataset(
                 train_dataset, "train_test_split"
             ), "train_dataset must have train_test_split method"
             train_test_split = train_dataset.train_test_split(
-                test_size=config.dataset_test_size, shuffle=False
+                test_size=config.dataset.test_size, shuffle=False
             )
             train_dataset = train_test_split["train"]
             test_dataset = train_test_split["test"]
@@ -174,7 +184,7 @@ class SFTDataset(Dataset):
                     os.path.join(os.path.expanduser("~"), ".cache/cosmos/"),
                 ),
                 "datasets_cache",
-                f"{self.config.dataset_name}-{config_hash(config)}",
+                f"{self.config.dataset.name}-{config_hash(config)}",
             )
             logger.info(f"SFTDataset Cache folder: {cache_folder}")
             self.cache = cache.DiskCache(cache_folder)
@@ -523,6 +533,7 @@ class SFTTrainer(Trainer):
                                 and is_wandb_available()
                             ):
                                 log_wandb(
+                                    run=self.wandb_run,
                                     data={
                                         "train/iteration_time": iter_time,
                                     },
@@ -556,6 +567,7 @@ class SFTTrainer(Trainer):
                             and is_wandb_available()
                         ):
                             log_wandb(
+                                run=self.wandb_run,
                                 data=report_data,
                                 step=self.train_step,
                             )

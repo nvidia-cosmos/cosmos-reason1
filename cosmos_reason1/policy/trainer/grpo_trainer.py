@@ -265,13 +265,15 @@ class GRPOTrainer(Trainer):
     def handle_shutdown(self):
         self.shutdown_background_task_event.set()
         self.inter_policy_nccl.shutdown()
-        if self.global_rank == 0:
-            if self.fetch_command_thread is not None:
-                self.fetch_command_thread.join()
-            if self.fetch_rollouts_thread is not None:
-                self.fetch_rollouts_thread.join()
+        if self.fetch_rollouts_thread is not None:
+            self.fetch_rollouts_thread.join()
+        if self.fetch_command_thread is not None:
+            self.fetch_command_thread.join()
         if self.heartbeat_thread is not None:
             self.heartbeat_thread.join()
+        if self.upload_thread is not None:
+            logger.info("[Policy] Waiting for upload thread to finish...")
+            self.upload_thread.join()
 
     def model_load_from_hf(self):
         self.model.load_hf_weights(
@@ -931,6 +933,7 @@ class GRPOTrainer(Trainer):
                 try:
                     bmcmd = self.kv_store.broadcast_command(None, src=0)
                     if isinstance(bmcmd, StopCommand):
+                        logger.info("[Policy] Stop command received. Exiting...")
                         # Stop command received from rank 0, means exiting the whole program, so break to exit the loop
                         break
                     assert isinstance(
@@ -1464,6 +1467,7 @@ class GRPOTrainer(Trainer):
                     )  # in seconds
                     if "wandb" in self.config.logging.logger and is_wandb_available():
                         log_wandb(
+                            run=self.wandb_run,
                             data={
                                 "train/iteration_time": iter_time,
                             },
@@ -1497,6 +1501,7 @@ class GRPOTrainer(Trainer):
                         report_data[f"train/{k}"] = v
                 if "wandb" in self.config.logging.logger and is_wandb_available():
                     log_wandb(
+                        run=self.wandb_run,
                         data=report_data,
                         step=self.train_step,
                     )

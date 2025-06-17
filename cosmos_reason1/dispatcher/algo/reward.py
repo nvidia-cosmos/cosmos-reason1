@@ -281,6 +281,7 @@ class Reward:
         self,
         config: Config,
         tokenier: PreTrainedTokenizer,
+        reward_function: List[str] = [],
         explicit_reward_fn: Optional[List[Callable]] = None,
     ):
         self.config = config
@@ -295,15 +296,15 @@ class Reward:
                 f"[Reward] Using provided reward functions: {self.reward_funcs}, `config.train.train_policy.reward_function` will be ignored"
             )
         else:
+            if not reward_function:
+                reward_function = config.train.train_policy.reward_function
             self.reward_funcs = []
-            for name in config.train.train_policy.reward_function:
+            for name in reward_function:
                 reward_func = RewardFn.from_string(name)
             if reward_func not in REWARD_FUNC_MAPPING:
                 raise ValueError(f"Reward function {reward_func} not found in mapping.")
             self.reward_funcs.append(REWARD_FUNC_MAPPING[name])
-            logger.info(
-                f"[Reward] Using reward functions: {config.train.train_policy.reward_function}"
-            )
+            logger.info(f"[Reward] Using reward functions: {reward_function}")
 
     def compute_reward(self, to_be_evaluated: str, reference: Union[str, None]):
         total_reward = 0.0

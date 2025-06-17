@@ -3,12 +3,12 @@ redis = "12800"
 [train]
 resume = false
 epoch = 15
-output_dir = "./outputs/qwen2-5-32b-p-fsdp2-tp4-r-tp4-pp1-grpo"
+output_dir = "./outputs/qwen2-5-32b-p-fsdp2-tp4-r-tp4-pp1-grpo-fp8"
 epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 2e-6
 optm_impl = "fused"
-optm_weight_decay = 0.01
+optm_weight_decay = 0.0
 optm_betas = [ 0.9, 0.999,]
 optm_warmup_steps = 10
 optm_grad_norm_clip = 1.0
@@ -21,6 +21,12 @@ fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 384 
 sync_weight_interval = 1
 
+[train.fp8]
+enable_fp8 = true
+fp8_recipe = "dynamic_scaling"
+# quant_recipe = "rowwise"
+quant_recipe = "tensorwise"
+
 [rollout]
 gpu_memory_utilization = 0.7
 enable_chunked_prefill = true
@@ -28,8 +34,6 @@ n_generation = 16
 batch_size = 24
 quantization = "none"
 max_response_length = 1024
-seed = 3407
-enforce_eager = false
 
 [policy]
 model_name_or_path = "Qwen/Qwen2.5-32B-Instruct"
@@ -39,7 +43,7 @@ model_gradient_checkpointing = true
 [logging]
 logger = ['console', 'wandb']
 project_name = "echo"
-experiment_name = "qwen-32b-DR.GRPO"
+experiment_name = "qwen-32b-gsm8k-grpo"
 
 [train.train_policy]
 type = "grpo"
@@ -55,8 +59,6 @@ epsilon_high = 0.28
 kl_beta = 0.0
 mu_iterations = 1
 mini_batch = 8
-unbiased_loss_max_tokens = 200 
-loss_type = "seq-mean-token-mean"
 
 [train.ckpt]
 enable_checkpoint = true

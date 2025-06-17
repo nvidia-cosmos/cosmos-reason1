@@ -95,7 +95,7 @@ def main(args: argparse.Namespace):
         try:
             # Load GRPO dataset
             # preprocess the dataset if is cosmos. This is highly consistent with the controller.
-            is_cosmos = "cosmos" in config.train.train_policy.dataset_name.lower()
+            is_cosmos = "cosmos" in config.train.train_policy.dataset.name.lower()
             if is_cosmos:
                 util.prepare_cosmos_data(config=config)
             dataset = CosmosDataset(config=config)

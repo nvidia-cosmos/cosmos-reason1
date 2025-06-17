@@ -26,6 +26,8 @@ from torch.utils.data import ConcatDataset
 from cosmos_reason1.utils.util import basename_from_modelpath
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 from cosmos_reason1.dispatcher.data.packer.qwen2_5_vlm_data_packer import Qwen2_5_VLM_DataPacker
+from cosmos_reason1.utils.logging import logger
+import torch
 
 FPS = 1
 MAX_PIXELS = 81920
@@ -58,18 +60,18 @@ class CosmosGRPODataset(Dataset):
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
         self.config = config
         self.tokenizer = tokenizer
-        self.dataset = load_dataset(config.train.train_policy.dataset_name, config.train.train_policy.dataset_subset)
-        if config.train.train_policy.dataset_train_split:
-            if isinstance(config.train.train_policy.dataset_train_split, list):
+        self.dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
+        if config.train.train_policy.dataset.train_split:
+            if isinstance(config.train.train_policy.dataset.train_split, list):
                 dataset_list = []
-                for split_name in config.train.train_policy.dataset_train_split:
+                for split_name in config.train.train_policy.dataset.train_split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.train.train_policy.dataset_train_split, str)
-                self.dataset = self.dataset[config.train.train_policy.dataset_train_split]
+                assert isinstance(config.train.train_policy.dataset.train_split, str)
+                self.dataset = self.dataset[config.train.train_policy.dataset.train_split]
         util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
-        self.mm_files_paths = self.get_mm_files_paths(config.train.train_policy.dataset_name, config.train.train_policy.dataset_subset)
+        self.mm_files_paths = self.get_mm_files_paths(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
 
     def __len__(self):
         return len(self.dataset)
@@ -132,6 +134,61 @@ class CosmosGRPODataset(Dataset):
     def get_reference_answer(self, idx: int) -> str:
         return self.dataset[idx]["qa_pairs"]['answer']
 
+class CosmosGRPOValDataset(CosmosGRPODataset):
+    '''
+    This is a validation dataset for Cosmos GRPO, which is used to evaluate the performance of the model.
+    It should be used in the launcher to evaluate the model during training.
+    '''
+    def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
+        if not config.train.enable_validation:
+            logger.warning("Validation is not enabled in the config. Skipping setup for CosmosGRPOValDataset.")
+            return
+
+        self.config = config
+        self.tokenizer = tokenizer
+        if not config.validation.dataset.name:
+            config.validation.dataset.name = config.train.train_policy.dataset.name
+            config.validation.dataset.subset = config.train.train_policy.dataset.subset
+            config.validation.dataset.revision = config.train.train_policy.dataset.revision
+        if not config.validation.dataset.test_split:
+            config.validation.dataset.test_split = config.train.train_policy.dataset.train_split
+        if not config.validation.dataset.test_size:
+            config.validation.dataset.test_size = config.train.train_policy.dataset.test_size
+
+        self.dataset = load_dataset(config.validation.dataset.name, config.validation.dataset.subset)
+        if config.validation.dataset.test_split:
+            if isinstance(config.validation.dataset.test_split, list):
+                dataset_list = []
+                for split_name in config.validation.dataset.test_split:
+                    dataset_list.append(self.dataset[split_name])
+                self.dataset = ConcatDataset(dataset_list)
+            else:
+                assert isinstance(config.validation.dataset.test_split, str)
+                self.dataset = self.dataset[config.validation.dataset.test_split]
+        if config.validation.dataset.test_size is not None:
+            if isinstance(config.validation.dataset.test_size, float):
+                n_test_samples = int(
+                    len(self.dataset) * config.validation.dataset.test_size
+                )
+            else:
+                n_test_samples = config.validation.dataset.test_size
+            n_test_samples = max(min(n_test_samples, len(self.dataset)), 1)
+
+            # Prepare the validation dataset by taking the first `n_test_samples` samples
+            indices = list(range(len(self.dataset)))
+            val_indices = indices[:n_test_samples]
+            self.dataset = torch.utils.data.Subset(self.dataset, val_indices)
+
+        # Prepare the data for Cosmos GRPO
+        # This is a hack to make the dataset compatible with the training data
+        # Change the training dataset name and subset to utilize the same data preparation logic
+        config.train.train_policy.dataset.name = config.validation.dataset.name
+        config.train.train_policy.dataset.subset = config.validation.dataset.subset
+        config.train.train_policy.dataset.train_split = config.validation.dataset.test_split
+        config.train.train_policy.dataset.revision = config.validation.dataset.revision
+        util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
+        self.mm_files_paths = self.get_mm_files_paths(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
+
 def custom_reward_fn(to_be_evaluated: str, reference: Optional[str] = None, *args, **kwargs) -> float:
     return sum([single_choice_reward_fn(to_be_evaluated, reference, *args, **kwargs), format_reward_fn(to_be_evaluated, reference, *args, **kwargs)])
 
@@ -188,8 +245,12 @@ class DemoDataPacker(DataPacker):
 
 if __name__ == "__main__":
     dataset = CosmosGRPODataset()
+    val_dataset = CosmosGRPOValDataset()
     launch_dispatcher(
         dataset=dataset,
         reward_fns=[custom_reward_fn],
         data_packer=DemoDataPacker(),
+        val_dataset=val_dataset,
+        val_reward_fns=[custom_reward_fn],
+        val_data_packer=DemoDataPacker(),
     )

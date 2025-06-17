@@ -38,7 +38,7 @@ def test_process_exit_grpo():
     with open(config_path, "r") as f:
         config = toml.load(f)
     config["train"]["epoch"] = 1
-    config["train"]["train_policy"]["dataset_name"] = os.path.join(
+    config["train"]["train_policy"]["dataset"]["name"] = os.path.join(
         cur_dir, "test_dataset"
     )
     with tempfile.NamedTemporaryFile(
@@ -127,7 +127,7 @@ def test_process_exit_sft():
     with open(config_path, "r") as f:
         config = toml.load(f)
     config["train"]["epoch"] = 1
-    config["train"]["train_policy"]["dataset_name"] = os.path.join(
+    config["train"]["train_policy"]["dataset"]["name"] = os.path.join(
         cur_dir, "test_dataset"
     )
     with tempfile.NamedTemporaryFile(

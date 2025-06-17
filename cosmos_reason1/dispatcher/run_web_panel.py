@@ -63,7 +63,9 @@ from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_NCCL_COMM_GET_ALL_SUFFIX,
     COSMOS_API_NCCL_COMM_ERROR_SUFFIX,
     COSMOS_API_NEXT_PROMPT_SUFFIX,
+    COSMOS_API_NEXT_VALIDATION_PROMPT_SUFFIX,
     COSMOS_API_ROLLOUT_SUFFIX,
+    COSMOS_API_VALIDATION_ROLLOUT_SUFFIX,
     COSMOS_API_POLICY_TRAIN_ACK_SUFFIX,
     COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
 )
@@ -133,6 +135,10 @@ async def meta():
     if controller.user_data_packer is not None:
         meta["user_data_packer"] = base64.b64encode(
             cloudpickle.dumps(controller.user_data_packer)
+        ).decode("utf-8")
+    if controller.user_val_data_packer is not None:
+        meta["user_val_data_packer"] = base64.b64encode(
+            cloudpickle.dumps(controller.user_val_data_packer)
         ).decode("utf-8")
     return meta
 
@@ -236,6 +242,17 @@ async def get_batched_prompt(n: int):
     }
 
 
+@app.get(COSMOS_API_NEXT_VALIDATION_PROMPT_SUFFIX)
+async def get_batched_validation_prompt(n: int):
+    prompt_id_and_payload_list, is_end = await controller.get_batched_validation_prompt(
+        n
+    )
+    return {
+        "prompt_id_and_payload_list": prompt_id_and_payload_list,
+        "is_end": is_end,
+    }
+
+
 async def monitor_replica_status():
     while True:
         now = time.time()
@@ -308,6 +325,39 @@ async def put_rollout(rollout: RolloutRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
+@app.post(COSMOS_API_VALIDATION_ROLLOUT_SUFFIX)
+async def put_validation_rollout(rollout: RolloutRequest):
+    try:
+        if rollout.extra_info is not None and "is_end" in rollout.extra_info:
+            # If the extra info contains "is_end", it means the rollout is finished
+            await controller.handle_validation_rollout_end_ack(
+                rollout.extra_info, rollout.src_replica_name
+            )
+            return {"message": "Validation rollout end put"}
+
+        rollout_groups: List[RolloutGroup] = [
+            RolloutGroup(
+                prompt_idx=prompt_idx,
+                payload=payload,
+                completions=completions,
+                extra_info=rollout.extra_info,
+                reference_answer=controller.query_reference_answer(prompt_idx),
+            )
+            for prompt_idx, payload, completions in zip(
+                rollout.prompt_idxs, rollout.payloads, rollout.completions
+            )
+        ]
+        await controller.put_validation_rollouts(
+            rollout_groups, rollout.src_replica_name
+        )
+        return {"message": "Validation rollout put"}
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc()
+        return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
+
+
 @app.post(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX)
 async def train_ack(request: TrainAckRequest):
     try:
@@ -347,6 +397,9 @@ def main(
     dataset: Optional[Dataset] = None,
     data_packer: Optional[DataPacker] = None,
     reward_fns: Optional[List[Callable]] = None,
+    val_dataset: Optional[Dataset] = None,
+    val_data_packer: Optional[DataPacker] = None,
+    val_reward_fns: Optional[List[Callable]] = None,
 ):
     parser = argparse.ArgumentParser(
         description="Run the web panel for the dispatcher."
@@ -410,6 +463,9 @@ def main(
             dataset=dataset,
             reward_fns=reward_fns,
             data_packer=data_packer,
+            val_dataset=val_dataset,
+            val_reward_fns=val_reward_fns,
+            val_data_packer=val_data_packer,
         )
         logger.info(f"Successfully loaded configuration from {args.config_file}")
     except FileNotFoundError:

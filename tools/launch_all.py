@@ -596,8 +596,8 @@ def main():
 
     # Check if the config file is provided
     cosmos_config = read_config(args.config)
-    # train.train_policy.dataset_name
-    dataset_name = cosmos_config.get("train", {}).get("train_policy", {}).get("dataset_name", None)
+    # train.train_policy.dataset.name
+    dataset_name = cosmos_config.get("train", {}).get("train_policy", {}).get("dataset", {}).get("name", None)
     if dataset_name and "nvidia/Cosmos-Reason1-SFT-Dataset" in dataset_name:
         launcher = os.path.join(os.path.dirname(__file__), "dataset", "cosmos_sft.py")
     elif dataset_name and "nvidia/Cosmos-Reason1-RL-Dataset" in dataset_name:

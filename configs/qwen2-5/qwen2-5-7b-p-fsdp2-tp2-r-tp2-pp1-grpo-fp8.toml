@@ -3,12 +3,12 @@ redis = "12808"
 [train]
 resume = false
 epoch = 1
-output_dir = "./outputs/qwen2-5-7b-p-pp2-fsdp1-tp1-r-tp2-pp2-grpo"
+output_dir = "./outputs/qwen2-5-7b-p-fsdp1-tp2-r-tp2-pp1-grpo-fp8"
 epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 1e-6
 optm_impl = "fused"
-optm_weight_decay = 0.01
+optm_weight_decay = 0.0
 optm_betas = [0.9, 0.999]
 optm_warmup_steps = 20
 optm_grad_norm_clip = 1.0
@@ -28,7 +28,7 @@ max_response_length = 2048
 n_generation = 16
 batch_size = 1
 quantization = "none"
-
+seed = 42
 
 [policy]
 model_name_or_path = "Qwen/Qwen2.5-7B-Instruct"
@@ -37,7 +37,7 @@ model_gradient_checkpointing = true
 
 [logging]
 logger = ['console', 'wandb']
-project_name = "cosmos_reason1"
+project_name = "echo"
 experiment_name = "None"
 
 [train.train_policy]
@@ -53,15 +53,22 @@ epsilon_high = 0.2
 kl_beta = 0.0
 mu_iterations = 1
 
+[train.fp8]
+enable_fp8 = true
+fp8_recipe = "dynamic_scaling"
+# quant_recipe = "rowwise"
+quant_recipe = "tensorwise"
+
+
 [train.ckpt]
-enable_checkpoint = true
+enable_checkpoint = false
 save_freq = 20
 save_mode = "async"
 
 [rollout.parallelism]
 n_init_replicas = 1
 tp_size = 2
-pp_size = 2
+pp_size = 1
 
 [rollout.sampling_config]
 temperature = 0.9
@@ -70,9 +77,9 @@ top_k = 10
 
 [policy.parallelism]
 n_init_replicas = 1
-tp_size = 1
+tp_size = 2
 cp_size = 1
-dp_shard_size = 1
-pp_size = 2
+dp_shard_size = 2
+pp_size = 1
 dp_replicate_size = 1
 cp_rotate_method = "allgather"

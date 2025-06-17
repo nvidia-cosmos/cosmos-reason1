@@ -399,6 +399,11 @@ class FeedForward(nn.Module):
         self.local_to_dtensor = IdentityLayer()
         self.reshard_helper_layer = IdentityLayer()
 
+        cuda_device_props = torch.cuda.get_device_properties()
+        self.is_hopper_gpu = (
+            cuda_device_props.major == 9 and cuda_device_props.minor == 0
+        )
+
         assert not any(
             [
                 "up_proj" in model_args.biases,
@@ -445,6 +450,48 @@ class FeedForward(nn.Module):
         return self.token_gather_buf.detach()
 
     def _run_group_gemm(self, contig_tokens, m_sizes, m_offsets):
+        try:
+            from grouped_gemm import ops
+        except ImportError:
+            print(
+                "grouped_gemm is not available. Please run:"
+                "pip install git+https://github.com/fanshiqing/grouped_gemm@v1.1.4"
+            )
+            raise
+
+        gate_weight = self.gate_proj.weight.to_local()
+        up_weight = self.up_proj.weight.to_local()
+        down_weight = self.down_proj.weight.to_local()
+
+        sizes_cpu = m_sizes.cpu().to(torch.int64)
+
+        gate_proj = ops.gmm(
+            contig_tokens,
+            gate_weight,
+            sizes_cpu,
+            trans_b=False,
+        )
+
+        up_proj = ops.gmm(
+            contig_tokens,
+            up_weight,
+            sizes_cpu,
+            trans_b=False,
+        )
+
+        # Apply activation
+        hidden_outputs = F.silu(gate_proj) * up_proj
+
+        # Run the third GEMM (down projection)
+        hidden_outputs = ops.gmm(
+            hidden_outputs,
+            down_weight,
+            sizes_cpu,
+            trans_b=False,
+        )
+        return hidden_outputs
+
+    def _run_group_gemm_hopper(self, contig_tokens, m_sizes, m_offsets):
         gate_weight = self.gate_proj.weight.to_local()
         up_weight = self.up_proj.weight.to_local()
         down_weight = self.down_proj.weight.to_local()
@@ -548,11 +595,18 @@ class FeedForward(nn.Module):
         contig_tokens = token_gather_buf[permuted_indices]
         # group gemm - handle all three group gemms (up, gate, down for all experts)
         # print(f"m_sizes: {m_sizes}, m_offsets: {m_offsets}")
-        hidden_outputs = self._run_group_gemm(
-            contig_tokens,
-            m_sizes,
-            m_offsets,
-        )
+        if self.is_hopper_gpu:
+            hidden_outputs = self._run_group_gemm_hopper(
+                contig_tokens,
+                m_sizes,
+                m_offsets,
+            )
+        else:
+            hidden_outputs = self._run_group_gemm(
+                contig_tokens,
+                m_sizes,
+                m_offsets,
+            )
 
         # Prepare buffer for tokens processed by experts
         processed_tokens = self.get_gather_buf()
@@ -1158,3 +1212,7 @@ class Qwen3MoE(nn.Module, BaseModel):
     @classmethod
     def data_packer(cls) -> DecoderOnlyLLMDataPacker:
         return DecoderOnlyLLMDataPacker()
+
+    @classmethod
+    def fqn_filter_for_fp8(cls) -> List[str]:
+        return ["lm_head"]

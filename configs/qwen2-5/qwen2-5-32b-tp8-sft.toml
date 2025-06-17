@@ -8,7 +8,7 @@ epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 1e-6
 optm_impl = "fused"
-optm_weight_decay = 0.0
+optm_weight_decay = 0.01
 optm_betas = [ 0.9, 0.999,]
 optm_warmup_steps = 20
 optm_grad_norm_clip = 1.0
@@ -33,10 +33,10 @@ experiment_name = "None"
 
 [train.train_policy]
 type = "sft"
-dataset_name = "LNTANOooo/sharegpt52k"
-dataset_subset = ""
-dataset_train_split = "train"
-dataset_test_split = "test"
+dataset.name = "LNTANOooo/sharegpt52k"
+dataset.subset = ""
+dataset.train_split = "train"
+dataset.test_split = "test"
 conversation_column_name = "conversation"
 
 

@@ -10,6 +10,7 @@ vllm==0.8.5
 flashinfer-python==0.2.2.post1
 torch==2.6.0
 torchvision==0.21.0
+torchao==0.10.0
 tensordict==0.7.2
 toml
 StrEnum
@@ -19,10 +20,10 @@ qwen_vl_utils
 flash-attn==2.7.4.post1
 setuptools==79.0.1
 pynvml
-torchao
 boto3
 modelscope
 cloudpickle
 click
 rich
 pyyaml
+pytest

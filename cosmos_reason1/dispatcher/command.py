@@ -26,6 +26,11 @@ from cosmos_reason1.dispatcher.status import RolloutStatusManager, RolloutStatus
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
 
 
+class ProcessPhase(StrEnum):
+    TRAIN = "train"
+    VALIDATE = "validate"
+
+
 class CommandType(StrEnum):
     WEIGHT_RESUME = "WEIGHT_RESUME"
     BUILD_MESH = "BUILD_MESH"
@@ -36,6 +41,7 @@ class CommandType(StrEnum):
     DATA_FETCH = "DATA_FETCH"
     ALL_REDUCE = "ALL_REDUCE"
     STOP = "STOP"
+    VALIDATE = "VALIDATE"
     DUMMY = "DUMMY"
 
 
@@ -84,6 +90,8 @@ class Command(ABC):
             sub_cls = AllReduceCommand
         elif dict_v["command_type"] == CommandType.STOP:
             sub_cls = StopCommand
+        elif dict_v["command_type"] == CommandType.VALIDATE:
+            sub_cls = ValidateCommand
 
         if sub_cls is None:
             return DummyCommand
@@ -508,6 +516,31 @@ class AllReduceCommand(Command):
     def from_dict(cls, dict_v: Dict):
         return cls(
             dict_v["replica_name_to_rank"],
+            dict_v["uuid"],
+        )
+
+
+class ValidateCommand(Command):
+    """
+    Used to validate the command.
+    This command triggers validation on the rollout replica.
+    """
+
+    replica_name: Optional[str] = None
+
+    def __init__(self, replica_name: str, uuid: str):
+        super().__init__(uuid, CommandScope.LOCAL, CommandType.VALIDATE)
+        self.replica_name = replica_name
+
+    @classmethod
+    def trigger(cls, replica: Replica, redis_handler: RedisStreamHandler):
+        cmd = cls(replica.name, cls.new_uuid())
+        redis_handler.publish_command(cmd.pack(), replica.name)
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict):
+        return cls(
+            dict_v["replica_name"],
             dict_v["uuid"],
         )
 

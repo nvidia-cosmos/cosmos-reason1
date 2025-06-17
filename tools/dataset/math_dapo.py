@@ -34,17 +34,17 @@ class MathDapoDataset(Dataset):
         self.tokenizer = tokenizer
 
         # This demo is only for DAPO-Math-17k dataset
-        assert config.train.train_policy.dataset_name == "BytedTsinghua-SIA/DAPO-Math-17k"
-        self.dataset = load_dataset(config.train.train_policy.dataset_name, config.train.train_policy.dataset_subset)
-        if config.train.train_policy.dataset_train_split:
-            if isinstance(config.train.train_policy.dataset_train_split, list):
+        assert config.train.train_policy.dataset.name == "BytedTsinghua-SIA/DAPO-Math-17k"
+        self.dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
+        if config.train.train_policy.dataset.train_split:
+            if isinstance(config.train.train_policy.dataset.train_split, list):
                 dataset_list = []
-                for split_name in config.train.train_policy.dataset_train_split:
+                for split_name in config.train.train_policy.dataset.train_split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.train.train_policy.dataset_train_split, str)
-                self.dataset = self.dataset[config.train.train_policy.dataset_train_split]
+                assert isinstance(config.train.train_policy.dataset.train_split, str)
+                self.dataset = self.dataset[config.train.train_policy.dataset.train_split]
 
     def __len__(self):
         return len(self.dataset)

@@ -48,8 +48,8 @@ experiment_name = "None"
 [train.train_policy]
 type = "grpo"
 variant = "dapo"
-dataset_name = "BytedTsinghua-SIA/DAPO-Math-17k"
-dataset_train_split = "train"
+dataset.name = "BytedTsinghua-SIA/DAPO-Math-17k"
+dataset.train_split = "train"
 reward_function = ['direct_math', 'overlong']
 temperature = 0.9
 epsilon_low = 0.2

@@ -434,13 +434,13 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
     cache_dir = os.environ.get(
         "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
     )
-    dataset_name = basename_from_modelpath(config.train.train_policy.dataset_name)
-    use_modelscope = if_use_modelscope(config.train.train_policy.dataset_name)
+    dataset_name = basename_from_modelpath(config.train.train_policy.dataset.name)
+    use_modelscope = if_use_modelscope(config.train.train_policy.dataset.name)
     dataset_dir = os.path.join(
         cache_dir,
         "datasets",
         dataset_name,
-        config.train.train_policy.dataset_subset,
+        config.train.train_policy.dataset.subset,
     )
     video_clips_dir = os.path.join(dataset_dir, "video_clips")
     video_tensors_dir = os.path.join(
@@ -465,45 +465,46 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
         )
 
         # dataset = load_data_from_disk_or_hf(
-        #     config.train.train_policy.dataset_name,
-        #     config.train.train_policy.dataset_subset,
+        #     config.train.train_policy.dataset.name,
+        #     config.train.train_policy.dataset.subset,
         # )
-        # num_samples = len(dataset[config.train.train_policy.dataset_train_split])
+        # num_samples = len(dataset[config.train.train_policy.dataset.train_split])
         if num_clips == num_tensors:
             logger.info(
-                f"Dataset {config.train.train_policy.dataset_name} is already prepared."
+                f"Dataset {config.train.train_policy.dataset.name} is already prepared."
             )
             return
 
     ## Prepare video clips
     re_pattern = re.compile(
-        rf"^{re.escape(config.train.train_policy.dataset_subset)}/clips/.*\.tar\.gz$"
+        rf"^{re.escape(config.train.train_policy.dataset.subset)}/clips/.*\.tar\.gz$"
     )
-    file_pattern = f"{config.train.train_policy.dataset_subset}/clips/*.tar.gz"
+    file_pattern = f"{config.train.train_policy.dataset.subset}/clips/*.tar.gz"
     if use_modelscope:
-        assert os.path.exists(config.train.train_policy.dataset_name)
-        # list all files in the local directory config.train.train_policy.dataset_name
+        assert os.path.exists(config.train.train_policy.dataset.name)
+        # list all files in the local directory config.train.train_policy.dataset.name
         import glob
 
         remote_files = [
-            f.replace(config.train.train_policy.dataset_name + "/", "")
+            f.replace(config.train.train_policy.dataset.name + "/", "")
             for f in glob.glob(
-                f"{config.train.train_policy.dataset_name}/**/*.tar.gz", recursive=True
+                f"{config.train.train_policy.dataset.name}/**/*.tar.gz",
+                recursive=True,
             )
         ]
     else:
         remote_files = list_repo_files(
             repo_id=dataset_name,
             repo_type="dataset",
-            revision=config.train.train_policy.dataset_revision or None,
+            revision=config.train.train_policy.dataset.revision or None,
         )
 
     tgz_files = [f for f in remote_files if re_pattern.match(f)]
     if tgz_files:
         if use_modelscope:
             downloaded_clips_dir_path = os.path.join(
-                config.train.train_policy.dataset_name,
-                config.train.train_policy.dataset_subset,
+                config.train.train_policy.dataset.name,
+                config.train.train_policy.dataset.subset,
                 "clips",
             )
         else:
@@ -511,12 +512,12 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
                 dataset_name,
                 allow_patterns=[file_pattern],
                 repo_type="dataset",
-                revision=config.train.train_policy.dataset_revision or None,
+                revision=config.train.train_policy.dataset.revision or None,
             )
 
             downloaded_clips_dir_path = os.path.join(
                 downloaded_snapshot_directory_cache,
-                config.train.train_policy.dataset_subset,
+                config.train.train_policy.dataset.subset,
                 "clips",
             )
         assert os.path.exists(
@@ -556,22 +557,22 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
         if not os.path.exists(video_clips_dir):
             os.makedirs(video_clips_dir, exist_ok=True)
             clip_filename = os.path.join(
-                config.train.train_policy.dataset_subset, "clips.tar.gz"
+                config.train.train_policy.dataset.subset, "clips.tar.gz"
             )
             if use_modelscope:
                 clip_tgz = os.path.join(
-                    config.train.train_policy.dataset_name, clip_filename
+                    config.train.train_policy.dataset.name, clip_filename
                 )
             else:
                 clip_tgz = hf_hub_download(
                     repo_id=dataset_name,
-                    revision=config.train.train_policy.dataset_revision or None,
+                    revision=config.train.train_policy.dataset.revision or None,
                     repo_type="dataset",
                     filename=clip_filename,
                 )
             _extract_tgz_file(clip_tgz, video_clips_dir)
 
-    if config.train.train_policy.dataset_subset == "av":
+    if config.train.train_policy.dataset.subset == "av":
         # For AV dataset, we need to rename the files
         for root, dirs, files in os.walk(video_clips_dir):
             for file in files:
@@ -868,3 +869,35 @@ def masked_mean(values, mask, axis=None):
         Tensor: Masked mean, with shape equal to `values` reduced over `axis`.
     """
     return (values * mask).sum(axis=axis) / (mask.sum(axis=axis) + 1e-8)
+
+
+def is_cuda_compatible(major: int, minor: int) -> bool:
+    return torch.cuda.is_available() and torch.cuda.get_device_capability() >= (
+        major,
+        minor,
+    )
+
+
+# From torchao.
+def parse_version(version_string):
+    # Extract just the X.Y.Z part from the version string
+    match = re.match(r"(\d+\.\d+\.\d+)", version_string)
+    if match:
+        version = match.group(1)
+        return [int(x) for x in version.split(".")]
+    else:
+        raise ValueError(f"Invalid version string format: {version_string}")
+
+
+def compare_versions(v1, v2):
+    v1_parts = parse_version(v1)
+    v2_parts = parse_version(v2)
+    return (v1_parts > v2_parts) - (v1_parts < v2_parts)
+
+
+def is_fbcode():
+    return not hasattr(torch.version, "git_version")
+
+
+def torch_version_at_least(min_version):
+    return is_fbcode() or compare_versions(torch.__version__, min_version) >= 0

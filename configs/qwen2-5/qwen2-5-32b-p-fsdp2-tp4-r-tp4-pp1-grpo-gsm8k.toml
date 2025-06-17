@@ -8,7 +8,7 @@ epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 2e-6
 optm_impl = "fused"
-optm_weight_decay = 0.0
+optm_weight_decay = 0.01
 optm_betas = [ 0.9, 0.999,]
 optm_warmup_steps = 10
 optm_grad_norm_clip = 1.0
@@ -41,15 +41,16 @@ experiment_name = "qwen-32b-gsm8k-grpo"
 
 [train.train_policy]
 type = "grpo"
-dataset_name = "openai/gsm8k"
-dataset_subset = "main"
-dataset_train_split = "train"
+dataset.name = "openai/gsm8k"
+dataset.subset = "main"
+dataset.train_split = "train"
 prompt_column_name = "question"
 response_column_name = "answer"
 reward_function = "gsm8k"
 temperature = 1.0
 epsilon_low = 0.2
 epsilon_high = 0.28
+lower_bound_ratio = 10.0
 kl_beta = 0.0
 mu_iterations = 1
 mini_batch = 8
@@ -73,9 +74,9 @@ cp_rotate_method = "allgather"
 
 [policy.parallelism]
 n_init_replicas = 1
-tp_size = 1
+tp_size = 4
 cp_size = 1
-dp_shard_size = 64
+dp_shard_size = 2
 pp_size = 1
 dp_replicate_size = 1
 cp_rotate_method = "allgather"

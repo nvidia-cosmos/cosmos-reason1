@@ -40,7 +40,7 @@ epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 1e-6
 optm_impl = "fused"
-optm_weight_decay = 0.0
+optm_weight_decay = 0.01
 optm_betas = [ 0.9, 0.999,]
 optm_warmup_steps = 20
 optm_grad_norm_clip = 1.0
@@ -74,11 +74,11 @@ experiment_name = "None"
 
 [train.train_policy]
 type = "grpo"
-dataset_name = "JiaxinTsao/math_examples"
+dataset.name = "JiaxinTsao/math_examples"
 prompt_column_name = "prompt"
 response_column_name = "result"
 reward_function = "boxed_math"
-dataset_train_split="train"
+dataset.train_split="train"
 temperature = 1
 epsilon_low = 0.2
 epsilon_high = 0.2

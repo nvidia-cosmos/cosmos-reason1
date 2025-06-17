@@ -41,6 +41,7 @@ from cosmos_reason1.dispatcher.command import (
     BuildMeshCommand,
     PolicyToRolloutUnicastCommand,
     RolloutToRolloutBroadcastCommand,
+    ValidateCommand,
     StopCommand,
     Command,
     CommandType,
@@ -62,7 +63,10 @@ from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_NCCL_COMM_ACCEPTOR_SUFFIX,
     COSMOS_API_NEXT_PROMPT_SUFFIX,
     COSMOS_API_ROLLOUT_SUFFIX,
+    COSMOS_API_NEXT_VALIDATION_PROMPT_SUFFIX,
+    COSMOS_API_VALIDATION_ROLLOUT_SUFFIX,
 )
+from cosmos_reason1.dispatcher.command import ProcessPhase
 
 """
 Keep in mind that torch distributed is not thread safe. So try to keep the usage in the same thread.
@@ -110,15 +114,23 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
         # CommandQueue queried from controller.
         self._command_queue: Queue[Command] = Queue()
-        self._prompt_queue: Queue[List[List[int, str]]] = Queue(
+        self._training_prompt_queue: Queue[List[List[int, str]]] = Queue(
             maxsize=COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE
         )
+        self._validate_prompt_queue: Queue[List[List[int, str]]] = Queue(
+            maxsize=COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE
+        )
+        self._prompt_queue = self._training_prompt_queue
 
         # check for flashinfer
         if self.config.rollout.vllm_use_flashinfer:
             os.environ["VLLM_ATTENTION_BACKEND"] = "FLASHINFER"
             if self.config.rollout.sampling_config.use_flashinfer:
                 os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "1"
+            else:
+                os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
+        else:
+            os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 
         self.rollout: vLLMRollout = vLLMRollout(
             self.config,
@@ -155,10 +167,14 @@ class vLLMRolloutWorker(RolloutWorkerBase):
 
         atexit.register(self.handle_shutdown)
 
-        self.prompt_end_event = threading.Event()
+        self.validation_prompt_end_event = threading.Event()
+        self.training_prompt_end_event = threading.Event()
+        self.prompt_end_event = self.training_prompt_end_event
         self.end_signal_sent = threading.Event()
+        self.prepare_validate_event = threading.Event()
 
         self.inference_stream = torch.cuda.Stream()
+        self.phase = ProcessPhase.TRAIN
 
     def handle_shutdown(self):
         if not self.shutdown_background_task_event.is_set():
@@ -431,7 +447,10 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         completions_per_prompt: List[List[str]] = self.rollout.rollout_generation(
             prompt_id_and_payload_list=prompt_id_and_payload_list,
             stream=self.inference_stream,
-            data_packer=self.data_packer,
+            data_packer=self.data_packer
+            if self.phase != ProcessPhase.VALIDATE
+            else self.val_data_packer,
+            is_validation=self.phase == ProcessPhase.VALIDATE,
         )
         return completions_per_prompt, prompt_id_and_payload_list
 
@@ -439,6 +458,11 @@ class vLLMRolloutWorker(RolloutWorkerBase):
         assert self.global_rank == 0
         prompt_id_and_payload_list = None
         is_end = False
+        url_suffix = (
+            COSMOS_API_NEXT_PROMPT_SUFFIX
+            if self.phase == ProcessPhase.TRAIN
+            else COSMOS_API_NEXT_VALIDATION_PROMPT_SUFFIX
+        )
         try:
             if not self._prompt_queue.full():
                 # blocking request
@@ -447,7 +471,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                         requests.get,
                         params={"n": self.batch_size},
                     ),
-                    self.get_alternative_urls(COSMOS_API_NEXT_PROMPT_SUFFIX),
+                    self.get_alternative_urls(url_suffix),
                     max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                 )
                 prompt_meta = prompt_meta.json()
@@ -472,7 +496,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
             prompts_and_is_end = dist_utils.broadcast_object_cpu(prompts_and_is_end)
             prompts, is_end = prompts_and_is_end
             if is_end:
-                logger.info(
+                logger.debug(
                     f"[Rollout] Receive prompt end, preparing exiting for {self.replica_name}."
                 )
                 self.prompt_end_event.set()
@@ -501,50 +525,87 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 f"[Rollout] Command executed: {current_command._serialize()} for rank: {self.global_rank}"
             )
 
+    @RolloutWorkerBase.register_rollout_command_handler(ValidateCommand)
+    def do_validate(self, command: ValidateCommand):
+        """
+        Start the validation phase.
+        """
+        self.prepare_validate_event.set()
+        self.validation_prompt_end_event.clear()
+        self._prompt_queue = self._validate_prompt_queue
+        self.prompt_end_event = self.validation_prompt_end_event
+        logger.debug(f"[Rollout] Starting validation for {self.replica_name}")
+
+    def recover_from_validate(self):
+        self.phase = ProcessPhase.TRAIN
+        self._prompt_queue = self._training_prompt_queue
+        self.prompt_end_event = self.training_prompt_end_event
+        self.prepare_validate_event.clear()
+        logger.debug(f"[Rollout] Stop validation for {self.replica_name}")
+
+    def send_end_signal(self, url_suffix: str):
+        """
+        Send end signal to the controller.
+        This is used to notify the controller that the rollout worker has finished processing all prompts.
+        """
+        if self.parallel_dims.tp_coord[0] == 0 and (
+            self.parallel_dims.pp_coord[0] == self.parallel_dims.pp_coord[1] - 1
+        ):
+            response = RolloutRequest(
+                src_replica_name=self.replica_name,
+                prompt_idxs=[],
+                payloads=[],
+                completions=[],
+                extra_info={
+                    "is_end": True,
+                },
+            )
+            try:
+                logger.debug(
+                    f"[Rollout] Posting prompt end event to controller: {response}"
+                )
+                make_request_with_retry(
+                    partial(
+                        requests.post,
+                        json=response.model_dump(),
+                    ),
+                    self.get_alternative_urls(url_suffix),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+            except Exception as e:
+                logger.error(
+                    f"[Rollout] Failed in post rollout completion to controller: {str(e)}"
+                )
+
     @torch.no_grad()
     def rollout_procedure(self):
         while not self.shutdown_background_task_event.is_set():
             self.consume_command()
+            # According to prepare_validate_event, we can switch to validation phase.
+            # This is to ensure each generation will be completed before switching to validation phase.
+            # logger.info(f"[Rollout] Current phase: {self.phase}, prepare_validate_event: {self.prepare_validate_event.is_set()} end_signal_sent: {self.end_signal_sent.is_set()} shutdown_background_task_event: {self.shutdown_background_task_event.is_set()} prompt_end_event: {self.prompt_end_event.is_set()}")
+            if self.prepare_validate_event.is_set():
+                self.phase = ProcessPhase.VALIDATE
             if not self.weight_synced_event.is_set():
                 continue
             self.request_new_prompts()
-            if self.end_signal_sent.is_set():
+            if self.end_signal_sent.is_set() and self.phase == ProcessPhase.TRAIN:
                 assert (
                     self._prompt_queue.empty() and self.prompt_end_event.is_set()
                 ), "[Rollout] If end_signal_sent is set, prompt queue should be empty and prompt end event should be set."
                 continue
             if self._prompt_queue.empty():
-                if self.prompt_end_event.is_set():
+                if self.phase == ProcessPhase.VALIDATE:
+                    assert (
+                        self.validation_prompt_end_event == self.prompt_end_event
+                    ), "[Rollout] If we are in validation phase, the prompt end event should be validation prompt end event."
+                    if self.prompt_end_event.is_set():
+                        # if we have no prompt and the validation prompt end event is set, we can stop the worker.
+                        self.send_end_signal(COSMOS_API_VALIDATION_ROLLOUT_SUFFIX)
+                        self.recover_from_validate()
+                if self.prompt_end_event.is_set() and not self.end_signal_sent.is_set():
                     # if we have no prompt and the prompt end event is set, we can stop the worker.
-                    if self.parallel_dims.tp_coord[0] == 0 and (
-                        self.parallel_dims.pp_coord[0]
-                        == self.parallel_dims.pp_coord[1] - 1
-                    ):
-                        response = RolloutRequest(
-                            src_replica_name=self.replica_name,
-                            prompt_idxs=[],
-                            payloads=[],
-                            completions=[],
-                            extra_info={
-                                "is_end": True,
-                            },
-                        )
-                        try:
-                            logger.info(
-                                f"[Rollout] Posting prompt end event to controller: {response}"
-                            )
-                            make_request_with_retry(
-                                partial(
-                                    requests.post,
-                                    json=response.model_dump(),
-                                ),
-                                self.get_alternative_urls(COSMOS_API_ROLLOUT_SUFFIX),
-                                max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
-                            )
-                        except Exception as e:
-                            logger.error(
-                                f"[Rollout] Failed in post rollout completion to controller: {str(e)}"
-                            )
+                    self.send_end_signal(COSMOS_API_ROLLOUT_SUFFIX)
                     self.end_signal_sent.set()
                 continue
             logger.debug(f"[Rollout] generate start for rank {self.global_rank}")
@@ -556,6 +617,11 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                 self.parallel_dims.pp_coord[0] == self.parallel_dims.pp_coord[1] - 1
             ):
                 if completions is not None:
+                    url_suffix = (
+                        COSMOS_API_ROLLOUT_SUFFIX
+                        if self.phase == ProcessPhase.TRAIN
+                        else COSMOS_API_VALIDATION_ROLLOUT_SUFFIX
+                    )
                     # only the first tp rank in the rollout replica will post the completion to the controller.
                     prompt_idxs = [prompt[0] for prompt in prompts]
                     payloads = [prompt[1] for prompt in prompts]
@@ -572,7 +638,7 @@ class vLLMRolloutWorker(RolloutWorkerBase):
                                 requests.post,
                                 json=response.model_dump(),
                             ),
-                            self.get_alternative_urls(COSMOS_API_ROLLOUT_SUFFIX),
+                            self.get_alternative_urls(url_suffix),
                             max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
                         )
                     except Exception as e:

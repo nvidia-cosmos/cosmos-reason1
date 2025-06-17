@@ -756,3 +756,7 @@ class GPT(nn.Module, BaseModel):
     @classmethod
     def data_packer(cls) -> DecoderOnlyLLMDataPacker:
         return DecoderOnlyLLMDataPacker()
+
+    @classmethod
+    def fqn_filter_for_fp8(cls) -> List[str]:
+        return ["lm_head"]

@@ -73,10 +73,10 @@ experiment_name = "None"
 
 [train.train_policy]
 type = "grpo"
-dataset_name = "JiaxinTsao/math_examples"
+dataset.name = "JiaxinTsao/math_examples"
 prompt_column_name = "prompt"
 response_column_name = "result"
-dataset_train_split = "train"
+dataset.train_split = "train"
 reward_function = "boxed_math"
 temperature = 0.9
 epsilon_low = 0.2

@@ -14,7 +14,6 @@
 # limitations under the License.
 
 from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.wandb_logger import is_wandb_available, init_wandb
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.utils.distributed import (
     init_distributed,
@@ -42,13 +41,6 @@ def run_train():
     )
     init_distributed()
     parallel_dims.build_mesh(device_type="cuda")
-
-    if "wandb" in cosmos_config.logging.logger and is_wandb_available():
-        init_wandb(cosmos_config, parallel_dims)
-    else:
-        logger.warning(
-            "Wandb is not available. Please install it to use wandb logging features."
-        )
 
     policy_type = cosmos_config.train.train_policy.type
 

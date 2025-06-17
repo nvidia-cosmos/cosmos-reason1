@@ -15,6 +15,7 @@
 
 from cosmos_reason1.policy.model import build_model
 from cosmos_reason1.policy.config import Config as CosmosConfig
+from cosmos_reason1.utils.wandb_logger import is_wandb_available, init_wandb
 from cosmos_reason1.utils.parallelism import (
     ParallelDims,
     train_context,
@@ -40,6 +41,7 @@ from typing import Dict
 import cosmos_reason1.utils.util as util
 from cosmos_reason1.utils.profiler import CosmosProfiler
 from cosmos_reason1.utils.api_suffix import COSMOS_API_SET_TRACE_PATH_SUFFIX
+from cosmos_reason1.utils.fp8.fp8_util import FP8ModelConverter
 
 
 class Trainer(CommMixin):
@@ -83,8 +85,16 @@ class Trainer(CommMixin):
         self.train_stream = torch.cuda.current_stream()
         self.train_event_queue = deque()
         model = build_model(config)
+
+        # FP8 settings
+        with torch.device("meta"):
+            if config.train.fp8.enable_fp8:
+                self.model_converter = FP8ModelConverter(config, parallel_dims)
+                self.model_converter.convert_model(model)
+
         if config.train.fsdp_offload:
             model.to_empty(device="cpu")
+
         try:
             # Apply parallelism to the model
             parallelize_fn, _ = model.parallelize_fn
@@ -116,14 +126,38 @@ class Trainer(CommMixin):
                 COSMOS_API_SET_TRACE_PATH_SUFFIX
             ),
         )
+
+        if "wandb" in config.logging.logger and is_wandb_available():
+            self.wandb_run = init_wandb(config, parallel_dims)
+        else:
+            logger.warning(
+                "Wandb is not available. Please install it to use wandb logging features."
+            )
         # TODO(cjx): add `CompiledAutograd` support
         self.context = train_context(False)
         self.optimizers = build_optimizers(self.model_parts, self.config)
+
+        if self.config.train.fp8.enable_fp8:
+            self.optimizers.register_step_post_hook(
+                lambda *args, **kwargs: self.model_converter.post_optimizer_hook(
+                    self.model_parts
+                )
+            )
+
         self.lr_schedulers = build_lr_schedulers(self.optimizers, self.config)
         self.seq_len_multiple = parallel_dims.cp * parallel_dims.tp
+        if self.config.train.fp8.enable_fp8:
+            # Constraint of FP8 kernel(torch._scaled_mm): it requires K in MNK is mutiple of 16. In backward of Linear, to
+            # calculate the gradient of weight, we have to round the seq_len_multiple to mutiple of 16.
+            # See: https://github.com/pytorch/pytorch/blob/851a6fa82df251fbc368f0284d941ce78f68e7b1/aten/src/ATen/native/cuda/Blas.cpp#L1252
+            self.seq_len_multiple = (self.seq_len_multiple + 16 - 1) // 16 * 16
+            logger.info(
+                "FP8 Training enabled, round seq_len_multiple to mutiple of 16."
+            )
         logger.info(
             f"Trainer initialized at local rank {self.local_rank}, with seq_len_multiple: {self.seq_len_multiple}"
         )
+        self.upload_thread = None
 
     @property
     def pp_loss_fn(self):
@@ -265,8 +299,11 @@ class Trainer(CommMixin):
                 generation_config.save_pretrained(path)
             except Exception:
                 logger.warning("[Policy] No generation config found, do not save it.")
+
+        def upload_handler(config, is_final, path, rel_path):
+            """Handle the upload of the model to huggingface and s3."""
             # upload the final model to huggingface
-            if self.config.train.ckpt.upload_hf and is_final:
+            if config.train.ckpt.upload_hf and is_final:
 
                 def upload_hf(folder_path, repo_id):
                     # hide redundant logs of huggingface
@@ -284,30 +321,35 @@ class Trainer(CommMixin):
                 repo_id = (
                     username
                     + "/"
-                    + self.config.train.ckpt.hf_repo_name
+                    + config.train.ckpt.hf_repo_name
                     + "-"
-                    + self.config.train.timestamp
+                    + config.train.timestamp
                 )
                 create_repo(repo_id, exist_ok=True)
                 logger.info(f"Uploading the final model to huggingface: {repo_id}...")
                 upload_hf(path, repo_id)
             # upload the model to s3
-            if self.config.train.ckpt.upload_s3:
+            if config.train.ckpt.upload_s3:
                 if is_final:
                     # syncronizely upload the final model to s3
                     upload_folder_to_s3(
                         path,
-                        self.config.train.ckpt.s3_bucket,
-                        os.path.join(self.config.train.ckpt.s3_prefix, rel_path),
+                        config.train.ckpt.s3_bucket,
+                        os.path.join(config.train.ckpt.s3_prefix, rel_path),
                     )
-                elif self.config.train.ckpt.upload_s3 == "all":
+                elif config.train.ckpt.upload_s3 == "all":
                     # asynchronously upload the model to s3
-                    threading.Thread(
-                        target=upload_folder_to_s3,
-                        args=(
-                            path,
-                            self.config.train.ckpt.s3_bucket,
-                            os.path.join(self.config.train.ckpt.s3_prefix, rel_path),
-                        ),
-                    ).start()
+                    upload_folder_to_s3(
+                        path,
+                        config.train.ckpt.s3_bucket,
+                        os.path.join(config.train.ckpt.s3_prefix, rel_path),
+                    )
             logger.info(f"\n\nExported safetensors to {path}\n\n")
+
+        self.upload_thread = threading.Thread(
+            target=upload_handler,
+            args=(self.config, is_final, path, rel_path),
+            name="upload_safetensors",
+            daemon=True,
+        )
+        self.upload_thread.start()

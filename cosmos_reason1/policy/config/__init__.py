@@ -46,36 +46,52 @@ def config_hash(config) -> str:
 
 
 @dataclass
-class SFTDataConfig:
-    type: str = skip_ui_field(default="sft")
-
-    dataset_name: str = field(
+class DatasetConfig:
+    name: str = field(
         default="",
         metadata={"help": "Huggingface dataset name or local path to parquet file"},
     )
-    dataset_subset: Optional[str] = field(
+
+    subset: Optional[str] = field(
         default="",
         metadata={"help": "Dataset subset if exists"},
     )
-    dataset_revision: Optional[str] = field(
+
+    revision: Optional[str] = field(
         default="",
         metadata={
             "help": "Dataset git revision if exist, can be a branch name, a tag, or a commit hash."
         },
     )
-    dataset_train_split: Union[str, List[str]] = field(
+
+    train_split: Union[str, List[str]] = field(
         default_factory=list,
         metadata={"help": "A list of dataset splits to train"},
     )
-    dataset_test_split: str = field(
-        default="test", metadata={"help": "Dataset split to test"}
+
+    test_split: Union[str, List[str]] = field(
+        default="test", metadata={"help": "A list of Dataset split to test"}
     )
-    dataset_test_size: Union[float, int] = field(
-        default=0.1,
+
+    test_size: Optional[Union[float, int]] = field(
+        default=None,
         metadata={
             "help": "Size of the test set. If float, it is the ratio (between 0.0 and 1.0) of the dataset; if int, it is the absolute size of the test set."
         },
     )
+
+
+@dataclass
+class SFTDataConfig:
+    type: str = skip_ui_field(default="sft")
+
+    dataset: DatasetConfig = field(
+        default_factory=DatasetConfig,
+        metadata={
+            "help": "Dataset configuration for SFT training. It includes dataset name, subset, revision, train split, and test split."
+        },
+    )
+
     dataloader_shuffle: bool = field(
         default=False,
         metadata={
@@ -215,24 +231,14 @@ class GrpoConfig:
             "choices": ["grpo", "dapo"],
         },
     )
-    dataset_name: str = field(
-        default="",
-        metadata={"help": "Huggingface dataset name or local path to parquet file"},
-    )
-    dataset_subset: Optional[str] = field(
-        default="",
-        metadata={"help": "Dataset subset if exists"},
-    )
-    dataset_revision: Optional[str] = field(
-        default="",
+
+    dataset: DatasetConfig = field(
+        default_factory=DatasetConfig,
         metadata={
-            "help": "Dataset git revision if exist, can be a branch name, a tag, or a commit hash."
+            "help": "Dataset configuration for GRPO training. It includes dataset name, subset, revision, train split, test split and test size."
         },
     )
-    dataset_train_split: Union[str, List[str]] = field(
-        default_factory=list,
-        metadata={"help": "A list of dataset splits to train"},
-    )
+
     dataloader_shuffle: bool = field(
         default=True,
         metadata={
@@ -408,10 +414,30 @@ class ProfilerConfig:
 
 
 @dataclass
+class FP8Config:
+    enable_fp8: bool = field(default=False, metadata={"help": "Whether to enable fp8."})
+    fp8_recipe: str = field(
+        default="dynamic_scaling",
+        metadata={
+            "choices": ["dynamic_scaling", "delayed_scaling"],
+            "help": "Recipe for weight scale calculation.",
+        },
+    )
+    quant_recipe: str = field(
+        default="rowwise",
+        metadata={
+            "choices": ["rowwise", "tensorwise"],
+            "help": "Quantization strategy for weight.",
+        },
+    )
+
+
+@dataclass
 class TrainingConfig:
     train_policy: Union[SFTDataConfig, GrpoConfig] = field(
         default_factory=SFTDataConfig
     )
+    fp8: FP8Config = field(default_factory=FP8Config)
     ckpt: CheckpointConfig = field(default_factory=CheckpointConfig)
     resume: Union[bool, str] = field(
         default=False,
@@ -446,7 +472,7 @@ class TrainingConfig:
         },
     )
     optm_weight_decay: float = field(
-        default=0.0, metadata={"help": "Weight decay for optimizer"}
+        default=0.01, metadata={"help": "Weight decay for optimizer"}
     )
     optm_betas: tuple[float, float] = field(
         default=(0.9, 0.999), metadata={"help": "Betas for optimizer"}
@@ -669,12 +695,56 @@ class SamplingConfig:
 
 
 @dataclass
+class ValidationConfig:
+    dataset: DatasetConfig = field(
+        default_factory=DatasetConfig,
+        metadata={
+            "help": "Dataset configuration for validation. It includes dataset name, subset, revision and test split."
+        },
+    )
+
+    reward_function: List[str] = field(
+        default_factory=list,
+        metadata={
+            "help": "A List of reward functions for the model used in validation. Currently support `single_choice`, `boxed_math`, and `format`. ",
+        },
+    )
+
+    temperature: float = field(
+        default=0.9, metadata={"help": "Temperature for sampling during validation."}
+    )
+    top_p: float = field(
+        default=1.0, metadata={"help": "Top-p for sampling during validation."}
+    )
+    top_k: int = field(
+        default=10, metadata={"help": "Top-k for sampling during validation."}
+    )
+    repetition_penalty: float = field(
+        default=1.0,
+        metadata={"help": "Repetition penalty for sampling during validation."},
+    )
+    n_generation: int = field(
+        default=1,
+        metadata={
+            "help": "n parameter same like what in OpenAI chat API for validation."
+        },
+    )
+    max_response_length: int = field(
+        default=2048,
+        metadata={"help": "Max output length of rollout generation during validation."},
+    )
+
+
+@dataclass
 class RolloutConfig:
     parallelism: RolloutParallelismConfig = field(
         default_factory=RolloutParallelismConfig
     )
     enforce_eager: bool = field(
         default=True, metadata={"help": "Whether to enable eager execution for vLLM."}
+    )
+    include_stop_str_in_output: bool = field(
+        default=False, metadata={"help": "Whether to include stop string in output."}
     )
     gpu_memory_utilization: float = field(
         default=0.8,
@@ -752,6 +822,7 @@ class Config:
     policy: PolicyConfig = field(default_factory=PolicyConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     profiler: ProfilerConfig = field(default_factory=ProfilerConfig)
+    validation: ValidationConfig = field(default_factory=ValidationConfig)
     redis: str = skip_ui_field(
         default="",
         metadata={
@@ -846,10 +917,25 @@ class Config:
             assert (
                 len(self.train.train_policy.reward_function) > 0
             ), "reward_function must be a list of reward functions"
-        if isinstance(self.train.train_policy.dataset_train_split, str):
-            self.train.train_policy.dataset_train_split = [
-                self.train.train_policy.dataset_train_split
+
+        if isinstance(self.train.train_policy.dataset.train_split, str):
+            self.train.train_policy.dataset.train_split = [
+                self.train.train_policy.dataset.train_split
             ]
+        if isinstance(self.train.train_policy.dataset.test_split, str):
+            self.train.train_policy.dataset.test_split = [
+                self.train.train_policy.dataset.test_split
+            ]
+
+        if self.train.train_policy.type == "grpo":
+            # Handle for evaludation configuration.
+            if isinstance(self.validation.dataset.test_split, str):
+                self.validation.dataset.test_split = [
+                    self.validation.dataset.test_split
+                ]
+            if isinstance(self.validation.reward_function, str):
+                self.validation.reward_function = [self.validation.reward_function]
+
         if self.train.ckpt.upload_s3:
             if self.train.ckpt.upload_s3 not in ["final", "all"]:
                 raise ValueError(
