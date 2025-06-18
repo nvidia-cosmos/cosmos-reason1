@@ -57,6 +57,7 @@ class DataPacker(ABC):
         self,
         sample: Any,
         rollout_output: str,
+        n_ignore_prefix_tokens: int = 0,
     ) -> Any:
         """
         Stage for processing samples & rollout output before collating them into a mini-batch

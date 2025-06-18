@@ -83,6 +83,7 @@ epsilon_low = 0.2
 epsilon_high = 0.2
 kl_beta = 0.0
 mu_iterations = 1
+min_filter_prefix_tokens = 1
 
 [policy.parallelism]
 n_init_replicas = 1

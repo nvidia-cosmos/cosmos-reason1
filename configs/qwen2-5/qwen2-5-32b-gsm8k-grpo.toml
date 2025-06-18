@@ -54,6 +54,7 @@ epsilon_low = 0.2
 epsilon_high = 0.28
 kl_beta = 0.0
 mu_iterations = 1
+min_filter_prefix_tokens = 1
 mini_batch = 8
 unbiased_loss_max_tokens = 200 
 loss_type = "seq-mean-token-mean"

@@ -53,6 +53,7 @@ epsilon_high = 0.28
 lower_bound_ratio = 10.0
 kl_beta = 0.0
 mu_iterations = 1
+min_filter_prefix_tokens = 1
 mini_batch = 8
 
 [train.ckpt]

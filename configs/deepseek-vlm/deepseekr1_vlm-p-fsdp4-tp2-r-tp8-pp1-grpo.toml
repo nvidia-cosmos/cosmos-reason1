@@ -1,85 +1,76 @@
-redis = "12800"
+redis = "12808"
 
 [train]
-resume = false
-epoch = 150
-output_dir = "./outputs/cosmos-reason1-7b-p-fsdp4-tp1-r-tp2-pp1-grpo"
+resume = "False"
+epoch = 1
+output_dir = "./outputs/20250423024105"
 epsilon = 1e-6
 optm_name = "AdamW"
-optm_lr = 2e-6
+optm_lr = 1e-6
 optm_impl = "fused"
 optm_weight_decay = 0.01
-optm_betas = [ 0.9, 0.95,]
+optm_betas = [0.9, 0.999]
 optm_warmup_steps = 20
 optm_grad_norm_clip = 1.0
 async_tp_enabled = false
-compile = false
+compile = true
 param_dtype = "bfloat16"
 fsdp_reduce_dtype = "float32"
 fsdp_offload = false
 fsdp_reshard_after_forward = "default"
-train_batch_per_replica = 64
+train_batch_per_replica = 8
 sync_weight_interval = 1
 
 [rollout]
 gpu_memory_utilization = 0.7
 enable_chunked_prefill = false
-max_response_length = 6144
-n_generation = 8
-batch_size = 4
+max_response_length = 2048
+n_generation = 16
+batch_size = 1
 quantization = "none"
 
 
-[rollout.sampling_config]
-temperature = 0.6
-top_p = 0.95
-top_k = 50
-repetition_penalty = 1.05
-
 [policy]
-model_name_or_path = "nvidia/Cosmos-Reason1-7B"
-model_max_length = 10240
+model_name_or_path = "/lustre/fsw/portfolios/ov/users/aazzolini/overfit_exp013_101_4layer_2sample_single_image_hf"
+model_max_length = 4096
 model_gradient_checkpointing = true
 
 [logging]
 logger = ['console', 'wandb']
 project_name = "cosmos_reason1"
-experiment_name = "cosmos-reason1-rl"
+experiment_name = "None"
 
 [train.train_policy]
 type = "grpo"
-dataset.name = "nvidia/Cosmos-Reason1-RL-Dataset"
-dataset.subset = "robovqa"
-dataset.train_split = "rl"
-enable_dataset_cache = false
-dataloader_num_workers = 4
-dataloader_prefetch_factor = 4
-prompt_column_name = "qa_pairs"
-
-
-
-reward_function = ["single_choice", "format"]
+dataset.name = "JiaxinTsao/math_examples"
+prompt_column_name = "prompt"
+response_column_name = "result"
 temperature = 0.9
 epsilon_low = 0.2
 epsilon_high = 0.2
 kl_beta = 0.0
 mu_iterations = 1
 min_filter_prefix_tokens = 1
-mini_batch = 1
 
 [train.ckpt]
 enable_checkpoint = true
-save_freq = 50
+save_freq = 20
 save_mode = "async"
 
 [rollout.parallelism]
 n_init_replicas = 1
-tp_size = 2
+dp_shard_size = 1
+tp_size = 16
 pp_size = 1
+
+[rollout.sampling_config]
+temperature = 0.9
+top_p = 1.0
+top_k = 10
 
 [policy.parallelism]
 n_init_replicas = 1
-tp_size = 1
+tp_size = 2
 cp_size = 1
 dp_shard_size = 4
 pp_size = 1
