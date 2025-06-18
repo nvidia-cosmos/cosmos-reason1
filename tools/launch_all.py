@@ -34,7 +34,7 @@ COSMOS_REASON1_DIR = "/workspace/cosmos_reason1"
 TOOLS_RELATIVE_DIR = "tools"
 
 
-def wait_for_url_ready(url: str):
+def wait_for_url_ready(url: str, process: Optional[subprocess.Popen] = None):
     """
     Wait for a URL to be ready by sending a GET request.
 
@@ -47,6 +47,14 @@ def wait_for_url_ready(url: str):
     while True:
         # create TCP socket
         try:
+            if process is not None:
+                if process.poll() is not None:
+                    if process.returncode != 0:
+                        logger.error(f"Process {process.pid} exited with code {process.returncode}. Exiting.")
+                        sys.exit(1)
+                    else:
+                        logger.error(f"Process {process.pid} exited as soon as launched. Exiting.")
+                        sys.exit(1)
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
             host, port = url.split(":")
@@ -1116,7 +1124,7 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml {launcher}"""
         processes.append(controller_process[0])
 
     logger.info(f"Waiting for controller to be ready at {control_url}")
-    wait_for_url_ready(control_url)
+    wait_for_url_ready(control_url, controller_process[0])
     logger.info(f"Controller is ready at {control_url}")
 
 

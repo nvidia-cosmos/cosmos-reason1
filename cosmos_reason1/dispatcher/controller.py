@@ -441,7 +441,8 @@ class Controller:
                     f"[Controller] Epoch {self.epoch} / {self.config.train.epoch}, Step {self.controller_step}, get prompt at idx {idx}, payload {payload}"
                 )
             except StopIteration:
-                logger.info(f"[Controller] Epoch {self.epoch} finished.")
+                if self.epoch <= self.config.train.epoch:
+                    logger.info(f"[Controller] Epoch {self.epoch} finished.")
                 self.epoch += 1
                 if self.epoch <= self.config.train.epoch:
                     logger.info(f"[Controller] Epoch {self.epoch} start.")
@@ -452,9 +453,11 @@ class Controller:
                     idx = idx[0]
                     payload = payload[0].payload
                 else:
-                    logger.info(
-                        "[Controller] All epochs finished, start stopping all replicas."
-                    )
+                    if self.epoch == self.config.train.epoch + 1:
+                        # We only log this all finished information once.
+                        logger.info(
+                            "[Controller] All epochs finished, start stopping all replicas."
+                        )
                     is_end = True
                     break
             idx = idx.item() if isinstance(idx, torch.Tensor) else idx
