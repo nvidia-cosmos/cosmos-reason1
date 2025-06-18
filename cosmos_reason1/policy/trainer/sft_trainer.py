@@ -518,15 +518,17 @@ class SFTTrainer(Trainer):
 
                 if self.config.logging.logger:
                     if util.is_master_rank(self.parallel_dims, self.global_rank):
-                        while (
-                            len(self.train_event_queue) > 0
-                            and self.train_event_queue[0][1].query()
-                        ):
-                            iter_start_event, iter_end_event, iter_step = (
-                                self.train_event_queue.popleft()
-                            )
+                        # Calculate last iteration time
+                        if self.train_step > 0 and len(self.train_event_queue) > 0:
+                            assert self.train_event_queue[0][1].query()
+                            (
+                                last_iter_start_event,
+                                last_iter_end_event,
+                                last_iter_step,
+                            ) = self.train_event_queue.popleft()
                             iter_time = (
-                                iter_start_event.elapsed_time(iter_end_event) / 1000.0
+                                last_iter_start_event.elapsed_time(last_iter_end_event)
+                                / 1000.0
                             )  # in seconds
                             if (
                                 "wandb" in self.config.logging.logger
@@ -537,11 +539,7 @@ class SFTTrainer(Trainer):
                                     data={
                                         "train/iteration_time": iter_time,
                                     },
-                                    step=iter_step,
-                                )
-                            if "console" in self.config.logging.logger:
-                                logger.info(
-                                    f"Step: {iter_step}/{self.total_steps}, Iteration time: {iter_time:.3f}s."
+                                    step=last_iter_step,
                                 )
 
                         report_data = {

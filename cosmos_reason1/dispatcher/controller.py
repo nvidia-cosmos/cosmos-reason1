@@ -93,6 +93,7 @@ class Controller:
         self.post_ncclerror_policy_invoke_id = 0
         self.post_ncclerror_rollout_invoke_id = 0
         self.phase = ProcessPhase.TRAIN
+        self.report_data_list = []
 
     def _init_dist(self):
         self.policy_replicas: Dict[str, Replica] = {}
@@ -1117,13 +1118,18 @@ class Controller:
             self.phase = ProcessPhase.VALIDATE
 
     async def train_ack(
-        self, replica_name: str, iteration_count: int, profile_finished: bool
+        self,
+        replica_name: str,
+        iteration_count: int,
+        profile_finished: bool,
+        report_data: Dict[str, Any],
     ):
         if replica_name not in self.policy_replicas:
             raise Exception(f"Replica {replica_name} not found")
 
         self.policy_status_manager.set_status(replica_name, PolicyStatus.BACKWARDED)
         self.policy_status_manager.set_status(replica_name, PolicyStatus.REDUCED)
+        self.report_data_list.append(report_data)
         if self.policy_status_manager.all_reduced():
             # All replicas have been reduced, trigger allreduce
             optimize_step = self.policy_status_manager.completed_optimize_step()
@@ -1143,6 +1149,49 @@ class Controller:
                 self.policy_replicas[
                     replica_name
                 ].sub_profiler_config.do_profile = False
+
+            # Sum and report data
+            if self.config.logging.logger:
+                total_loss_avg = np.mean(
+                    [data["train/loss_avg"] for data in self.report_data_list]
+                )
+                total_loss_max = np.max(
+                    [data["train/loss_max"] for data in self.report_data_list]
+                )
+                total_learning_rate = self.report_data_list[0]["train/learning_rate"]
+                train_step = self.report_data_list[0]["train_step"]
+                total_steps = self.policy_status_manager.get_total_steps()
+                if train_step > 1:
+                    total_iter_time_avg = np.mean(
+                        [data["train/iteration_time"] for data in self.report_data_list]
+                    )
+                self.report_data_list = []
+
+                if "wandb" in self.config.logging.logger and is_wandb_available():
+                    if train_step > 1:
+                        log_wandb(
+                            run=self.wandb_run,
+                            data={"train/pre_iteration_time": total_iter_time_avg},
+                            step=train_step,
+                        )
+
+                    log_wandb(
+                        run=self.wandb_run,
+                        data={
+                            "train/loss_avg": total_loss_avg,
+                            "train/loss_max": total_loss_max,
+                            "train/learning_rate": total_learning_rate,
+                        },
+                        step=train_step,
+                    )
+                if "console" in self.config.logging.logger:
+                    if train_step > 1:
+                        logger.debug(
+                            f"Step: {train_step-1}/{total_steps}, Iteration time: {total_iter_time_avg:2f} s"
+                        )
+                    logger.info(
+                        f"Step: {train_step}/{total_steps}, Average loss: {total_loss_avg:.5f}, Max loss: {total_loss_max:.5f}, Learning rate: {total_learning_rate:.5e}."
+                    )
 
             # All replicas have been reduced, trigger weight sync
             if need_sync_weight:

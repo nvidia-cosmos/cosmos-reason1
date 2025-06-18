@@ -392,7 +392,10 @@ async def train_ack(request: TrainAckRequest):
         replicaname = request.replica_name
         iteration_count = request.iteration_count
         profile_finished = request.profile_finished
-        await controller.train_ack(replicaname, iteration_count, profile_finished)
+        report_data = request.report_data
+        await controller.train_ack(
+            replicaname, iteration_count, profile_finished, report_data
+        )
         return {"message": "Ack completed"}
     except Exception as e:
         import traceback

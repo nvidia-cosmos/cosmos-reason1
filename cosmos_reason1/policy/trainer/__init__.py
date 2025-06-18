@@ -127,6 +127,7 @@ class Trainer(CommMixin):
             ),
         )
 
+        self.report_data = {}
         if "wandb" in config.logging.logger and is_wandb_available():
             self.wandb_run = init_wandb(config, parallel_dims)
         else:

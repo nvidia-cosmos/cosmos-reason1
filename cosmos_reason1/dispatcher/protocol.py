@@ -45,9 +45,10 @@ class HandshakeAcceptorRequest(BaseModel):
 class TrainAckRequest(BaseModel):
     replica_name: str
     iteration_count: int
-
     # For profiling
     profile_finished: bool = False
+    # For logger report data
+    report_data: Dict[str, Any] = {}
 
 
 class WeightReadyRequest(BaseModel):

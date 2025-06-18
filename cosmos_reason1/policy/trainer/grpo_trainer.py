@@ -23,7 +23,6 @@ import torch
 import inspect
 import os
 from cosmos_reason1.utils.logging import logger
-from cosmos_reason1.utils.wandb_logger import is_wandb_available, log_wandb
 from cosmos_reason1.utils.util import compute_mfu
 import cosmos_reason1.utils.distributed as dist_util
 import time
@@ -814,7 +813,7 @@ class GRPOTrainer(Trainer):
         return True
 
     def train_ack(self):
-        if self.global_rank == 0:
+        if is_master_rank(self.parallel_dims, self.global_rank):
             try:
                 make_request_with_retry(
                     partial(
@@ -823,6 +822,7 @@ class GRPOTrainer(Trainer):
                             "replica_name": self.replica_name,
                             "iteration_count": self.train_step,
                             "profile_finished": self.profiler.check_finished(),
+                            "report_data": self.report_data,
                         },
                     ),
                     self.get_alternative_urls(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX),
@@ -1453,40 +1453,27 @@ class GRPOTrainer(Trainer):
                     dist_util.dist_max(kl_loss, self.parallel_dims.mesh["dp_cp"]),
                 )
         else:
-            global_avg_loss = global_max_loss = loss  # noqa: F841
+            global_avg_loss = global_max_loss = loss.item()  # noqa: F841
             if self.config.train.train_policy.kl_beta != 0.0:
-                global_avg_kl_loss = global_max_kl_loss = kl_loss  # noqa: F841
+                global_avg_kl_loss = global_max_kl_loss = kl_loss.item()  # noqa: F841
 
         if self.config.logging.logger:
             if is_master_rank(self.parallel_dims, self.global_rank):
-                while (
-                    len(self.train_event_queue) > 0
-                    and self.train_event_queue[0][1].query()
-                ):
-                    iter_start_event, iter_end_event, iter_step = (
+                report_data = {"train_step": self.train_step}
+                # Calculate the last iteration time
+                if self.train_step > 1 and len(self.train_event_queue) > 0:
+                    assert self.train_event_queue[0][1].query()
+                    last_iter_start_event, last_iter_end_event, last_iter_step = (
                         self.train_event_queue.popleft()
                     )
                     iter_time = (
-                        iter_start_event.elapsed_time(iter_end_event) / 1000.0
+                        last_iter_start_event.elapsed_time(last_iter_end_event) / 1000.0
                     )  # in seconds
-                    if "wandb" in self.config.logging.logger and is_wandb_available():
-                        log_wandb(
-                            run=self.wandb_run,
-                            data={
-                                "train/iteration_time": iter_time,
-                            },
-                            step=iter_step,
-                        )
-                    if "console" in self.config.logging.logger:
-                        logger.info(
-                            f"Step: {iter_step}/{self.total_steps}, Iteration time: {iter_time:.3f}s."
-                        )
+                    report_data["train/iteration_time"] = iter_time
 
-                report_data = {
-                    "train/loss_avg": global_avg_loss,
-                    "train/loss_max": global_max_loss,
-                    "train/learning_rate": self.lr_schedulers.get_last_lr()[0],
-                }
+                report_data["train/loss_avg"] = global_avg_loss
+                report_data["train/loss_max"] = global_max_loss
+                report_data["train/learning_rate"] = self.lr_schedulers.get_last_lr()[0]
                 if self.config.train.train_policy.kl_beta != 0.0:
                     report_data["train/kl_loss_avg"] = global_avg_kl_loss
                     report_data["train/kl_loss_max"] = global_max_kl_loss
@@ -1503,16 +1490,7 @@ class GRPOTrainer(Trainer):
                     )
                     for k, v in mfu.items():
                         report_data[f"train/{k}"] = v
-                if "wandb" in self.config.logging.logger and is_wandb_available():
-                    log_wandb(
-                        run=self.wandb_run,
-                        data=report_data,
-                        step=self.train_step,
-                    )
-                if "console" in self.config.logging.logger:
-                    logger.info(
-                        f"Step: {self.train_step}/{self.total_steps}, Loss: {global_avg_loss:.5f}, Learning rate: {self.lr_schedulers.get_last_lr()[0]:.5e}."
-                    )
+                self.report_data = report_data
 
         # checkpointing
         if self.is_master_replica and (
