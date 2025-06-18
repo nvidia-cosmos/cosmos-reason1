@@ -484,18 +484,19 @@ class SFTTrainer(Trainer):
                     """
                     Do gradient clipping in group for unsymmetric sharding compatibility
                     """
-                    dist_util.gradient_norm_clipping(
-                        # Must pass empty list even if model_part is None,
-                        # GradNorm across pp stages will fail if some rank does not join the barrier
-                        [p for p in model_part.parameters()]
-                        if model_part is not None
-                        else [],
-                        self.config.train.optm_grad_norm_clip,
-                        foreach=True,
-                        pp_mesh=self.parallel_dims.mesh["pp"]
-                        if self.parallel_dims.pp_enabled
-                        else None,
-                    )
+                    if self.config.train.optm_grad_norm_clip > 0:
+                        dist_util.gradient_norm_clipping(
+                            # Must pass empty list even if model_part is None,
+                            # GradNorm across pp stages will fail if some rank does not join the barrier
+                            [p for p in model_part.parameters()]
+                            if model_part is not None
+                            else [],
+                            self.config.train.optm_grad_norm_clip,
+                            foreach=True,
+                            pp_mesh=self.parallel_dims.mesh["pp"]
+                            if self.parallel_dims.pp_enabled
+                            else None,
+                        )
 
                 self.optimizers.step()
                 self.lr_schedulers.step()
