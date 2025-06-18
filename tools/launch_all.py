@@ -1124,7 +1124,7 @@ python {TOOLS_RELATIVE_DIR}/launch_all.py --config config.toml {launcher}"""
         processes.append(controller_process[0])
 
     logger.info(f"Waiting for controller to be ready at {control_url}")
-    wait_for_url_ready(control_url, controller_process[0])
+    wait_for_url_ready(control_url, controller_process[0] if controller_cmd is not None else None)
     logger.info(f"Controller is ready at {control_url}")
 
 
