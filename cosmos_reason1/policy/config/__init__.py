@@ -366,14 +366,6 @@ class GrpoConfig:
         },
     )
 
-    min_filter_prefix_tokens: int = field(
-        default=1,
-        metadata={
-            "help": "Minimum number of tokens to filter the prefix tokens for the rollouts inside the same group. "
-            "If the number of tokens is larger than the `min_filter_prefix_tokens`, the rollouts with the same prefix but different rewards will be filtered out in loss calculation. "
-        },
-    )
-
     def __post_init__(self):
         assert self.variant in [
             "grpo",

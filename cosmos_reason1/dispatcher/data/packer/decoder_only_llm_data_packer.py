@@ -57,7 +57,6 @@ class DecoderOnlyLLMDataPacker(DataPacker):
         self,
         sample: Union[str, ConversationType],
         completion: str,
-        n_ignore_prefix_tokens: int = 0,
     ) -> RLPolicyInput:
         """
         Default text policy input packer.
@@ -77,9 +76,7 @@ class DecoderOnlyLLMDataPacker(DataPacker):
 
         return DecoderOnlyLLMDataPacker.RLPolicyInput(
             input_ids=input_ids + completion_ids,
-            logprob_masks=[0] * (len(input_ids) - 1 + n_ignore_prefix_tokens)
-            + [1] * (len(completion_ids) - n_ignore_prefix_tokens)
-            + [0],
+            logprob_masks=[0] * (len(input_ids) - 1) + [1] * len(completion_ids) + [0],
         )
 
     def policy_compute_max_len(self, processed_samples: List[RLPolicyInput]) -> int:

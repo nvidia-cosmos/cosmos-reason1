@@ -1137,14 +1137,10 @@ class GRPOTrainer(Trainer):
         payloads_list = [rollout["payload"] for rollout in rollouts]
         completions_list = [rollout["completion"] for rollout in rollouts]
         advantages_list = [rollout["advantage"] for rollout in rollouts]
-        n_ignore_prefix_tokens_list = [
-            rollout["n_ignore_prefix_tokens"] for rollout in rollouts
-        ]
         processed_samples: List[Any] = [
             self.data_packer.get_policy_input(
                 payloads_list[i],
                 completions_list[i],
-                n_ignore_prefix_tokens_list[i],
             )
             for i in range(len(payloads_list))
         ]

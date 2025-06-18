@@ -26,7 +26,7 @@ import base64
 import cloudpickle
 
 from fastapi.responses import HTMLResponse, JSONResponse
-from typing import Dict, List, Optional, Callable, Tuple
+from typing import Dict, List, Optional, Callable
 from cosmos_reason1.dispatcher.controller import Controller
 import cosmos_reason1.utils.constant as constant
 from cosmos_reason1.dispatcher.protocol import MESH_NAMES
@@ -293,34 +293,6 @@ async def put_rollout(rollout: RolloutRequest):
         invalid_rollouts_list: List[List[Rollout]] = []
         for rollouts_group in rollouts_list:
             if len(set([rollout.reward for rollout in rollouts_group])) > 1:
-                # Preprocess the valid rollouts to find if shared prefix exists
-                # If exists,
-                #   - if the shared prefix hold different rewards, the prefix may lead to bias
-                #   - else: do nothing
-                # (shared_prefix) -> index of rollouts
-                shared_prefix_groups: Dict[Tuple[int, ...], List[int]] = (
-                    util.find_maximal_prefix_groups(
-                        [
-                            controller.tokenizer(
-                                rollout.completion, add_special_tokens=False
-                            ).input_ids
-                            for rollout in rollouts_group
-                        ],
-                        N=controller.config.train.train_policy.min_filter_prefix_tokens,
-                    )
-                )
-                for shared_prefix, rollout_indices in shared_prefix_groups.items():
-                    assert (
-                        len(rollout_indices) > 1
-                    ), "Shared prefix group should not be empty"
-                    # Check if the shared prefix holds different rewards
-                    rewards = [rollouts_group[i].reward for i in rollout_indices]
-                    if len(set(rewards)) > 1:
-                        n_ignore_prefix_tokens = len(shared_prefix)
-                        for rollout_index in rollout_indices:
-                            rollouts_group[
-                                rollout_index
-                            ].n_ignore_prefix_tokens = n_ignore_prefix_tokens
                 valid_rollouts_list.append(rollouts_group)
             else:
                 # If the rewards are all the same, we need to sample one rollout from the group
