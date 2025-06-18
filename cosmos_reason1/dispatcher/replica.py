@@ -34,6 +34,7 @@ class Rollout:
     reward: float
     advantage: float
     prompt_idx: int
+    n_ignore_prefix_tokens: int = 0
 
     def __init__(
         self,
@@ -43,6 +44,7 @@ class Rollout:
         reward: float,
         advantage: float,
         prompt_idx: int,
+        n_ignore_prefix_tokens: int = 0,
     ):
         self.payload = payload
         self.completion = completion
@@ -50,6 +52,7 @@ class Rollout:
         self.reward = reward
         self.advantage = advantage
         self.prompt_idx = prompt_idx
+        self.n_ignore_prefix_tokens = n_ignore_prefix_tokens
 
 
 class RolloutGroup:

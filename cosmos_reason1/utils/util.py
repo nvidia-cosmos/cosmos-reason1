@@ -901,3 +901,54 @@ def is_fbcode():
 
 def torch_version_at_least(min_version):
     return is_fbcode() or compare_versions(torch.__version__, min_version) >= 0
+
+
+class TrieNode:
+    __slots__ = ("children", "idxs")
+
+    def __init__(self):
+        self.children = {}
+        self.idxs = []
+
+
+def build_trie(seqs):
+    root = TrieNode()
+    for i, s in enumerate(seqs):
+        node = root
+        for x in s:
+            node.idxs.append(i)
+            node = node.children.setdefault(x, TrieNode())
+        node.idxs.append(i)
+    return root
+
+
+def find_maximal_prefix_groups(
+    seqs: List[List[int]],
+    N: int,
+):
+    if N < 1:
+        return {}
+    root = build_trie(seqs)
+    result = {}
+    # We'll do a post-order traversal with an explicit stack
+    # Each frame is (node, prefix, visited_flag)
+    stack = [(root, (), False)]
+    while stack:
+        node, prefix, visited = stack.pop()
+        if not visited:
+            # push back as “to be processed after children”
+            stack.append((node, prefix, True))
+            # push children
+            for x, child in node.children.items():
+                stack.append((child, prefix + (x,), False))
+        else:
+            # now all children have been “visited” so we can decide if
+            # this node is a maximal group
+            if len(prefix) >= N and len(node.idxs) > 1:
+                # check if any child also has ≥2 idxs
+                has_deeper = any(
+                    len(child.idxs) > 1 for child in node.children.values()
+                )
+                if not has_deeper:
+                    result[prefix] = list(node.idxs)
+    return result

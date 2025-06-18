@@ -137,6 +137,7 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
         self,
         sample: "Qwen2_5_VLM_DataPacker.Payload",
         rollout_output: Optional[str] = None,
+        n_ignore_prefix_tokens: int = 0,
     ) -> Any:
         assert all(
             isinstance(x, dict) and "role" in x and "content" in x for x in sample
@@ -177,7 +178,9 @@ class Qwen2_5_VLM_DataPacker(DataPacker):
 
         return_dict["input_ids"] = input_ids + completion_ids
         return_dict["logprob_masks"] = (
-            [0] * (len(input_ids) - 1) + [1] * len(completion_ids) + [0]
+            [0] * (len(input_ids) - 1 + n_ignore_prefix_tokens)
+            + [1] * (len(completion_ids) - n_ignore_prefix_tokens)
+            + [0]
         )
         return return_dict
 

@@ -225,11 +225,11 @@ class DemoDataPacker(DataPacker):
         '''
         return self.underlying_data_packer.rollout_collate_fn(items)
 
-    def get_policy_input(self, item: Any, rollout_output: str) -> Any:
+    def get_policy_input(self, item: Any, rollout_output: str, n_ignore_prefix_tokens: int = 0) -> Any:
         '''
         Process samples & rollout output before collating them into a mini-batch
         '''
-        return self.underlying_data_packer.get_policy_input(item, rollout_output)
+        return self.underlying_data_packer.get_policy_input(item, rollout_output, n_ignore_prefix_tokens)
 
     def policy_compute_max_len(self, processed_samples: List[Any]) -> int:
         '''
