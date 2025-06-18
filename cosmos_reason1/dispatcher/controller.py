@@ -102,8 +102,6 @@ class Controller:
 
         self.temp_kv_store = {}
 
-        self.rollout_trajectory = Queue(maxsize=constant.COSMOS_ROLLOUT_TRAJECTORY_SIZE)
-
         self.life_cycle_lock = asyncio.Lock()
 
         # Buffer for rollouts in case policy replicas are not ready
@@ -765,17 +763,19 @@ class Controller:
         valid_rollouts: List[Rollout]: The rollouts that have valid rewards
         invalid_rollouts: List[Rollout]: The rollouts that have invalid rewards (all rewards are the same)
         """
+        rollouts_to_put = None
         if self.config.train.train_policy.variant == "dapo":
-            for rollout in valid_rollouts:
-                await self.put_rollout(rollout)
+            rollouts_to_put = valid_rollouts
         else:
-            for rollout in itertools.chain(valid_rollouts, invalid_rollouts):
-                await self.put_rollout(rollout)
+            rollouts_to_put = list(itertools.chain(valid_rollouts, invalid_rollouts))
+
+        for rollout in rollouts_to_put:
+            await self.put_rollout(rollout)
 
         # Statistic
         if self.begin_time is None:
             self.begin_time = time.time()
-        for rollout in itertools.chain(valid_rollouts, invalid_rollouts):
+        for rollout in rollouts_to_put:
             self.stat_completion_tokens_count += len(
                 self.tokenizer.encode(rollout.completion)
             )
@@ -802,37 +802,28 @@ class Controller:
                     rollout.completion = rollout.completion + self.tokenizer.eos_token
         self.rollout_buffer.put(rollout)
 
-        sorted_replicas = [
+        arrived_replicas = [
             replica
-            for replica in sorted(self.policy_replicas.values(), key=lambda x: x.name)
+            for replica in self.policy_replicas.values()
             if replica.all_atoms_arrived
         ]
-        if len(sorted_replicas) == 0:
+
+        if len(arrived_replicas) == 0:
             return
 
         while not self.rollout_buffer.empty():
             rollout = self.rollout_buffer.get()
             self.per_step_rollout_buffer.put(rollout)
-            history_trajectory = list(self.rollout_trajectory.queue)
 
-            found = False
-            if len(history_trajectory) > 0:
-                for last_replica_name in reversed(history_trajectory):
-                    for i, replica in enumerate(sorted_replicas):
-                        if replica.name == last_replica_name:
-                            found = True
-                            break
-                    if found:
-                        next_replica_name = sorted_replicas[
-                            (i + 1) % len(sorted_replicas)
-                        ].name
-                        break
-            if not found:
-                next_replica_name = sorted_replicas[0].name
-            util.put_with_overwrite(self.rollout_trajectory, next_replica_name)
-            await self.policy_replicas[next_replica_name].put_rollout(
+            # get the least number of pending rollouts replica
+            least_pending_rollouts_replica = min(
+                arrived_replicas, key=lambda x: x.pending_rollouts
+            )
+
+            await self.policy_replicas[least_pending_rollouts_replica.name].put_rollout(
                 rollout, self.redis_controller
             )
+
             if self.phase == ProcessPhase.VALIDATE:
                 # If we are in validation phase, we need to wait for the validation to finish
                 return
