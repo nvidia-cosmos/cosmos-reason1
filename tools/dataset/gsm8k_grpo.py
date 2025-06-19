@@ -141,7 +141,7 @@ def custom_reward_fn(to_be_evaluated: str, reference: Optional[Any] = None, *arg
     return reward
 
 
-class DemoDataPacker(DataPacker):
+class GSM8kDataPacker(DataPacker):
     '''
     This is a demo data packer that wraps the underlying data packer of the selected model.
     This is meaningless for this example, but useful for explaining:
@@ -200,8 +200,8 @@ if __name__ == "__main__":
         # Override the reward functions defined in toml
         reward_fns=[custom_reward_fn],
         # Optional: if not provided, the default data packer of the selected model will be used
-        data_packer=DemoDataPacker(),
+        data_packer=GSM8kDataPacker(),
         val_dataset=val_dataset,
         val_reward_fns=[custom_reward_fn],
-        val_data_packer=DemoDataPacker(),
+        val_data_packer=GSM8kDataPacker(),
     )
