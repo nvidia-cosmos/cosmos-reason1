@@ -15,22 +15,21 @@
 
 import os
 from typing import Optional, Any, List, Dict
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset, Subset
 from datasets import load_dataset
 from cosmos_reason1.dispatcher.run_web_panel import main as launch_dispatcher
 import cosmos_reason1.utils.util as util
 from cosmos_reason1.policy.config import Config
 from cosmos_reason1.dispatcher.algo.reward import single_choice_reward_fn, format_reward_fn
 from transformers import AutoTokenizer 
-from torch.utils.data import ConcatDataset
 from cosmos_reason1.utils.util import basename_from_modelpath
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 from cosmos_reason1.dispatcher.data.packer.qwen2_5_vlm_data_packer import Qwen2_5_VLM_DataPacker
 from cosmos_reason1.utils.logging import logger
-import torch
 
 FPS = 1
 MAX_PIXELS = 81920
+
 
 class CosmosGRPODataset(Dataset):
     def get_mm_files_paths(self, dataset_name: str, dataset_subset: str):
@@ -177,7 +176,7 @@ class CosmosGRPOValDataset(CosmosGRPODataset):
             # Prepare the validation dataset by taking the first `n_test_samples` samples
             indices = list(range(len(self.dataset)))
             val_indices = indices[:n_test_samples]
-            self.dataset = torch.utils.data.Subset(self.dataset, val_indices)
+            self.dataset = Subset(self.dataset, val_indices)
 
         # Prepare the data for Cosmos GRPO
         # This is a hack to make the dataset compatible with the training data

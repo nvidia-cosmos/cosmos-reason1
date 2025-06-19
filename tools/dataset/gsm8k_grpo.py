@@ -15,7 +15,7 @@
 
 
 from typing import Optional, Any, List, Dict
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, ConcatDataset, Subset
 from datasets import load_dataset
 from cosmos_reason1.dispatcher.run_web_panel import main as launch_dispatcher
 from cosmos_reason1.policy.config import Config
@@ -24,6 +24,8 @@ from transformers import AutoTokenizer
 from cosmos_reason1.dispatcher.data.packer.decoder_only_llm_data_packer import DecoderOnlyLLMDataPacker
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 from cosmos_reason1.utils.modelscope import modelscope_load_dataset
+from cosmos_reason1.utils.logging import logger
+
 
 class GSM8kDataset(Dataset):
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
@@ -84,12 +86,60 @@ class GSM8kDataset(Dataset):
         '''
         return self.dataset[idx]["answer"]
 
+
+class GSM8kValDataset(GSM8kDataset):
+    '''
+    This is a validation dataset for GSM8K, which is used to evaluate the performance of the model.
+    It should be used in the launcher to evaluate the model during training.
+    '''
+    def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
+        if not config.train.enable_validation:
+            logger.warning("Validation is not enabled in the config. Skipping setup for GSM8kValDataset.")
+            return
+
+        self.config = config
+        self.tokenizer = tokenizer
+        if not config.validation.dataset.name:
+            config.validation.dataset.name = config.train.train_policy.dataset.name
+            config.validation.dataset.subset = config.train.train_policy.dataset.subset
+            config.validation.dataset.revision = config.train.train_policy.dataset.revision
+        if not config.validation.dataset.test_split:
+            config.validation.dataset.test_split = config.train.train_policy.dataset.train_split
+        if not config.validation.dataset.test_size:
+            config.validation.dataset.test_size = config.train.train_policy.dataset.test_size
+
+        self.dataset = load_dataset(config.validation.dataset.name, config.validation.dataset.subset)
+        if config.validation.dataset.test_split:
+            if isinstance(config.validation.dataset.test_split, list):
+                dataset_list = []
+                for split_name in config.validation.dataset.test_split:
+                    dataset_list.append(self.dataset[split_name])
+                self.dataset = ConcatDataset(dataset_list)
+            else:
+                assert isinstance(config.validation.dataset.test_split, str)
+                self.dataset = self.dataset[config.validation.dataset.test_split]
+        if config.validation.dataset.test_size is not None:
+            if isinstance(config.validation.dataset.test_size, float):
+                n_test_samples = int(
+                    len(self.dataset) * config.validation.dataset.test_size
+                )
+            else:
+                n_test_samples = config.validation.dataset.test_size
+            n_test_samples = max(min(n_test_samples, len(self.dataset)), 1)
+
+            # Prepare the validation dataset by taking the first `n_test_samples` samples
+            indices = list(range(len(self.dataset)))
+            val_indices = indices[:n_test_samples]
+            self.dataset = Subset(self.dataset, val_indices)
+
+
 def custom_reward_fn(to_be_evaluated: str, reference: Optional[Any] = None, *args, **kwargs) -> float:
     assert isinstance(reference, str), "Reference answer should be a string"
     reward = gsm8k_reward_fn(to_be_evaluated, reference, *args, **kwargs)
     # Add more reward functions here
     # ...
     return reward
+
 
 class DemoDataPacker(DataPacker):
     '''
@@ -143,10 +193,15 @@ class DemoDataPacker(DataPacker):
         return self.underlying_data_packer.policy_collate_fn(processed_samples, computed_max_len)
 
 if __name__ == "__main__":
+    dataset = GSM8kDataset()
+    val_dataset = GSM8kValDataset()
     launch_dispatcher(
-        dataset=GSM8kDataset(),
+        dataset=dataset,
         # Override the reward functions defined in toml
         reward_fns=[custom_reward_fn],
         # Optional: if not provided, the default data packer of the selected model will be used
         data_packer=DemoDataPacker(),
+        val_dataset=val_dataset,
+        val_reward_fns=[custom_reward_fn],
+        val_data_packer=DemoDataPacker(),
     )
