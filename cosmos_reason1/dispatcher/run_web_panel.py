@@ -369,7 +369,9 @@ async def put_validation_rollout(rollout: RolloutRequest):
                 payload=payload,
                 completions=completions,
                 extra_info=rollout.extra_info,
-                reference_answer=controller.query_reference_answer(prompt_idx),
+                reference_answer=controller.query_reference_answer(
+                    prompt_idx, dataset_type="val"
+                ),
             )
             for prompt_idx, payload, completions in zip(
                 rollout.prompt_idxs, rollout.payloads, rollout.completions

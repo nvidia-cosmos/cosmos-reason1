@@ -491,8 +491,15 @@ class Controller:
             prompt_id_and_payload_list.append((idx, payload))
         return prompt_id_and_payload_list, is_end
 
-    def query_reference_answer(self, prompt_idx: int) -> Any:
-        return self.dataset.train_set.get_reference_answer(prompt_idx)
+    def query_reference_answer(
+        self, prompt_idx: int, dataset_type: str = "train"
+    ) -> Any:
+        if dataset_type == "train":
+            return self.dataset.train_set.get_reference_answer(prompt_idx)
+        elif dataset_type == "val":
+            return self.val_dataset.val_set.get_reference_answer(prompt_idx)
+        else:
+            raise ValueError(f"Unknown dataset type: {dataset_type}")
 
     async def set_profile(self, request: SetProfileRequest):
         replica_name = request.replica_name
