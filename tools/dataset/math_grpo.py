@@ -19,7 +19,6 @@ from torch.utils.data import Dataset, ConcatDataset, Subset
 from datasets import load_dataset
 from cosmos_reason1.dispatcher.run_web_panel import main as launch_dispatcher
 from cosmos_reason1.policy.config import Config
-from cosmos_reason1.dispatcher.algo.reward import gsm8k_reward_fn
 from transformers import AutoTokenizer
 from cosmos_reason1.dispatcher.data.packer.decoder_only_llm_data_packer import DecoderOnlyLLMDataPacker
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
@@ -27,7 +26,7 @@ from cosmos_reason1.utils.modelscope import modelscope_load_dataset
 from cosmos_reason1.utils.logging import logger
 
 
-class GSM8kDataset(Dataset):
+class MathDataset(Dataset):
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
         '''
         This method is optional and get called by launcher after being mounted
@@ -36,9 +35,9 @@ class GSM8kDataset(Dataset):
         '''
         self.config = config
         self.tokenizer = tokenizer
-        modelscope_dataset_if_enabled = modelscope_load_dataset('AI-ModelScope/gsm8k', subset_name='main', split='train')
+        modelscope_dataset_if_enabled = modelscope_load_dataset('AI-ModelScope/MATH-lighteval', subset_name='main', split='train')
         if modelscope_dataset_if_enabled is None:
-            self.dataset = load_dataset("openai/gsm8k", "main", split="train")
+            self.dataset = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default", split="train")
         else:
             self.dataset = modelscope_dataset_if_enabled
 
@@ -47,21 +46,8 @@ class GSM8kDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> tuple[str, str]:
-        '''
-        For DecoderOnlyLLMDataPacker, it should either return:
-        - raw text prompt to be converted into input_ids by both rollout and policy models;
-        - conversation format:
-        ```
-        [
-            {
-                "role": "user",
-                "content": f"{question} Let\'s think step by step and output the final answer after \"####\".",
-            }
-        ]
-        ```
-        '''
         assert hasattr(self, "tokenizer"), "`self.tokenizer` should be set by the launcher"
-        question = self.dataset[idx]["question"]
+        question = self.dataset[idx]["problem"]
         assert isinstance(
             question, str
         ), f"Prompt should be a string, but got {type(question)}, {question}"
@@ -69,7 +55,7 @@ class GSM8kDataset(Dataset):
         conversation = [
             {
                 "role": "user",
-                "content": f"{question} Let\'s think step by step and output the final answer after \"####\".",
+                "content": question + " Let's think step by step and output the final answer within \\boxed{}.",
             }
         ]
         prompt = self.tokenizer.apply_chat_template(
@@ -83,17 +69,17 @@ class GSM8kDataset(Dataset):
         '''
         This is mandatory for GRPO to get a reference answer for reward computation.
         '''
-        return self.dataset[idx]["answer"]
+        return self.dataset[idx]["solution"]
 
 
-class GSM8kValDataset(GSM8kDataset):
+class MathValDataset(MathDataset):
     '''
-    This is a validation dataset for GSM8K, which is used to evaluate the performance of the model.
+    This is a validation dataset for Math, which is used to evaluate the performance of the model.
     It should be used in the launcher to evaluate the model during training.
     '''
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
         if not config.train.enable_validation:
-            logger.warning("Validation is not enabled in the config. Skipping setup for GSM8kValDataset.")
+            logger.warning("Validation is not enabled in the config. Skipping setup for MathValDataset.")
             return
 
         self.config = config
@@ -132,15 +118,217 @@ class GSM8kValDataset(GSM8kDataset):
             self.dataset = Subset(self.dataset, val_indices)
 
 
+
+# string normalization from https://github.com/EleutherAI/lm-evaluation-harness/blob/master/lm_eval/tasks/hendrycks_math.py
+def is_equiv(str1, str2, verbose=False):
+    if str1 is None and str2 is None:
+        print("WARNING: Both None")
+        return True
+    if str1 is None or str2 is None:
+        return False
+
+    try:
+        ss1 = strip_string(str1)
+        ss2 = strip_string(str2)
+        if verbose:
+            print(ss1, ss2)
+        return ss1 == ss2
+    except Exception:
+        return str1 == str2
+
+
+def remove_boxed(s):
+    if "\\boxed " in s:
+        left = "\\boxed "
+        assert s[: len(left)] == left
+        return s[len(left) :]
+
+    left = "\\boxed{"
+
+    assert s[: len(left)] == left
+    assert s[-1] == "}"
+
+    return s[len(left) : -1]
+
+
+def last_boxed_only_string(string):
+    idx = string.rfind("\\boxed")
+    if "\\boxed " in string:
+        return "\\boxed " + string.split("\\boxed ")[-1].split("$")[0]
+    if idx < 0:
+        idx = string.rfind("\\fbox")
+        if idx < 0:
+            return None
+
+    i = idx
+    right_brace_idx = None
+    num_left_braces_open = 0
+    while i < len(string):
+        if string[i] == "{":
+            num_left_braces_open += 1
+        if string[i] == "}":
+            num_left_braces_open -= 1
+            if num_left_braces_open == 0:
+                right_brace_idx = i
+                break
+        i += 1
+
+    retval = None if right_brace_idx is None else string[idx : right_brace_idx + 1]
+
+    return retval
+
+
+def strip_string(string):
+
+    def fix_fracs(string):
+        substrs = string.split("\\frac")
+        new_str = substrs[0]
+        if len(substrs) > 1:
+            substrs = substrs[1:]
+            for substr in substrs:
+                new_str += "\\frac"
+                if substr[0] == "{":
+                    new_str += substr
+                else:
+                    try:
+                        assert len(substr) >= 2
+                    except:  # noqa: E722
+                        return string
+                    a = substr[0]
+                    b = substr[1]
+                    if b != "{":
+                        if len(substr) > 2:
+                            post_substr = substr[2:]
+                            new_str += "{" + a + "}{" + b + "}" + post_substr
+                        else:
+                            new_str += "{" + a + "}{" + b + "}"
+                    else:
+                        if len(substr) > 2:
+                            post_substr = substr[2:]
+                            new_str += "{" + a + "}" + b + post_substr
+                        else:
+                            new_str += "{" + a + "}" + b
+        string = new_str
+        return string
+
+    def fix_a_slash_b(string):
+        if len(string.split("/")) != 2:
+            return string
+        a = string.split("/")[0]
+        b = string.split("/")[1]
+        try:
+            a = int(a)
+            b = int(b)
+            assert string == "{}/{}".format(a, b)
+            new_string = "\\frac{" + str(a) + "}{" + str(b) + "}"
+            return new_string
+        except:  # noqa: E722
+            return string
+
+    def remove_right_units(string):
+        # "\\text{ " only ever occurs (at least in the val set) when describing units
+        if "\\text{ " in string:
+            splits = string.split("\\text{ ")
+            assert len(splits) == 2
+            return splits[0]
+        else:
+            return string
+
+    def fix_sqrt(string):
+        if "\\sqrt" not in string:
+            return string
+        splits = string.split("\\sqrt")
+        new_string = splits[0]
+        for split in splits[1:]:
+            if split[0] != "{":
+                a = split[0]
+                new_substr = "\\sqrt{" + a + "}" + split[1:]
+            else:
+                new_substr = "\\sqrt" + split
+            new_string += new_substr
+        return new_string
+
+    # linebreaks
+    string = string.replace("\n", "")
+
+    # remove inverse spaces
+    string = string.replace("\\!", "")
+
+    # replace \\ with \
+    string = string.replace("\\\\", "\\")
+
+    # replace tfrac and dfrac with frac
+    string = string.replace("tfrac", "frac")
+    string = string.replace("dfrac", "frac")
+
+    # remove \left and \right
+    string = string.replace("\\left", "")
+    string = string.replace("\\right", "")
+
+    # Remove circ (degrees)
+    string = string.replace("^{\\circ}", "")
+    string = string.replace("^\\circ", "")
+
+    # remove dollar signs
+    string = string.replace("\\$", "")
+
+    # remove units (on the right)
+    string = remove_right_units(string)
+
+    # remove percentage
+    string = string.replace("\\%", "")
+    string = string.replace("\%", "")  # noqa: W605
+
+    # " 0." equivalent to " ." and "{0." equivalent to "{." Alternatively, add "0" if "." is the start of the string
+    string = string.replace(" .", " 0.")
+    string = string.replace("{.", "{0.")
+    # if empty, return empty string
+    if len(string) == 0:
+        return string
+    if string[0] == ".":
+        string = "0" + string
+
+    # to consider: get rid of e.g. "k = " or "q = " at beginning
+    if len(string.split("=")) == 2 and len(string.split("=")[0]) <= 2:
+        string = string.split("=")[1]
+
+    # fix sqrt3 --> sqrt{3}
+    string = fix_sqrt(string)
+
+    # remove spaces
+    string = string.replace(" ", "")
+
+    # \frac1b or \frac12 --> \frac{1}{b} and \frac{1}{2}, etc. Even works with \frac1{72} (but not \frac{72}1). Also does a/b --> \\frac{a}{b}
+    string = fix_fracs(string)
+
+    # manually change 0.5 --> \frac{1}{2}
+    if string == "0.5":
+        string = "\\frac{1}{2}"
+
+    # NOTE: X/Y changed to \frac{X}{Y} in dataset, but in simple cases fix in case the model output is X/Y
+    string = fix_a_slash_b(string)
+
+    return string
+
+
 def custom_reward_fn(to_be_evaluated: str, reference: Optional[Any] = None, *args, **kwargs) -> float:
     assert isinstance(reference, str), "Reference answer should be a string"
-    reward = gsm8k_reward_fn(to_be_evaluated, reference, *args, **kwargs)
-    # Add more reward functions here
-    # ...
+    reward = 0.0
+    try:
+        string_in_last_boxed = last_boxed_only_string(to_be_evaluated)
+        if string_in_last_boxed is not None:
+            answer = remove_boxed(string_in_last_boxed)
+            reference_answer = remove_boxed(last_boxed_only_string(reference))
+            if is_equiv(answer, reference_answer):
+                reward = 1.0
+    except Exception as e:
+        logger.error(f"Error in custom reward function: {e}")
+        logger.error(f"to_be_evaluated: {to_be_evaluated}")
+        logger.error(f"reference: {reference}")
     return reward
 
 
-class GSM8kDataPacker(DataPacker):
+class MathDataPacker(DataPacker):
     '''
     This is a demo data packer that wraps the underlying data packer of the selected model.
     This is meaningless for this example, but useful for explaining:
@@ -192,15 +380,15 @@ class GSM8kDataPacker(DataPacker):
         return self.underlying_data_packer.policy_collate_fn(processed_samples, computed_max_len)
 
 if __name__ == "__main__":
-    dataset = GSM8kDataset()
-    val_dataset = GSM8kValDataset()
+    dataset = MathDataset()
+    val_dataset = MathValDataset()
     launch_dispatcher(
         dataset=dataset,
         # Override the reward functions defined in toml
         reward_fns=[custom_reward_fn],
         # Optional: if not provided, the default data packer of the selected model will be used
-        data_packer=GSM8kDataPacker(),
+        data_packer=MathDataPacker(),
         val_dataset=val_dataset,
         val_reward_fns=[custom_reward_fn],
-        val_data_packer=GSM8kDataPacker(),
+        val_data_packer=MathDataPacker(),
     )

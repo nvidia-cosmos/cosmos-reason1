@@ -269,7 +269,7 @@ class GrpoConfig:
         metadata={"help": "Column name for response/reference answer"},
     )
     reward_function: List[str] = field(
-        default_factory=list,
+        default_factory=lambda: ["single_choice"],
         metadata={
             "help": "A List of reward functions for the model. Currently support `single_choice`, `boxed_math`, and `format`. ",
         },
@@ -712,7 +712,7 @@ class ValidationConfig:
     )
 
     reward_function: List[str] = field(
-        default_factory=list,
+        default_factory=lambda: ["single_choice"],
         metadata={
             "help": "A List of reward functions for the model used in validation. Currently support `single_choice`, `boxed_math`, and `format`. ",
         },
