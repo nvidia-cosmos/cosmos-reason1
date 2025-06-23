@@ -21,7 +21,7 @@ fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 64
 sync_weight_interval = 1
 enable_validation = true
-validation_freq = 64
+validation_step = 64
 
 [rollout]
 gpu_memory_utilization = 0.7
@@ -52,12 +52,11 @@ experiment_name = "cosmos-reason1-rl"
 type = "grpo"
 dataset.name = "nvidia/Cosmos-Reason1-RL-Dataset"
 dataset.subset = "robovqa"
-dataset.train_split = "rl"
+dataset.split = "rl"
 enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
 prompt_column_name = "qa_pairs"
-
 
 reward_function = ["single_choice", "format"]
 temperature = 0.9
@@ -92,10 +91,8 @@ top_p = 0.95
 top_k = 50
 repetition_penalty = 1.05
 n_generation = 1
-reward_function = ["single_choice", "format"]
 
 [validation.dataset]
 name = "nvidia/Cosmos-Reason1-Benchmark"
 subset = "robovqa"
-test_split = "benchmark"
-test_size = 0.5
+split = "benchmark"

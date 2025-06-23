@@ -20,7 +20,6 @@ import toml
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
 from torch.utils.data import Dataset
-import time
 import asyncio
 import base64
 import cloudpickle
@@ -35,12 +34,12 @@ from cosmos_reason1.dispatcher.protocol import (
     RegisterRequest,
     ErrorResponse,
     RolloutRequest,
+    ValidationReportRequest,
     HandshakeInitiatorRequest,
     HandshakeAcceptorRequest,
     UnregisterRequest,
     TrainAckRequest,
     HeartbeatRequest,
-    WeightReadyRequest,
     SetProfileRequest,
     SetTracePathRequest,
     NcclErrRequest,
@@ -63,11 +62,9 @@ from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_NCCL_COMM_GET_ALL_SUFFIX,
     COSMOS_API_NCCL_COMM_ERROR_SUFFIX,
     COSMOS_API_NEXT_PROMPT_SUFFIX,
-    COSMOS_API_NEXT_VALIDATION_PROMPT_SUFFIX,
     COSMOS_API_ROLLOUT_SUFFIX,
-    COSMOS_API_VALIDATION_ROLLOUT_SUFFIX,
+    COSMOS_API_VALIDATION_REPORT_SUFFIX,
     COSMOS_API_POLICY_TRAIN_ACK_SUFFIX,
-    COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
 )
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 
@@ -83,12 +80,18 @@ def create_error_response(
 
 
 controller = Controller()
+server = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    if controller.config.train.train_policy.type != "sft":
-        asyncio.create_task(monitor_replica_status())
+    async def monitor_replica_status():
+        while True:
+            controller.policy_status_manager.maintain_life_status()
+            controller.rollout_status_manager.maintain_life_status()
+            await asyncio.sleep(COSMOS_ROLLOUT_SCAN_INTERVAL)
+
+    util.create_async_task(monitor_replica_status())
     yield
 
 
@@ -147,7 +150,8 @@ async def meta():
 async def register(request: RegisterRequest):
     try:
         await controller.register(
-            Atom.from_register_request(request), role=request.role
+            Atom.from_register_request(request),
+            role=request.role,
         )
         return {"message": "Registered"}
     except Exception as e:
@@ -155,6 +159,20 @@ async def register(request: RegisterRequest):
 
         traceback.print_exc()
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
+
+
+@app.post(COSMOS_API_UNREGISTER_SUFFIX)
+async def unregister(request: UnregisterRequest):
+    await controller.unregister(request.replica_name)
+    if (
+        (controller.policy_status_manager.training_finished() or not controller.is_rl)
+        and len(controller.policy_status_manager) == 0
+        and len(controller.rollout_status_manager) == 0
+    ):
+        logger.info("[Controller] All replicas are finished, finalizing...")
+        global server
+        server.should_exit = True
+    return {"message": "Unregistered"}
 
 
 @app.post(COSMOS_API_SET_PROFILE_SUFFIX)
@@ -175,16 +193,10 @@ async def set_trace_path(request: SetTracePathRequest):
         return {"message": "Ignore the trace path request!"}
 
 
-@app.post(COSMOS_API_UNREGISTER_SUFFIX)
-async def unregister(request: UnregisterRequest):
-    await controller.unregister(request.replica_name)
-    return {"message": "Unregistered"}
-
-
 @app.post(COSMOS_API_HEARTBEAT_SUFFIX)
 async def heartbeat(request: HeartbeatRequest):
     # Set the replica timestamp to the current time for heartbeat
-    controller.set_replica_timestamp(request.replica_name, int(time.time()))
+    controller.replica_heartbeat(request.replica_name)
     return {"message": "Heartbeat received"}
 
 
@@ -234,18 +246,9 @@ Rollout API
 
 
 @app.get(COSMOS_API_NEXT_PROMPT_SUFFIX)
-async def get_batched_prompt(n: int):
-    prompt_id_and_payload_list, is_end = await controller.get_batched_prompt(n)
-    return {
-        "prompt_id_and_payload_list": prompt_id_and_payload_list,
-        "is_end": is_end,
-    }
-
-
-@app.get(COSMOS_API_NEXT_VALIDATION_PROMPT_SUFFIX)
-async def get_batched_validation_prompt(n: int):
-    prompt_id_and_payload_list, is_end = await controller.get_batched_validation_prompt(
-        n
+async def get_batched_prompt(n: int, validation_step: Optional[int] = None):
+    prompt_id_and_payload_list, is_end = await controller.get_batched_prompt(
+        n, validation_step
     )
     return {
         "prompt_id_and_payload_list": prompt_id_and_payload_list,
@@ -253,29 +256,99 @@ async def get_batched_validation_prompt(n: int):
     }
 
 
-async def monitor_replica_status():
-    while True:
-        now = time.time()
-        await controller.maintain_replica_life_status(now)
-        await asyncio.sleep(COSMOS_ROLLOUT_SCAN_INTERVAL)
+@app.post(COSMOS_API_VALIDATION_REPORT_SUFFIX)
+async def validation_report(request: ValidationReportRequest):
+    rollout_groups: List[RolloutGroup] = [
+        RolloutGroup(
+            prompt_idx=prompt_idx,
+            payload=payload,
+            # Only report once per replica, so is_end is always True
+            is_end=True,
+            completions=completions,
+            reference_answer=controller.query_reference_answer(
+                prompt_idx, dataset_type="val"
+            ),
+        )
+        for prompt_idx, payload, completions in zip(
+            request.prompt_idxs, request.payloads, request.completions
+        )
+    ]
+
+    rollouts_list: List[List[Rollout]] = [
+        rollout_group.compute_rollouts(controller.rl_algo)
+        for rollout_group in rollout_groups
+    ]
+    controller.policy_status_manager.validation_report_validation_results(
+        request.validation_step, rollouts_list, controller.rollout_status_manager
+    )
+    return {"message": "Validation rollout put"}
 
 
 @app.post(COSMOS_API_ROLLOUT_SUFFIX)
-async def put_rollout(rollout: RolloutRequest):
+async def put_rollout_group(rollout: RolloutRequest):
     try:
-        if rollout.extra_info is not None and "is_end" in rollout.extra_info:
-            # If the extra info contains "is_end", it means the rollout is finished
-            await controller.handle_rollout_end_ack(
-                rollout.extra_info, rollout.src_replica_name
+        if rollout.is_end:
+            assert (
+                len(rollout.prompt_idxs) == 0
+            ), "Prompt idxs should be empty if is_end is True"
+            logger.info(
+                f"[Controller] Received rollout end signal from {rollout.src_replica_name}"
             )
-            return {"message": "Rollout end put"}
+            controller.rollout_status_manager.rollout_end(rollout.src_replica_name)
+            if controller.rollout_status_manager.all_rollouts_ended():
+                total_pending_rollouts = (
+                    controller.policy_status_manager.total_pending_rollouts()
+                )
+                logger.info(
+                    f"[Controller] All rollouts have ended, recompute total steps with {total_pending_rollouts} remaining rollouts..."
+                )
+                original_total_steps = controller.policy_status_manager.total_steps
+                controller.policy_status_manager.recompute_total_steps(
+                    explicit_num_remaining_samples=total_pending_rollouts
+                )
+                new_total_steps = controller.policy_status_manager.total_steps
+                if new_total_steps > controller.policy_status_manager.current_step:
+                    logger.info(
+                        "[Controller] There are still remaining steps, no op required"
+                    )
+                    # There are still remaining steps, no op required
+                    pass
+                else:
+                    if (
+                        controller.policy_status_manager.current_step
+                        == original_total_steps
+                    ):
+                        logger.info(
+                            "[Controller] No remaining steps, policy and rollouts happen to finish at the same time"
+                        )
+                        # No remaining steps, policy and rollouts happen to finish at the same time
+                        pass
+                    else:
+                        logger.info(
+                            "[Controller] Clear the rollout buffer, and trigger an extra `DataFetch`"
+                        )
+                        # Clear the rollout buffer
+                        with (
+                            controller.policy_status_manager.rollout_buffer.queue.mutex
+                        ):
+                            controller.policy_status_manager.rollout_buffer.queue.clear()
+                        controller.policy_status_manager.total_steps = (
+                            controller.policy_status_manager.current_step + 1
+                        )
+
+                        # Trigger an extra `DataFetch & P2R/R2R`
+                        controller.policy_status_manager.try_trigger_data_fetch_and_training(
+                            is_fake_last_cmd=True
+                        )
+
+            return {"message": "Rollout end signal received"}
 
         rollout_groups: List[RolloutGroup] = [
             RolloutGroup(
                 prompt_idx=prompt_idx,
                 payload=payload,
                 completions=completions,
-                extra_info=rollout.extra_info,
+                is_end=rollout.is_end,
                 reference_answer=controller.query_reference_answer(prompt_idx),
             )
             for prompt_idx, payload, completions in zip(
@@ -353,65 +426,21 @@ async def put_rollout(rollout: RolloutRequest):
         return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
 
 
-@app.post(COSMOS_API_VALIDATION_ROLLOUT_SUFFIX)
-async def put_validation_rollout(rollout: RolloutRequest):
-    try:
-        if rollout.extra_info is not None and "is_end" in rollout.extra_info:
-            # If the extra info contains "is_end", it means the rollout is finished
-            await controller.handle_validation_rollout_end_ack(
-                rollout.extra_info, rollout.src_replica_name
-            )
-            return {"message": "Validation rollout end put"}
-
-        rollout_groups: List[RolloutGroup] = [
-            RolloutGroup(
-                prompt_idx=prompt_idx,
-                payload=payload,
-                completions=completions,
-                extra_info=rollout.extra_info,
-                reference_answer=controller.query_reference_answer(
-                    prompt_idx, dataset_type="val"
-                ),
-            )
-            for prompt_idx, payload, completions in zip(
-                rollout.prompt_idxs, rollout.payloads, rollout.completions
-            )
-        ]
-        await controller.put_validation_rollouts(
-            rollout_groups, rollout.src_replica_name
-        )
-        return {"message": "Validation rollout put"}
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
-
-
 @app.post(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX)
 async def train_ack(request: TrainAckRequest):
     try:
         replicaname = request.replica_name
-        iteration_count = request.iteration_count
+        step = request.weight_step
         profile_finished = request.profile_finished
         report_data = request.report_data
-        await controller.train_ack(
-            replicaname, iteration_count, profile_finished, report_data
+        controller.policy_status_manager.train_ack(
+            replicaname,
+            step,
+            profile_finished,
+            report_data,
+            controller.rollout_status_manager,
         )
         return {"message": "Ack completed"}
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        return create_error_response(constant.ErrorCode.INTERNAL_ERROR, str(e))
-
-
-@app.post(COSMOS_API_POLICY_WEIGHT_READY_SUFFIX)
-async def weight_ready(request: WeightReadyRequest):
-    try:
-        replicaname = request.replica_name
-        await controller.weight_ready(replicaname)
-        return {"message": "Weight ready received"}
     except Exception as e:
         import traceback
 
@@ -509,9 +538,12 @@ def main(
             exc_info=True,
         )
 
-    uvicorn.run(
+    config = uvicorn.Config(
         app, host="0.0.0.0", port=util.find_available_port(args.port), access_log=False
     )
+    global server
+    server = uvicorn.Server(config)
+    server.run()
 
 
 if __name__ == "__main__":

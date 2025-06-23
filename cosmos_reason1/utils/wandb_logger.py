@@ -42,6 +42,9 @@ def is_wandb_available() -> bool:
         return False
 
 
+wandb_run = None
+
+
 def init_wandb(config: CosmosConfig, parallel_dims: ParallelDims = None):
     # Avoid duplicate initialization of wandb
     if wandb.run is not None:
@@ -77,11 +80,14 @@ def init_wandb(config: CosmosConfig, parallel_dims: ParallelDims = None):
         id=config.train.timestamp,  # Use timestamp as the run ID
         resume="allow",
     )
+    global wandb_run
+    wandb_run = run
     return run
 
 
-def log_wandb(run, data: dict, step: int):
-    if run is not None:
-        run.log(data, step=step)
+def log_wandb(data: dict, step: int):
+    global wandb_run
+    if wandb_run is not None:
+        wandb_run.log(data, step=step)
     else:
         logger.warning("Wandb is not initialized. Please check the configuration.")

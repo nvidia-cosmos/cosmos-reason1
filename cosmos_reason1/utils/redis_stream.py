@@ -166,7 +166,6 @@ class RedisStreamHandler:
             )
         except Exception as e:
             logger.error(f"Failed to read from Redis stream {stream_name}_rollout: {e}")
-            raise e
         rollouts = []
         if messages:
             for _, message_list in messages:

@@ -14,14 +14,12 @@
 # limitations under the License.
 import os
 import vllm
-from vllm import SamplingParams
-
 import torch
 from typing import List, Tuple, Any
 from transformers import AutoTokenizer, AutoConfig
 from transformers import GenerationConfig
 from vllm.entrypoints.llm import LLM
-
+from vllm import SamplingParams
 from cosmos_reason1.rollout.rollout_base import RolloutBase
 from cosmos_reason1.policy.config import Config
 from cosmos_reason1.utils.logging import logger
@@ -146,36 +144,6 @@ class vLLMRollout(RolloutBase):
 
         self.tokenizer = tokenizer
 
-        kwargs = dict(
-            n=self.rollout_config.n_generation,
-            logprobs=0,
-            top_p=self.rollout_config.sampling_config.top_p,
-            top_k=self.rollout_config.sampling_config.top_k,
-            temperature=self.rollout_config.sampling_config.temperature,
-            repetition_penalty=self.rollout_config.sampling_config.repetition_penalty,
-            max_tokens=self.rollout_config.max_response_length,
-            stop_token_ids=self.eos_token_ids,
-            include_stop_str_in_output=self.rollout_config.include_stop_str_in_output,
-        )
-
-        kwargs["detokenize"] = True
-
-        self.sampling_params = SamplingParams(**kwargs)
-
-        val_kwargs = dict(
-            n=self.validation_config.n_generation,
-            logprobs=0,
-            # Use the same sampling config for validation as well.
-            top_p=self.validation_config.top_p,
-            top_k=self.validation_config.top_k,
-            temperature=self.validation_config.temperature,
-            repetition_penalty=self.validation_config.repetition_penalty,
-            max_tokens=self.validation_config.max_response_length,
-            stop_token_ids=self.eos_token_ids,
-        )
-        val_kwargs["detokenize"] = True
-        self.val_sampling_params = SamplingParams(**val_kwargs)
-
     def reload_weight(self):
         self.rollout_engine.llm_engine.vllm_config.load_config.load_format = "auto"
         self.rollout_engine.collective_rpc("reload_model")
@@ -186,7 +154,7 @@ class vLLMRollout(RolloutBase):
         prompt_id_and_payload_list: List[Tuple[int, Any]],
         stream: torch.cuda.Stream,
         data_packer: DataPacker,
-        is_validation: bool = False,
+        sampling_params: SamplingParams,
     ) -> List[List[str]]:
         # List of payloads.
         # [
@@ -213,9 +181,7 @@ class vLLMRollout(RolloutBase):
             with torch.cuda.stream(stream):
                 results = self.rollout_engine.generate(
                     prompts=prompts,
-                    sampling_params=self.sampling_params
-                    if not is_validation
-                    else self.val_sampling_params,
+                    sampling_params=sampling_params,
                     use_tqdm=False,
                 )
 

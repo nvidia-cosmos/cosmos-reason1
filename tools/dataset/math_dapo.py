@@ -36,15 +36,15 @@ class MathDapoDataset(Dataset):
         # This demo is only for DAPO-Math-17k dataset
         assert "DAPO-Math-17k" in config.train.train_policy.dataset.name
         self.dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
-        if config.train.train_policy.dataset.train_split:
-            if isinstance(config.train.train_policy.dataset.train_split, list):
+        if config.train.train_policy.dataset.split:
+            if isinstance(config.train.train_policy.dataset.split, list):
                 dataset_list = []
-                for split_name in config.train.train_policy.dataset.train_split:
+                for split_name in config.train.train_policy.dataset.split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.train.train_policy.dataset.train_split, str)
-                self.dataset = self.dataset[config.train.train_policy.dataset.train_split]
+                assert isinstance(config.train.train_policy.dataset.split, str)
+                self.dataset = self.dataset[config.train.train_policy.dataset.split]
 
     def __len__(self):
         return len(self.dataset)

@@ -26,6 +26,8 @@ from cosmos_reason1.utils.util import basename_from_modelpath
 from cosmos_reason1.dispatcher.data.packer.base import DataPacker
 from cosmos_reason1.dispatcher.data.packer.qwen2_5_vlm_data_packer import Qwen2_5_VLM_DataPacker
 from cosmos_reason1.utils.logging import logger
+import toml
+import argparse
 
 FPS = 1
 MAX_PIXELS = 81920
@@ -60,16 +62,16 @@ class CosmosGRPODataset(Dataset):
         self.config = config
         self.tokenizer = tokenizer
         self.dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
-        if config.train.train_policy.dataset.train_split:
-            if isinstance(config.train.train_policy.dataset.train_split, list):
+        if config.train.train_policy.dataset.split:
+            if isinstance(config.train.train_policy.dataset.split, list):
                 dataset_list = []
-                for split_name in config.train.train_policy.dataset.train_split:
+                for split_name in config.train.train_policy.dataset.split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.train.train_policy.dataset.train_split, str)
-                self.dataset = self.dataset[config.train.train_policy.dataset.train_split]
-        util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
+                assert isinstance(config.train.train_policy.dataset.split, str)
+                self.dataset = self.dataset[config.train.train_policy.dataset.split]
+        util.prepare_cosmos_data(dataset=config.train.train_policy.dataset, fps=FPS, max_pixels=MAX_PIXELS)
         self.mm_files_paths = self.get_mm_files_paths(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
 
     def __len__(self):
@@ -145,47 +147,21 @@ class CosmosGRPOValDataset(CosmosGRPODataset):
 
         self.config = config
         self.tokenizer = tokenizer
-        if not config.validation.dataset.name:
-            config.validation.dataset.name = config.train.train_policy.dataset.name
-            config.validation.dataset.subset = config.train.train_policy.dataset.subset
-            config.validation.dataset.revision = config.train.train_policy.dataset.revision
-        if not config.validation.dataset.test_split:
-            config.validation.dataset.test_split = config.train.train_policy.dataset.train_split
-        if not config.validation.dataset.test_size:
-            config.validation.dataset.test_size = config.train.train_policy.dataset.test_size
-
         self.dataset = load_dataset(config.validation.dataset.name, config.validation.dataset.subset)
-        if config.validation.dataset.test_split:
-            if isinstance(config.validation.dataset.test_split, list):
+
+        if config.validation.dataset.split:
+            if isinstance(config.validation.dataset.split, list):
                 dataset_list = []
-                for split_name in config.validation.dataset.test_split:
+                for split_name in config.validation.dataset.split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.validation.dataset.test_split, str)
-                self.dataset = self.dataset[config.validation.dataset.test_split]
-        if config.validation.dataset.test_size is not None:
-            if isinstance(config.validation.dataset.test_size, float):
-                n_test_samples = int(
-                    len(self.dataset) * config.validation.dataset.test_size
-                )
-            else:
-                n_test_samples = config.validation.dataset.test_size
-            n_test_samples = max(min(n_test_samples, len(self.dataset)), 1)
-
-            # Prepare the validation dataset by taking the first `n_test_samples` samples
-            indices = list(range(len(self.dataset)))
-            val_indices = indices[:n_test_samples]
-            self.dataset = Subset(self.dataset, val_indices)
-
+                assert isinstance(config.validation.dataset.split, str)
+                self.dataset = self.dataset[config.validation.dataset.split]
         # Prepare the data for Cosmos GRPO
         # This is a hack to make the dataset compatible with the training data
         # Change the training dataset name and subset to utilize the same data preparation logic
-        config.train.train_policy.dataset.name = config.validation.dataset.name
-        config.train.train_policy.dataset.subset = config.validation.dataset.subset
-        config.train.train_policy.dataset.train_split = config.validation.dataset.test_split
-        config.train.train_policy.dataset.revision = config.validation.dataset.revision
-        util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
+        util.prepare_cosmos_data(dataset=config.validation.dataset, fps=FPS, max_pixels=MAX_PIXELS)
         self.mm_files_paths = self.get_mm_files_paths(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
 
 def custom_reward_fn(to_be_evaluated: str, reference: Optional[str] = None, *args, **kwargs) -> float:
@@ -243,8 +219,15 @@ class DemoDataPacker(DataPacker):
         return self.underlying_data_packer.policy_collate_fn(processed_samples, computed_max_len)
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, required=True)
+    args = parser.parse_known_args()[0]
+    with open(args.config, "r") as f:
+        config = toml.load(f)
+    config = Config.from_dict(config)
+
     dataset = CosmosGRPODataset()
-    val_dataset = CosmosGRPOValDataset()
+    val_dataset = CosmosGRPOValDataset() if config.train.enable_validation else None
     launch_dispatcher(
         dataset=dataset,
         reward_fns=[custom_reward_fn],

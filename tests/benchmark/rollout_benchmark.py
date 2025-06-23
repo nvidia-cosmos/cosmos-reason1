@@ -97,7 +97,7 @@ def main(args: argparse.Namespace):
             # preprocess the dataset if is cosmos. This is highly consistent with the controller.
             is_cosmos = "cosmos" in config.train.train_policy.dataset.name.lower()
             if is_cosmos:
-                util.prepare_cosmos_data(config=config)
+                util.prepare_cosmos_data(config=config.train.train_policy.dataset)
             dataset = CosmosDataset(config=config)
             train_dataloader = DataLoader(dataset.train_set, batch_size=1, shuffle=True)
             logger.info(

@@ -96,7 +96,7 @@ class mock_vLLMRolloutWorker(vLLMRolloutWorker):
             except Exception as e:
                 print(f"Failed in post rollout completion to controller: {str(e)}")
 
-        while not self.shutdown_background_task_event.is_set():
+        while not self.shutdown_signal.is_set():
             self.consume_command()
             if not self.weight_synced_event.is_set():
                 continue

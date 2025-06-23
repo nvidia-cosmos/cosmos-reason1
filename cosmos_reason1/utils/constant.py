@@ -32,7 +32,6 @@ COSMOS_HEARTBEAT_SEND_INTERVAL = 60  # 60 seconds
 
 COSMOS_ROLLOUT_SCAN_INTERVAL = 10  # 10 seconds
 COSMOS_ROLLOUT_STEP_INTERVAL = 100  # 100 steps
-COSMOS_ROLLOUT_PROMPT_QUEUE_MAX_SIZE = 50  # 50 prompts
 COSMOS_NCCL_ERROR_CLEAN_REPLICA_DELAY = 10  # 10 seconds
 
 
@@ -110,10 +109,8 @@ class ErrorCode(IntEnum):
 
 
 class RedisStreamConstant:
-    CMD_READING_TIMEOUT_MS = 0  # `0` means never timeout to prevent frequent polling
+    CMD_READING_TIMEOUT_MS = 10 * 1000  # 10 seconds
     CMD_FETCH_SIZE = 5
     STREAM_MAXLEN = 10000  # Keep latest n message entries
-    ROLLOUT_READING_TIMEOUT_MS = (
-        0  # `0` means never timeout to prevent frequent polling
-    )
+    ROLLOUT_READING_TIMEOUT_MS = 10 * 1000  # 10 seconds
     ROLLOUT_FETCH_SIZE = 8

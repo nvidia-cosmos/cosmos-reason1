@@ -24,13 +24,14 @@ import weakref
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
 import msgpack
+import time
 
 
 @dataclass
 class Rollout:
     payload: Any
     completion: str
-    extra_info: Dict[str, Any]
+    is_end: bool
     reward: float
     advantage: float
     prompt_idx: int
@@ -40,7 +41,7 @@ class Rollout:
         self,
         payload: Any,
         completion: str,
-        extra_info: Dict[str, Any],
+        is_end: bool,
         reward: float,
         advantage: float,
         prompt_idx: int,
@@ -48,11 +49,15 @@ class Rollout:
     ):
         self.payload = payload
         self.completion = completion
-        self.extra_info = extra_info
+        self.is_end = is_end
         self.reward = reward
         self.advantage = advantage
         self.prompt_idx = prompt_idx
         self.n_ignore_prefix_tokens = n_ignore_prefix_tokens
+
+    @classmethod
+    def from_dict(cls, dict_v: Dict[str, Any]) -> "Rollout":
+        return cls(**dict_v)
 
 
 class RolloutGroup:
@@ -66,13 +71,13 @@ class RolloutGroup:
         prompt_idx: int,
         payload: Any,
         completions: List[str],
-        extra_info: Dict[str, Any],
+        is_end: bool,
         reference_answer: str,
     ):
         self.prompt_idx: int = prompt_idx
         self.payload: Any = payload
         self.completions: List[str] = completions
-        self.extra_info: Dict[str, Any] = extra_info
+        self.is_end: bool = is_end
         self.reference_answer: str = reference_answer
 
     def compute_rollouts(self, algo: RuleBasedAlgo) -> List[Rollout]:
@@ -92,7 +97,7 @@ class RolloutGroup:
             Rollout(
                 payload=self.payload,
                 completion=completion,
-                extra_info=self.extra_info,
+                is_end=self.is_end,
                 reward=reward,
                 advantage=advantage,
                 prompt_idx=self.prompt_idx,
@@ -248,6 +253,24 @@ class Atom:
 
 
 @dataclass
+class ReplicaStatus:
+    """
+    Status of a replica.
+    """
+
+    heartbeat_timestamp: int  # Timestamp of the last heartbeat
+    nccl_error_timestamp: Optional[int]  # Timestamp of the last NCCL error
+    mesh_rank: int  # rank in the mesh
+    ended: bool = False
+
+    def __init__(self):
+        self.heartbeat_timestamp = time.time()
+        self.nccl_error_timestamp = None
+        self.mesh_rank = -1
+        self.ended = False
+
+
+@dataclass
 class Replica:
     """
     Replica is a single `DP Relicate` unit, where sub:
@@ -267,10 +290,9 @@ class Replica:
     atoms: Dict[str, Atom]
     command_queue: asyncio.Queue
     weights_loaded_in_view_of_command: bool = False
-    in_mesh: bool = False
-    pending_rollouts: int = 0
-    weight_step: int = -1
     start_time: int = -1
+
+    status: ReplicaStatus = field(default_factory=ReplicaStatus)
 
     # For profiling
     sub_profiler_config: SubProfilerConfig = field(default_factory=SubProfilerConfig)
@@ -280,10 +302,9 @@ class Replica:
         self.role = role
         self.atoms = {str(atom): atom for atom in atoms}
         self.command_queue = asyncio.Queue()
-        self.pending_rollouts = 0
-        self.weight_step = -1
 
         self.sub_profiler_config = SubProfilerConfig()
+        self.status = ReplicaStatus()
 
     def to_dict(self) -> Dict[str, Any]:
         atoms = []
@@ -294,9 +315,11 @@ class Replica:
             "role": self.role,
             "atoms": atoms,
             "arrived": self.all_atoms_arrived,
-            "weight_step": self.weight_step,
-            "pending_rollouts": self.pending_rollouts,
         }
+
+    @property
+    def in_mesh(self) -> bool:
+        return self.status.mesh_rank >= 0
 
     def get_atom(self, ranks: List[int]) -> Atom:
         assert (
@@ -349,7 +372,7 @@ class Replica:
         # Dot product of ranks and group_size should be equal
         return len(self.atoms) == math.prod(atom.group_size)
 
-    async def put_rollout(self, rollout: Rollout, redis_handler: RedisStreamHandler):
+    def put_rollout(self, rollout: Rollout, redis_handler: RedisStreamHandler):
         assert (
             self.role == Role.POLICY
         ), f"Replica {self.name} is not a policy replica, cannot put rollout"
@@ -359,7 +382,6 @@ class Replica:
         # Check which atom should handle this rollout
         # Publish the rollout to the redis stream to be consumed by policy replicas
         redis_handler.publish_rollout(msgpack.packb(rollout.__dict__), self.name)
-        self.pending_rollouts += 1
 
     async def find_atom(self, global_rank: int) -> Atom:
         key = f"{self.name}_{global_rank}"

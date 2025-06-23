@@ -21,7 +21,7 @@ fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 384
 sync_weight_interval = 1
 enable_validation = true
-validation_freq = 70
+validation_step = 70
 
 [rollout]
 gpu_memory_utilization = 0.7
@@ -45,7 +45,7 @@ experiment_name = "qwen-32b-math-grpo"
 type = "grpo"
 dataset.name = "DigitalLearningGmbH/MATH-lighteval"
 dataset.subset = "default"
-dataset.train_split = "train"
+dataset.split = "train"
 temperature = 1.0
 epsilon_low = 0.2
 epsilon_high = 0.28
@@ -86,4 +86,4 @@ temperature = 0.0
 max_response_length = 2048
 dataset.name = "DigitalLearningGmbH/MATH-lighteval"
 dataset.subset = "default"
-dataset.test_split = "test"
+dataset.split = "test"

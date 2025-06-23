@@ -98,6 +98,8 @@ class Trainer(CommMixin):
         try:
             # Apply parallelism to the model
             parallelize_fn, _ = model.parallelize_fn
+            # `pp_scheduler` is used for both `sft` and `RLHF`
+            # `pp_scheduler_val` is used only for `sft`, since `RLHF` does not require policy model via validation
             self.pp_scheduler, self.pp_scheduler_val = parallelize_fn(
                 model, parallel_dims, config, pp_loss_fn=self.pp_loss_fn
             )
@@ -129,7 +131,7 @@ class Trainer(CommMixin):
 
         self.report_data = {}
         if "wandb" in config.logging.logger and is_wandb_available():
-            self.wandb_run = init_wandb(config, parallel_dims)
+            init_wandb(config, parallel_dims)
         else:
             logger.warning(
                 "Wandb is not available. Please install it to use wandb logging features."
@@ -347,10 +349,17 @@ class Trainer(CommMixin):
                     )
             logger.info(f"\n\nExported safetensors to {path}\n\n")
 
-        self.upload_thread = threading.Thread(
-            target=upload_handler,
-            args=(self.config, is_final, path, rel_path),
-            name="upload_safetensors",
-            daemon=True,
-        )
-        self.upload_thread.start()
+        need_upload = (
+            self.config.train.ckpt.upload_hf and is_final
+        ) or self.config.train.ckpt.upload_s3
+        if need_upload:
+            # If the upload thread is already running, wait for it to finish
+            if self.upload_thread is not None:
+                self.upload_thread.join()
+            self.upload_thread = threading.Thread(
+                target=upload_handler,
+                args=(self.config, is_final, path, rel_path),
+                name="upload_safetensors",
+                daemon=True,
+            )
+            self.upload_thread.start()

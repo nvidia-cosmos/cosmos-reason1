@@ -91,7 +91,7 @@ def construct_dataset(
             config.dataset.revision or None,
         )
         dataset_list = []
-        for split_name in config.dataset.train_split:
+        for split_name in config.dataset.split:
             logger.info(
                 f"Appending split {split_name}, dataset size = {len(dataset[split_name])}"
             )
@@ -99,46 +99,42 @@ def construct_dataset(
         train_dataset = concatenate_datasets(dataset_list)
     logger.info(f"Final dataset size = {len(train_dataset)}")
 
-    try:
-        if dataset is not None:
-            dataset_list = []
-            for split_name in config.dataset.test_split:
-                dataset_list.append(dataset[split_name])
-            test_dataset = concatenate_datasets(dataset_list)
-            if len(test_dataset) == 0:
-                raise ValueError("Test dataset is empty")
-        else:
-            raise ValueError("Test dataset is empty")
-    except Exception:
-        if isinstance(train_dataset, torch.utils.data.Dataset):
-            # Define the split ratio (e.g., 80% train, 20% test)
-            if config.dataset.test_size is None:
-                logger.warning(
-                    "No test size specified, using 10% of the training dataset for testing."
-                )
-                config.dataset.test_size = 0.1
-            if isinstance(config.dataset.test_size, float):
-                n_test_samples = int(len(train_dataset) * config.dataset.test_size)
-            else:
-                n_test_samples = config.dataset.test_size
-            n_test_samples = max(min(n_test_samples, len(train_dataset) - 1), 1)
-
-            # Generate deterministic indices
-            indices = list(range(len(train_dataset)))
-            test_indices = indices[:n_test_samples]
-            train_indices = indices[n_test_samples:]
-
-            test_dataset = torch.utils.data.Subset(train_dataset, test_indices)
-            train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
-        else:
-            assert hasattr(
-                train_dataset, "train_test_split"
-            ), "train_dataset must have train_test_split method"
-            train_test_split = train_dataset.train_test_split(
-                test_size=config.dataset.test_size, shuffle=False
+    # try:
+    #     if dataset is not None:
+    #         dataset_list = []
+    #         for split_name in config.dataset.split:
+    #             dataset_list.append(dataset[split_name])
+    #         test_dataset = concatenate_datasets(dataset_list)
+    #         if len(test_dataset) == 0:
+    #             raise ValueError("Test dataset is empty")
+    #     else:
+    #         raise ValueError("Test dataset is empty")
+    # except Exception:
+    if isinstance(train_dataset, torch.utils.data.Dataset):
+        # Define the split ratio (e.g., 80% train, 20% test)
+        if config.dataset.test_size is None:
+            logger.warning(
+                "No test size specified, using 10% of the training dataset for testing."
             )
-            train_dataset = train_test_split["train"]
-            test_dataset = train_test_split["test"]
+            config.dataset.test_size = 0.1
+        if isinstance(config.dataset.test_size, float):
+            n_test_samples = int(len(train_dataset) * config.dataset.test_size)
+        else:
+            n_test_samples = config.dataset.test_size
+        n_test_samples = max(min(n_test_samples, len(train_dataset) - 1), 1)
+
+        # Generate deterministic indices
+        indices = list(range(len(train_dataset)))
+        test_indices = indices[:n_test_samples]
+        train_indices = indices[n_test_samples:]
+
+        test_dataset = torch.utils.data.Subset(train_dataset, test_indices)
+        train_dataset = torch.utils.data.Subset(train_dataset, train_indices)
+    else:
+        assert hasattr(train_dataset, "split"), "train_dataset must have split method"
+        split = train_dataset.split(test_size=config.dataset.test_size, shuffle=False)
+        train_dataset = split["train"]
+        test_dataset = split["test"]
 
     train_sft_dataset = SFTDataset(
         config,
@@ -536,7 +532,6 @@ class SFTTrainer(Trainer):
                                 and is_wandb_available()
                             ):
                                 log_wandb(
-                                    run=self.wandb_run,
                                     data={
                                         "train/iteration_time": iter_time,
                                     },
@@ -566,7 +561,6 @@ class SFTTrainer(Trainer):
                             and is_wandb_available()
                         ):
                             log_wandb(
-                                run=self.wandb_run,
                                 data=report_data,
                                 step=self.train_step,
                             )
@@ -582,7 +576,7 @@ class SFTTrainer(Trainer):
                 # validation
                 if (
                     self.config.train.enable_validation
-                    and self.train_step % self.config.train.validation_freq == 0
+                    and self.train_step % self.config.train.validation_step == 0
                 ):
                     val_score = self.validate()
 
@@ -660,6 +654,7 @@ class SFTTrainer(Trainer):
                 pp_master_rank=self.parallel_dims.world_size
                 - self.parallel_dims.world_size / self.parallel_dims.pp,
             )
+        self.unregister_from_controller()
 
     @property
     def pp_loss_fn(self):

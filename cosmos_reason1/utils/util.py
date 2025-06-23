@@ -26,6 +26,7 @@ import base64
 import struct
 import tarfile
 import ctypes
+import asyncio
 from functools import wraps
 from msgpack import ExtType
 from tqdm import tqdm
@@ -430,17 +431,17 @@ def if_use_modelscope(path: str) -> bool:
     return path.startswith(modelscope_cache_dir)
 
 
-def prepare_cosmos_data(config, fps=1, max_pixels=81920):
+def prepare_cosmos_data(dataset, fps=1, max_pixels=81920):
     cache_dir = os.environ.get(
         "COSMOS_CACHE", os.path.join(os.path.expanduser("~"), ".cache/cosmos/")
     )
-    dataset_name = basename_from_modelpath(config.train.train_policy.dataset.name)
-    use_modelscope = if_use_modelscope(config.train.train_policy.dataset.name)
+    dataset_name = basename_from_modelpath(dataset.name)
+    use_modelscope = if_use_modelscope(dataset.name)
     dataset_dir = os.path.join(
         cache_dir,
         "datasets",
         dataset_name,
-        config.train.train_policy.dataset.subset,
+        dataset.subset,
     )
     video_clips_dir = os.path.join(dataset_dir, "video_clips")
     video_tensors_dir = os.path.join(
@@ -464,31 +465,22 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
             ]
         )
 
-        # dataset = load_data_from_disk_or_hf(
-        #     config.train.train_policy.dataset.name,
-        #     config.train.train_policy.dataset.subset,
-        # )
-        # num_samples = len(dataset[config.train.train_policy.dataset.train_split])
         if num_clips == num_tensors:
-            logger.info(
-                f"Dataset {config.train.train_policy.dataset.name} is already prepared."
-            )
+            logger.info(f"Dataset {dataset.name} is already prepared.")
             return
 
     ## Prepare video clips
-    re_pattern = re.compile(
-        rf"^{re.escape(config.train.train_policy.dataset.subset)}/clips/.*\.tar\.gz$"
-    )
-    file_pattern = f"{config.train.train_policy.dataset.subset}/clips/*.tar.gz"
+    re_pattern = re.compile(rf"^{re.escape(dataset.subset)}/clips/.*\.tar\.gz$")
+    file_pattern = f"{dataset.subset}/clips/*.tar.gz"
     if use_modelscope:
-        assert os.path.exists(config.train.train_policy.dataset.name)
-        # list all files in the local directory config.train.train_policy.dataset.name
+        assert os.path.exists(dataset.name)
+        # list all files in the local directory dataset.name
         import glob
 
         remote_files = [
-            f.replace(config.train.train_policy.dataset.name + "/", "")
+            f.replace(dataset.name + "/", "")
             for f in glob.glob(
-                f"{config.train.train_policy.dataset.name}/**/*.tar.gz",
+                f"{dataset.name}/**/*.tar.gz",
                 recursive=True,
             )
         ]
@@ -496,15 +488,15 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
         remote_files = list_repo_files(
             repo_id=dataset_name,
             repo_type="dataset",
-            revision=config.train.train_policy.dataset.revision or None,
+            revision=dataset.revision or None,
         )
 
     tgz_files = [f for f in remote_files if re_pattern.match(f)]
     if tgz_files:
         if use_modelscope:
             downloaded_clips_dir_path = os.path.join(
-                config.train.train_policy.dataset.name,
-                config.train.train_policy.dataset.subset,
+                dataset.name,
+                dataset.subset,
                 "clips",
             )
         else:
@@ -512,12 +504,12 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
                 dataset_name,
                 allow_patterns=[file_pattern],
                 repo_type="dataset",
-                revision=config.train.train_policy.dataset.revision or None,
+                revision=dataset.revision or None,
             )
 
             downloaded_clips_dir_path = os.path.join(
                 downloaded_snapshot_directory_cache,
-                config.train.train_policy.dataset.subset,
+                dataset.subset,
                 "clips",
             )
         assert os.path.exists(
@@ -556,23 +548,19 @@ def prepare_cosmos_data(config, fps=1, max_pixels=81920):
         # legacy dataset format with single tar gz file
         if not os.path.exists(video_clips_dir):
             os.makedirs(video_clips_dir, exist_ok=True)
-            clip_filename = os.path.join(
-                config.train.train_policy.dataset.subset, "clips.tar.gz"
-            )
+            clip_filename = os.path.join(dataset.subset, "clips.tar.gz")
             if use_modelscope:
-                clip_tgz = os.path.join(
-                    config.train.train_policy.dataset.name, clip_filename
-                )
+                clip_tgz = os.path.join(dataset.name, clip_filename)
             else:
                 clip_tgz = hf_hub_download(
                     repo_id=dataset_name,
-                    revision=config.train.train_policy.dataset.revision or None,
+                    revision=dataset.revision or None,
                     repo_type="dataset",
                     filename=clip_filename,
                 )
             _extract_tgz_file(clip_tgz, video_clips_dir)
 
-    if config.train.train_policy.dataset.subset == "av":
+    if dataset.subset == "av":
         # For AV dataset, we need to rename the files
         for root, dirs, files in os.walk(video_clips_dir):
             for file in files:
@@ -952,3 +940,14 @@ def find_maximal_prefix_groups(
                 if not has_deeper:
                     result[prefix] = list(node.idxs)
     return result
+
+
+# Util func to create an asyncio task with proper cleanup
+strong_refs = set()
+
+
+def create_async_task(coro):
+    task = asyncio.create_task(coro)
+    strong_refs.add(task)
+    task.add_done_callback(strong_refs.discard)
+    return task

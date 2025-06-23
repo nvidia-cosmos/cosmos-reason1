@@ -50,14 +50,11 @@ experiment_name = "cosmos-reason1-rl"
 type = "grpo"
 dataset.name = "nvidia/Cosmos-Reason1-RL-Dataset"
 dataset.subset = "robovqa"
-dataset.train_split = "rl"
+dataset.split = "rl"
 enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
 prompt_column_name = "qa_pairs"
-
-
-
 reward_function = ["single_choice", "format"]
 temperature = 0.9
 epsilon_low = 0.2

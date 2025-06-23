@@ -727,14 +727,19 @@ def prevent_vllm_from_setting_nccl_env():
 
 
 class DistKVStore:
-    def __init__(self, group: dist.ProcessGroup, master_rank: int):
+    def __init__(
+        self,
+        group: dist.ProcessGroup,
+        master_rank: int,
+        shutdown_event: threading.Event,
+    ):
         self.group = group
         self.rank = self.group.rank()
         self.world_size = self.group.size()
         self.master_rank = master_rank if -1 < master_rank < self.world_size else 0
         self.counter = 0
         self.lock = threading.Lock()
-
+        self.shutdown_event = shutdown_event
         self.local_store = None
         self.__init_local_store()
 
@@ -802,6 +807,21 @@ class DistKVStore:
                     time.sleep(3)
                     continue
 
+    def blocking_wait(self, keys: list[str]):
+        assert self.world_size > 1, "Only master rank can wait for command"
+        # retry every 10 seconds
+        timeout = 10
+        n_max_retries = max(1, int(constant.COSMOS_TCP_STORE_TIMEOUT / timeout))
+        for _ in range(n_max_retries):
+            try:
+                self.local_store.wait(keys, timedelta(seconds=timeout))
+                return
+            except Exception as e:
+                logger.debug(f"Failed to wait for kv store blocking wait: {e}")
+                if self.shutdown_event is not None and self.shutdown_event.is_set():
+                    raise RuntimeError("Stop signal received")
+        raise RuntimeError("Failed to wait for kv store blocking wait")
+
     def broadcast_command(self, command: Command, src: int = 0) -> Command:
         """
         Broadcast a command to all ranks.
@@ -816,18 +836,19 @@ class DistKVStore:
         __last_key_dones = [f"{__last_key}-done-{i}" for i in range(self.world_size)]
 
         error_raised = False
-        while True:
+        cmd = None
+        while self.shutdown_event is None or not self.shutdown_event.is_set():
             try:
                 if src == self.rank:
                     self.local_store.set(__key, command.pack())
                 else:
-                    self.local_store.wait([__key])
+                    self.blocking_wait([__key])
 
                 cmd_raw = self.local_store.get(__key)
                 cmd = Command.depack(cmd_raw)
 
                 self.local_store.set(__key_dones[self.rank], "1")
-                self.local_store.wait(__key_dones)
+                self.blocking_wait(__key_dones)
             except Exception as e:
                 if self.rank == src:
                     # Only log error when the rank is the source rank

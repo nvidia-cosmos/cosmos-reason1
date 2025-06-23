@@ -86,11 +86,7 @@ class mock_GRPOTrainer(GRPOTrainer):
                     )
                     exit(0)
 
-        logger.debug(
-            f"[Policy] Optimization step {self.optimize_step + 1} at train step {self.train_step + 1} finished."
-        )
         # we try freeze the model prarameters, so don't call optimizer.step()
-        self.optimize_step += 1
         self.optimizers.zero_grad()
         return True
 

@@ -39,10 +39,7 @@ from cosmos_reason1.dispatcher.command import (
     PolicyToRolloutUnicastCommand,
     WeightResumeCommand,
     PolicyToPolicyUnicastCommand,
-    DummyCommand,
     DataFetchCommand,
-    AllReduceCommand,
-    StopCommand,
 )
 import atexit
 from cosmos_reason1.utils.util import (
@@ -65,10 +62,10 @@ from cosmos_reason1.utils.network_util import make_request_with_retry
 from cosmos_reason1.utils.util import is_master_rank, seperate_nccl_comm_needed
 from cosmos_reason1.utils import constant
 from cosmos_reason1.utils.distributed import HighAvailabilitylNccl
+from cosmos_reason1.dispatcher.replica import Rollout
 from cosmos_reason1.utils.api_suffix import (
     COSMOS_API_NCCL_COMM_INITIATOR_SUFFIX,
     COSMOS_API_POLICY_TRAIN_ACK_SUFFIX,
-    COSMOS_API_POLICY_WEIGHT_READY_SUFFIX,
 )
 from cosmos_reason1.utils.util import selective_log_softmax
 from cosmos_reason1.utils.pynccl import (
@@ -195,12 +192,6 @@ class GRPOTrainer(Trainer):
                 "Please use elastic scaling feature instead."
             )
 
-        # Heartbeat thread is used to keep the connection alive with the controller.
-        self.shutdown_background_task_event = threading.Event()
-        self.heartbeat_thread = self.start_heartbeat(
-            self.shutdown_background_task_event
-        )
-
         self.grpo_config = self.config.train.train_policy
         # For model load
         self.model_ready = False
@@ -215,6 +206,7 @@ class GRPOTrainer(Trainer):
         self.kv_store = dist_util.DistKVStore(
             group=dist.distributed_c10d._get_default_group(),
             master_rank=0,
+            shutdown_event=self.shutdown_signal,
         )
 
         # For command fetch
@@ -235,12 +227,8 @@ class GRPOTrainer(Trainer):
 
         # For iteration control
         self.mini_step = 0
-        self.train_step = 0
-        self.total_steps = 0
-        self.optimize_step = 0
-        self.repilca_batch_for_this_step = 0
+        self.replica_batch_for_this_step = 0
         self.mini_batch = self.grpo_config.mini_batch
-        self.remain_samples_num = None
 
         # For Polocy to Rollout weight mapping
         self.parallel_mapper = None
@@ -262,17 +250,39 @@ class GRPOTrainer(Trainer):
         self.is_master_replica = True
 
     def handle_shutdown(self):
-        self.shutdown_background_task_event.set()
-        self.inter_policy_nccl.shutdown()
-        if self.fetch_rollouts_thread is not None:
-            self.fetch_rollouts_thread.join()
-        if self.fetch_command_thread is not None:
-            self.fetch_command_thread.join()
-        if self.heartbeat_thread is not None:
-            self.heartbeat_thread.join()
-        if self.upload_thread is not None:
-            logger.info("[Policy] Waiting for upload thread to finish...")
-            self.upload_thread.join()
+        if not hasattr(self, "_handle_shutdown_called"):
+            self._handle_shutdown_called = True
+
+            self.shutdown_signal.set()
+            self.inter_policy_nccl.shutdown()
+            if self.fetch_rollouts_thread is not None:
+                self.fetch_rollouts_thread.join()
+                self.fetch_rollouts_thread = None
+
+            if self.fetch_command_thread is not None:
+                self.fetch_command_thread.join()
+                self.fetch_command_thread = None
+
+            if self.heartbeat_thread is not None:
+                self.heartbeat_thread.join()
+                self.heartbeat_thread = None
+
+            if self.upload_thread is not None:
+                logger.info("[Policy] Waiting for upload thread to finish...")
+                self.upload_thread.join()
+                logger.info("[Policy] Upload thread finished.")
+                self.upload_thread = None
+            # Manually unregister from controller
+            self.unregister_from_controller()
+
+            # TODO(jiaxin)
+            # The background threads are daemon threads, so that they will exit when the main thread exits
+            # However, the previous `.join()` may not really wait for them to stop.
+            # So we need to wait for a while to ensure they have a chance to exit to prevent `exitcode:-6`
+
+            # Another notice is that make sure the background threads detect the shutdown event in less than 15 seconds
+            # Otherwise, the main thread may exit before the background threads detect the shutdown event
+            time.sleep(15)
 
     def model_load_from_hf(self):
         self.model.load_hf_weights(
@@ -294,44 +304,17 @@ class GRPOTrainer(Trainer):
 
     async def fetch_rollouts(self):
         assert self.global_rank == 0, "Only rank 0 can fetch rollouts"
-        while not self.shutdown_background_task_event.is_set():
+        while not self.shutdown_signal.is_set():
             rollouts = []
             try:
-                rollouts = self.redis_controller.subscribe_rollout(self.replica_name)
+                rollouts = [
+                    Rollout.from_dict(msgpack.unpackb(x))
+                    for x in self.redis_controller.subscribe_rollout(self.replica_name)
+                ]
             except Exception as e:
-                logger.error(
-                    f"Failed to get rollouts : {e} at replica {self.replica_name}"
-                )
-                raise e
-            encountered_stop = False
-            for r in rollouts:
-                rollout = msgpack.unpackb(r)
-                if (
-                    "extra_info" in rollout
-                    and rollout["extra_info"] is not None
-                    and "is_end" in rollout["extra_info"]
-                ):
-                    assert rollout["extra_info"]["is_end"] in [True, "True", "true"]
-                    encountered_stop = True
+                logger.debug(f"Failed to get rollouts: {e}, wait for next round")
+            for rollout in rollouts:
                 self.data_queue.put_nowait(rollout)
-            if encountered_stop:
-                logger.info(
-                    "[Policy] Encountered stop command in rollouts. Stopping the fetch loop."
-                )
-                break
-
-    def check_inter_policy_all_ready(self):
-        # Always return true for now due to pure local commands.
-        return True
-
-    def check_intra_policy_all_ready(self, command):
-        # TODO(zjx), never called, can we remove it?
-        # because we directly forward the buildmesh command to the nccl comm, so main thread will never receive buildmesh command
-        # this function will never return true
-        commands = [DummyCommand for _ in range(self.world_size)]
-        dist.all_gather_object(commands, command)
-        is_mesh_builds = [isinstance(x, BuildMeshCommand) for x in commands]
-        return all(is_mesh_builds)
 
     def wrap_to_cuda_tensor(self, key, obj, in_place=False):
         """
@@ -527,14 +510,14 @@ class GRPOTrainer(Trainer):
         logger.debug(
             f"[Policy] Policy2Policy Broadcast {len_params} parameters from {command.src_replica_name} (rank {self.inter_policy_nccl.get_replica_rank(command.src_replica_name)}) to {len(command.dst_replica_names)} replicas took {time_eclapsed:.3f} seconds."
         )
-        return True
+        return False
 
     @Trainer.register_policy_command_handler(PolicyToPolicyUnicastCommand)
     def execute_policy_to_policy_unicast(self, command: PolicyToPolicyUnicastCommand):
         send = self.replica_name == command.src_replica_name
         recv = self.replica_name == command.dst_replica_name
         if not send and not recv:
-            return True
+            return False
         st = time.time()
         # TODO(zjx): there need failure tolerance for nccl send and recv, so get nccl param from command
         send_hook = partial(
@@ -554,7 +537,7 @@ class GRPOTrainer(Trainer):
         logger.debug(
             f"[Policy] Policy2Policy Unicast {len_params} parameters from {command.src_replica_name} (rank {self.inter_policy_nccl.get_replica_rank(command.src_replica_name)}) to {command.dst_replica_name} (rank {self.inter_policy_nccl.get_replica_rank(command.dst_replica_name)}) as sender {send} took {time_eclapsed:.3f} seconds."
         )
-        return True
+        return False
 
     @cached_property
     def map_w_from_policy_to_rollout(self):
@@ -613,7 +596,7 @@ class GRPOTrainer(Trainer):
             )
         send = command.src_replica_name == self.replica_name
         if not send:
-            return True
+            return False
 
         if self.policy_to_rollout_insts is None:
             param = self.model.sorted_params
@@ -748,9 +731,9 @@ class GRPOTrainer(Trainer):
         # make sure all the send operations of all ranks are finished
         time_eclapsed = time.time() - st
         logger.debug(
-            f"[Policy] All {len(self.policy_to_rollout_insts)} send operations of finished in {time_eclapsed:.3f} seconds with {total_bytes_sent / (1024 * 1024)} MB sent."
+            f"[Policy] All {len(self.policy_to_rollout_insts)} at step {command.weight_step} send operations of finished in {time_eclapsed:.3f} seconds with {total_bytes_sent / (1024 * 1024)} MB sent."
         )
-        return True
+        return False
 
     @Trainer.register_policy_command_handler(WeightResumeCommand)
     def execute_weight_resume(self, command: WeightResumeCommand = None):
@@ -791,47 +774,7 @@ class GRPOTrainer(Trainer):
         assert (
             self.map_w_from_policy_to_rollout is not None
         ), "No parameters to sync found."
-        if self.global_rank == 0:
-            try:
-                make_request_with_retry(
-                    partial(
-                        requests.post,
-                        json={
-                            "replica_name": self.replica_name,
-                        },
-                    ),
-                    self.get_alternative_urls(COSMOS_API_POLICY_WEIGHT_READY_SUFFIX),
-                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"[Policy] Failed in in send weight ready ack to controller after retries {e}."
-                )
-            logger.debug(
-                f"[Policy] Weight ready ack sent for {self.replica_name} to controller."
-            )
-        return True
-
-    def train_ack(self):
-        if is_master_rank(self.parallel_dims, self.global_rank):
-            try:
-                make_request_with_retry(
-                    partial(
-                        requests.post,
-                        json={
-                            "replica_name": self.replica_name,
-                            "iteration_count": self.train_step,
-                            "profile_finished": self.profiler.check_finished(),
-                            "report_data": self.report_data,
-                        },
-                    ),
-                    self.get_alternative_urls(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX),
-                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
-                )
-            except Exception as e:
-                raise RuntimeError(
-                    f"[Policy] Failed in in send train ack to controller after retries {e}."
-                )
+        return False
 
     @Trainer.register_policy_command_handler(DataFetchCommand)
     def execute_data_fetch(self, command: DataFetchCommand):
@@ -846,17 +789,45 @@ class GRPOTrainer(Trainer):
             )
 
         assert self.replica_name == command.replica_name
-        self.repilca_batch_for_this_step = command.items_count
-        self.train_step = command.global_step
-        self.total_steps = command.total_steps
-        self.remain_samples_num = command.remain_samples_num
-        self.train()
-        self.train_ack()
-        logger.debug(f"[Policy] Train ack sent for global step {command.global_step}.")
-        return True
+        self.replica_batch_for_this_step = command.items_count
 
-    @Trainer.register_policy_command_handler(AllReduceCommand)
-    def execute_all_reduce(self, command: AllReduceCommand = None):
+        if self.replica_batch_for_this_step > 0:
+            report_data = self.train(
+                current_step=command.global_step,
+                total_steps=command.total_steps,
+                remain_samples_num=command.remain_samples_num,
+            )
+        else:
+            report_data = {}
+            logger.info(
+                f"[Policy] No data to fetch for global step {command.global_step}, skip this step."
+            )
+
+        # Train ACK
+        if is_master_rank(self.parallel_dims, self.global_rank):
+            try:
+                make_request_with_retry(
+                    partial(
+                        requests.post,
+                        json={
+                            "replica_name": self.replica_name,
+                            "weight_step": command.global_step,
+                            "profile_finished": self.profiler.check_finished(),
+                            "report_data": report_data,
+                        },
+                    ),
+                    self.get_alternative_urls(COSMOS_API_POLICY_TRAIN_ACK_SUFFIX),
+                    max_retries=constant.COSMOS_HTTP_RETRY_CONFIG.max_retries,
+                )
+            except Exception as e:
+                raise RuntimeError(
+                    f"[Policy] Failed in in send train ack to controller after retries {e}."
+                )
+
+        logger.debug(f"[Policy] Train ack sent for global step {command.global_step}.")
+        return command.replica_should_stop()
+
+    def execute_all_reduce(self):
         """
         # Add nccl allreduce operations for all parameters and necessary states.
         """
@@ -883,16 +854,12 @@ class GRPOTrainer(Trainer):
                 )
         self.optimizers.step()
         self.lr_schedulers.step()
-        logger.debug(
-            f"[Policy] Optimization step {self.optimize_step + 1} at train step {self.train_step + 1} finished."
-        )
-        self.optimize_step += 1
         self.optimizers.zero_grad()
         return True
 
     async def fetch_command(self):
         # assert self.global_rank == 0, "Only rank 0 can fetch command"
-        while not self.shutdown_background_task_event.is_set():
+        while not self.shutdown_signal.is_set():
             # TODO(zjx): will remove separate BuildMeshCommand, and here only fetch other commands
             if self.global_rank == 0:
                 # rank 0 will get command from redis
@@ -903,19 +870,13 @@ class GRPOTrainer(Trainer):
                         self.replica_name
                     )
                 except Exception as e:
-                    logger.error(
-                        f"Failed to get commands : {e} at replica {self.replica_name}"
+                    logger.debug(
+                        f"Failed to get commands : {e} at replica {self.replica_name}, wait for next round"
                     )
-                    raise e
                 try:
-                    encountered_stop = False
                     for x in commands:
                         command = Command.depack(x)
-                        if isinstance(command, StopCommand):
-                            encountered_stop = True
-                            # broadcast the stop command to all other ranks to let them exit this loop
-                            cmd = self.kv_store.broadcast_command(command, src=0)
-                        elif isinstance(command, BuildMeshCommand):
+                        if isinstance(command, BuildMeshCommand):
                             """ directly push the buildmesh command to the nccl comm, will not block main thread """
                             # broadcast the buildmesh command to all ranks
                             cmd = self.kv_store.broadcast_command(command, src=0)
@@ -925,9 +886,6 @@ class GRPOTrainer(Trainer):
                             self.inter_policy_nccl.push_cmd(cmd)
                             continue
                         self.fetch_command_buffer.put_nowait(command)
-                    if encountered_stop:
-                        logger.info("[Policy] Stop command received. Exiting...")
-                        break
                 except Exception as e:
                     logger.error(e)
                     raise e
@@ -935,28 +893,17 @@ class GRPOTrainer(Trainer):
             else:
                 try:
                     bmcmd = self.kv_store.broadcast_command(None, src=0)
-                    if isinstance(bmcmd, StopCommand):
-                        logger.info("[Policy] Stop command received. Exiting...")
-                        # Stop command received from rank 0, means exiting the whole program, so break to exit the loop
-                        break
-                    assert isinstance(
-                        bmcmd, BuildMeshCommand
-                    ), "Only buildmesh command is supported"
-                    self.is_master_replica = (
-                        bmcmd.replica_name_to_rank[self.replica_name] == 0
-                    )
-                    self.inter_policy_nccl.push_cmd(bmcmd)
+                    if bmcmd:
+                        assert isinstance(
+                            bmcmd, BuildMeshCommand
+                        ), "Only buildmesh command is supported"
+                        self.is_master_replica = (
+                            bmcmd.replica_name_to_rank[self.replica_name] == 0
+                        )
+                        self.inter_policy_nccl.push_cmd(bmcmd)
                 except Exception as e:
                     logger.error(f"Failed to broadcast on slave workers: {e}")
                     raise e
-
-    @Trainer.register_policy_command_handler(StopCommand)
-    def execute_stop(self, command):
-        logger.info("[Policy] Stop command received. Exiting...")
-
-        self.handle_shutdown()
-
-        return True
 
     def execute_command(self, command: Command):
         logger.debug(f"[Policy] Process command {command._serialize()}")
@@ -964,11 +911,11 @@ class GRPOTrainer(Trainer):
         handler = self.get_policy_command_handler(type(command))
         if handler is None:
             raise Exception(f"No such command supoorted in policy {command}")
-        command_done = handler(self, command)
+        should_abort = handler(self, command)
         logger.debug(
-            f"[Policy] Command {command._serialize()} executed: {command_done}"
+            f"[Policy] Command {command._serialize()} executed with abort: {should_abort}"
         )
-        return command_done
+        return should_abort
 
     def broadcast_command(self):
         command = []
@@ -1017,19 +964,30 @@ class GRPOTrainer(Trainer):
                 name="fetch_rollouts_thread",
             ).start()
 
-        while not self.shutdown_background_task_event.is_set():
+        abort = False
+        while True:
+            abort_at_this_round = abort
+            if abort_at_this_round:
+                # Wait 30s to make sure the final potential P->R is received to finalize the Rollouts
+                time.sleep(30)
+
             self.broadcast_command()
             while len(self.command_buffer.queue) > 0:
                 cmd = self.command_buffer.get_nowait()
-                assert self.execute_command(cmd)
+                abort = self.execute_command(cmd) or abort
+
+            if abort_at_this_round:
+                break
         logger.info("[Policy] Main loop finished. Shutdown background task event set.")
+        self.train_stream.synchronize()
+        self.handle_shutdown()
 
     def dispatch_rollouts(self):
         rollouts = [[]]
         scattered_rollouts = [[] for _ in range(self.world_size)]
         if self.global_rank == 0:
             batch_for_this_step = (
-                self.repilca_batch_for_this_step
+                self.replica_batch_for_this_step
                 // self.dp_world_size
                 * self.dp_world_size
             )
@@ -1107,7 +1065,9 @@ class GRPOTrainer(Trainer):
         else:
             return False, 0.0
 
-    def train(self):
+    def train(
+        self, current_step: int, total_steps: int, remain_samples_num: int
+    ) -> Dict[str, Any]:
         pp_last_stage = (
             self.parallel_dims.pp_coord[0] == self.parallel_dims.pp_coord[1] - 1
         )
@@ -1135,13 +1095,13 @@ class GRPOTrainer(Trainer):
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         logger.debug("[Policy] Prepare training data.")
-        rollouts: List[Dict] = self.dispatch_rollouts()
+        rollouts: List[Rollout] = self.dispatch_rollouts()
 
-        payloads_list = [rollout["payload"] for rollout in rollouts]
-        completions_list = [rollout["completion"] for rollout in rollouts]
-        advantages_list = [rollout["advantage"] for rollout in rollouts]
+        payloads_list = [rollout.payload for rollout in rollouts]
+        completions_list = [rollout.completion for rollout in rollouts]
+        advantages_list = [rollout.advantage for rollout in rollouts]
         n_ignore_prefix_tokens_list = [
-            rollout["n_ignore_prefix_tokens"] for rollout in rollouts
+            rollout.n_ignore_prefix_tokens for rollout in rollouts
         ]
         processed_samples: List[Any] = [
             self.data_packer.get_policy_input(
@@ -1428,16 +1388,13 @@ class GRPOTrainer(Trainer):
                                     loss_sum += loss.item()
                                     loss_count += 1
                                     kl_loss_sum += kl_loss.item()
-                            logger.debug(
-                                f"[Policy] Minibatch backward step {self.mini_step + 1} at train step {self.train_step + 1} finished."
-                            )
                             self.mini_step += 1
                             local_mini_step += 1
                         self.execute_all_reduce()
         self.old_per_token_logps = []
         self.ref_per_token_logps = []
         end_event.record()
-        self.train_event_queue.append((start_event, end_event, self.train_step))
+        self.train_event_queue.append((start_event, end_event, current_step))
 
         loss = (loss_sum / loss_count) if loss_count > 0 else loss_sum
         kl_loss = (kl_loss_sum / loss_count) if loss_count > 0 else kl_loss_sum
@@ -1460,11 +1417,12 @@ class GRPOTrainer(Trainer):
             if self.config.train.train_policy.kl_beta != 0.0:
                 global_avg_kl_loss = global_max_kl_loss = kl_loss.item()  # noqa: F841
 
+        report_data = {}
         if self.config.logging.logger:
             if is_master_rank(self.parallel_dims, self.global_rank):
-                report_data = {"train_step": self.train_step}
+                report_data = {"train_step": current_step}
                 # Calculate the last iteration time
-                if self.train_step > 1 and len(self.train_event_queue) > 0:
+                if current_step > 1 and len(self.train_event_queue) > 0:
                     assert self.train_event_queue[0][1].query()
                     last_iter_start_event, last_iter_end_event, last_iter_step = (
                         self.train_event_queue.popleft()
@@ -1493,49 +1451,48 @@ class GRPOTrainer(Trainer):
                     )
                     for k, v in mfu.items():
                         report_data[f"train/{k}"] = v
-                self.report_data = report_data
-
         # checkpointing
         if self.is_master_replica and (
             (
                 self.config.train.ckpt.enable_checkpoint
-                and self.train_step % self.config.train.ckpt.save_freq == 0
-                and self.train_step > 0
+                and current_step % self.config.train.ckpt.save_freq == 0
+                and current_step > 0
             )
             or (
-                self.config.train.ckpt.enable_checkpoint
-                and self.train_step == self.total_steps
+                self.config.train.ckpt.enable_checkpoint and current_step == total_steps
             )
         ):
             if self.config.train.ckpt.export_safetensors:
                 logger.info(
-                    f"[Policy] Saving huggingface checkpoint at step {self.train_step} to {self.config.train.output_dir}..."
+                    f"[Policy] Saving huggingface checkpoint at step {current_step} to {self.config.train.output_dir}..."
                 )
                 self.export_safetensors(
                     output_dir=self.config.train.output_dir,
                     rel_path=os.path.join(
                         "safetensors",
-                        f"step_{self.train_step}",
+                        f"step_{current_step}",
                     ),
                     trainable_only=False,
-                    is_final=self.train_step == self.total_steps,
+                    is_final=current_step == total_steps,
                 )
-            logger.info(
-                f"[Policy] Saving cosmos checkpoint at step {self.train_step}..."
-            )
+            logger.info(f"[Policy] Saving cosmos checkpoint at step {current_step}...")
             self.ckpt_manager.save_checkpoint(
                 model=self.model,
                 optimizer=self.optimizers,
                 scheduler=self.lr_schedulers,
-                step=self.train_step,
-                total_steps=self.total_steps,
-                remain_samples_num=self.remain_samples_num,
-                is_final=self.train_step == self.total_steps,
+                step=current_step,
+                total_steps=total_steps,
+                **{
+                    "remain_samples_num": remain_samples_num,
+                    "is_final": current_step == total_steps,
+                },
             )
-            self.ckpt_manager.save_check(step=self.train_step)
+            self.ckpt_manager.save_check(step=current_step)
 
         # For profiling
         self.profiler.step()
+
+        return report_data
 
     @property
     def pp_loss_fn(self):

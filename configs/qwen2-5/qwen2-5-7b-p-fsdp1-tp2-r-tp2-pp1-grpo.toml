@@ -20,6 +20,15 @@ fsdp_offload = false
 fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 8
 sync_weight_interval = 1
+enable_validation = true
+validation_step = 16
+
+[validation]
+temperature = 0.0
+max_response_length = 2048
+dataset.name = "openai/gsm8k"
+dataset.subset = "main"
+dataset.split = "test"
 
 [rollout]
 gpu_memory_utilization = 0.7
@@ -28,6 +37,7 @@ max_response_length = 2048
 n_generation = 16
 batch_size = 1
 quantization = "none"
+val_batch_size = 16
 
 
 [policy]
@@ -42,11 +52,11 @@ experiment_name = "None"
 
 [train.train_policy]
 type = "grpo"
-dataset.name = "JiaxinTsao/math_examples"
-prompt_column_name = "prompt"
-response_column_name = "result"
-reward_function = "boxed_math"
-dataset.train_split="train"
+dataset.name = "openai/gsm8k"
+prompt_column_name = "question"
+response_column_name = "answer"
+reward_function = "gsm8k"
+dataset.split="train"
 temperature = 0.9
 epsilon_low = 0.2
 epsilon_high = 0.2

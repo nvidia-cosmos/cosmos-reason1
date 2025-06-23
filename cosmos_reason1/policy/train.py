@@ -13,6 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
+if os.environ.get("TORCH_CPP_LOG_LEVEL") is None:
+    os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
+
 from cosmos_reason1.utils.logging import logger
 from cosmos_reason1.utils.parallelism import ParallelDims
 from cosmos_reason1.utils.distributed import (

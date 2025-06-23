@@ -44,7 +44,7 @@ class HandshakeAcceptorRequest(BaseModel):
 
 class TrainAckRequest(BaseModel):
     replica_name: str
-    iteration_count: int
+    weight_step: int
     # For profiling
     profile_finished: bool = False
     # For logger report data
@@ -55,12 +55,22 @@ class WeightReadyRequest(BaseModel):
     replica_name: str
 
 
+class ValidationReportRequest(BaseModel):
+    src_replica_name: str
+    validation_step: int
+    prompt_idxs: List[int]
+    payloads: List[Any]
+    completions: List[List[str]]
+    is_end: bool = False
+    reference_answer: Optional[str] = None
+
+
 class RolloutRequest(BaseModel):
     src_replica_name: str
     prompt_idxs: List[int]
     payloads: List[Any]
     completions: List[List[str]]
-    extra_info: Optional[Dict[str, Any]] = None
+    is_end: bool = False
     reference_answer: Optional[str] = None
 
 

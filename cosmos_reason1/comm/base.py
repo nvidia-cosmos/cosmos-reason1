@@ -170,16 +170,33 @@ class CommMixin:
 
         dist.barrier()  # wait all the atoms registered.
 
+        self.shutdown_signal = threading.Event()
+
         if self.global_rank == 0:
             logger.info(
                 f"{self.role} Replica {self.replica_name} registered to controller"
             )
+            # Start the thread with daemon=True, so it will exit when the main program exits.
+            thread = threading.Thread(
+                target=self.heartbeat_trigger,
+                args=(self.shutdown_signal,),
+                daemon=True,
+            )
+            thread.start()
+            self.heartbeat_thread = thread
+        else:
+            self.heartbeat_thread = None
+
         self._is_registered = True
         atexit.register(self.unregister_from_controller)
 
     def unregister_from_controller(self):
         if not hasattr(self, "_is_registered"):
             return
+        elif hasattr(self, "_is_unregistered"):
+            return
+        else:
+            self._is_unregistered = True
         self._is_registered = False
         # let only rank == 0 send the unregister request
         if self.global_rank == 0:
@@ -220,12 +237,6 @@ class CommMixin:
 
     def heartbeat_trigger(self, shutdown_signal: threading.Event):
         while True:
-            if shutdown_signal.is_set():
-                logger.info(
-                    "[Policy] Heartbeat thread is stopped since the shutdown signal is set."
-                )
-                break
-
             try:
                 make_request_with_retry(
                     partial(
@@ -239,20 +250,23 @@ class CommMixin:
                 )
             except Exception as e:
                 logger.error(f"Failed to send heartbeat to controller: {e}")
-            time.sleep(constant.COSMOS_HEARTBEAT_SEND_INTERVAL)
 
-    def start_heartbeat(self, shutdown_signal: threading.Event):
-        if self.global_rank == 0:
-            # Start the thread with daemon=True, so it will exit when the main program exits.
-            thread = threading.Thread(
-                target=self.heartbeat_trigger,
-                args=(shutdown_signal,),
-                daemon=True,
-            )
-            thread.start()
-            return thread
-        else:
-            return None
+            # If the heartbeat interval is greater than 1, we need to check the shutdown signal every second
+            # for faster shutdown check
+            if constant.COSMOS_HEARTBEAT_SEND_INTERVAL > 1:
+                early_break = False
+                for _ in range(int(constant.COSMOS_HEARTBEAT_SEND_INTERVAL)):
+                    if shutdown_signal.is_set():
+                        early_break = True
+                        break
+                    else:
+                        time.sleep(1)
+                if early_break:
+                    break
+            else:
+                time.sleep(constant.COSMOS_HEARTBEAT_SEND_INTERVAL)
+                if shutdown_signal.is_set():
+                    break
 
     def get_alternative_urls(self, suffix: str):
         # Get the alternative URLs for the given suffix

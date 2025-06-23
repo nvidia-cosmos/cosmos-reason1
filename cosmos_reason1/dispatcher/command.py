@@ -19,16 +19,9 @@ import uuid
 from abc import ABC
 from strenum import StrEnum
 import msgpack
-
 from cosmos_reason1.dispatcher.replica import Replica
 from cosmos_reason1.dispatcher.protocol import Role
-from cosmos_reason1.dispatcher.status import RolloutStatusManager, RolloutStatus
 from cosmos_reason1.utils.redis_stream import RedisStreamHandler
-
-
-class ProcessPhase(StrEnum):
-    TRAIN = "train"
-    VALIDATE = "validate"
 
 
 class CommandType(StrEnum):
@@ -51,10 +44,15 @@ class CommandScope:
 
 
 class Command(ABC):
-    uuid: str
+    uuid_value: str
 
-    def __init__(self, uuid: str, scope: CommandScope, command_type: CommandType):
-        self.uuid = uuid
+    def __init__(
+        self,
+        scope: CommandScope,
+        command_type: CommandType,
+        uuid_value: Optional[str] = None,
+    ):
+        self.uuid_value = uuid_value if uuid_value is not None else str(uuid.uuid4())
         self.scope = scope
         self.command_type = command_type
 
@@ -64,10 +62,6 @@ class Command(ABC):
 
     def pack(self):
         return msgpack.packb(self.__dict__)
-
-    @classmethod
-    def new_uuid(cls):
-        return str(uuid.uuid4())
 
     @classmethod
     def deserialize(cls, dict_v):
@@ -86,15 +80,9 @@ class Command(ABC):
             sub_cls = RolloutToRolloutBroadcastCommand
         elif dict_v["command_type"] == CommandType.DATA_FETCH:
             sub_cls = DataFetchCommand
-        elif dict_v["command_type"] == CommandType.ALL_REDUCE:
-            sub_cls = AllReduceCommand
-        elif dict_v["command_type"] == CommandType.STOP:
-            sub_cls = StopCommand
-        elif dict_v["command_type"] == CommandType.VALIDATE:
-            sub_cls = ValidateCommand
 
         if sub_cls is None:
-            return DummyCommand
+            raise ValueError(f"Unknown command type: {dict_v['command_type']}")
         else:
             return sub_cls.from_dict(dict_v)
 
@@ -108,59 +96,35 @@ class Command(ABC):
         raise NotImplementedError("from_dict is not implemented for Base Command")
 
 
-class DummyCommand(Command):
-    def __int__(self):
-        super().__init__("", CommandScope.LOCAL, CommandType.DUMMY)
-
-
-class StopCommand(Command):
-    def __init__(self, replica_name: str, uuid: str):
-        super().__init__(uuid, CommandScope.LOCAL, CommandType.STOP)
-        self.replica_name = replica_name
-
-    replica_name: Optional[str] = None
-
-    @classmethod
-    def trigger(cls, replica: Replica, redis_handler: RedisStreamHandler):
-        cmd = cls(replica.name, cls.new_uuid())
-        redis_handler.publish_command(cmd.pack(), replica.name)
-
-    @classmethod
-    def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["replica_name"],
-            dict_v["uuid"],
-        )
-
-
 class WeightResumeCommand(Command):
-    def __init__(self, replica_name: str, uuid: str):
-        super().__init__(uuid, CommandScope.LOCAL, CommandType.WEIGHT_RESUME)
+    def __init__(self, replica_name: str, **kwargs):
+        kwargs["scope"] = CommandScope.LOCAL
+        kwargs["command_type"] = CommandType.WEIGHT_RESUME
+        super().__init__(**kwargs)
         self.replica_name = replica_name
 
-    replica_name: Optional[str] = None
+    replica_name: str
 
     @classmethod
     def trigger(cls, replica: Replica, redis_handler: RedisStreamHandler):
         assert (
             replica.role == Role.POLICY
         ), "WeightResumeCommand can only be triggered on policy replicas"
-        cmd = cls(replica.name, cls.new_uuid())
+        cmd = cls(replica.name)
         redis_handler.publish_command(cmd.pack(), replica.name)
         # initial weight step
-        replica.weight_step = 0
+        replica.weights_loaded_in_view_of_command = True
 
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["replica_name"],
-            dict_v["uuid"],
-        )
+        return cls(**dict_v)
 
 
 class BuildMeshCommand(Command):
-    def __init__(self, replica_name_to_rank: Dict[str, int], uuid: str):
-        super().__init__(uuid, CommandScope.GLOBAL, CommandType.BUILD_MESH)
+    def __init__(self, replica_name_to_rank: Dict[str, int], **kwargs):
+        kwargs["scope"] = CommandScope.GLOBAL
+        kwargs["command_type"] = CommandType.BUILD_MESH
+        super().__init__(**kwargs)
         self.replica_name_to_rank = replica_name_to_rank
 
     replica_name_to_rank: Dict[str, int]
@@ -171,22 +135,18 @@ class BuildMeshCommand(Command):
         assert all(
             replica.all_atoms_arrived for replica in replicas
         ), "All replicas must have arrived"
-        replica_name_to_rank = {}
+        replicas_to_rank = {}
         for replica in replicas:
-            replica_name_to_rank[replica.name] = index
+            replica.status.mesh_rank = index
+            replicas_to_rank[replica.name] = index
             index += 1
-        cmd = cls(replica_name_to_rank, cls.new_uuid())
+        cmd = cls(replicas_to_rank)
         for replica in replicas:
             redis_handler.publish_command(cmd.pack(), replica.name)
-            replica.in_mesh = True
-        return replica_name_to_rank
 
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["replica_name_to_rank"],
-            dict_v["uuid"],
-        )
+        return cls(**dict_v)
 
 
 class PolicyToPolicyBroadcastCommand(Command):
@@ -194,14 +154,14 @@ class PolicyToPolicyBroadcastCommand(Command):
     Only used for policy weight init during initialization. (After `WeightResumeCommand` on `src_replica_name`)
     """
 
-    def __init__(self, src_replica_name: str, dst_replica_names: List[str], uuid: str):
-        super().__init__(
-            uuid, CommandScope.GLOBAL, CommandType.POLICY_TO_POLICY_BROADCAST
-        )
+    def __init__(self, src_replica_name: str, dst_replica_names: List[str], **kwargs):
+        kwargs["scope"] = CommandScope.GLOBAL
+        kwargs["command_type"] = CommandType.POLICY_TO_POLICY_BROADCAST
+        super().__init__(**kwargs)
         self.src_replica_name = src_replica_name
         self.dst_replica_names = dst_replica_names
 
-    src_replica_name: Optional[str] = None
+    src_replica_name: str
     dst_replica_names: List[str]
 
     @classmethod
@@ -212,22 +172,14 @@ class PolicyToPolicyBroadcastCommand(Command):
         redis_handler: RedisStreamHandler,
     ):
         # dst_replicas will contains the src_replica
-        cmd = cls(
-            src_replica.name, [replica.name for replica in dst_replicas], cls.new_uuid()
-        )
+        cmd = cls(src_replica.name, [replica.name for replica in dst_replicas])
         for replica in dst_replicas:
             redis_handler.publish_command(cmd.pack(), replica.name)
             replica.weights_loaded_in_view_of_command = True
 
-            replica.weight_step = src_replica.weight_step
-
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["src_replica_name"],
-            dict_v["dst_replica_names"],
-            dict_v["uuid"],
-        )
+        return cls(**dict_v)
 
 
 class PolicyToPolicyUnicastCommand(Command):
@@ -235,13 +187,15 @@ class PolicyToPolicyUnicastCommand(Command):
     Used for policy dynamic scaling.
     """
 
-    def __init__(self, src_replica_name: str, dst_replica_name: str, uuid: str):
-        super().__init__(uuid, CommandScope.LOCAL, CommandType.POLICY_TO_POLICY_UNICAST)
+    def __init__(self, src_replica_name: str, dst_replica_name: str, **kwargs):
+        kwargs["scope"] = CommandScope.LOCAL
+        kwargs["command_type"] = CommandType.POLICY_TO_POLICY_UNICAST
+        super().__init__(**kwargs)
         self.src_replica_name = src_replica_name
         self.dst_replica_name = dst_replica_name
 
-    src_replica_name: Optional[str] = None
-    dst_replica_name: Optional[str] = None
+    src_replica_name: str
+    dst_replica_name: str
 
     @classmethod
     def trigger(
@@ -250,20 +204,14 @@ class PolicyToPolicyUnicastCommand(Command):
         dst_replica: Replica,
         redis_handler: RedisStreamHandler,
     ):
-        cmd = cls(src_replica.name, dst_replica.name, cls.new_uuid())
+        cmd = cls(src_replica.name, dst_replica.name)
         redis_handler.publish_command(cmd.pack(), src_replica.name)
         redis_handler.publish_command(cmd.pack(), dst_replica.name)
         dst_replica.weights_loaded_in_view_of_command = True
 
-        dst_replica.weight_step = src_replica.weight_step
-
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["src_replica_name"],
-            dict_v["dst_replica_name"],
-            dict_v["uuid"],
-        )
+        return cls(**dict_v)
 
 
 class PolicyToRolloutUnicastCommand(Command):
@@ -273,7 +221,7 @@ class PolicyToRolloutUnicastCommand(Command):
         - weight initialization of first rollout replica.
     """
 
-    do_weight_sync_check_flag: bool = True
+    _do_weight_sync_check_flag: bool = True
 
     def __init__(
         self,
@@ -281,23 +229,29 @@ class PolicyToRolloutUnicastCommand(Command):
         dst_replica_name: str,
         src_replica_size: int,
         dst_replica_size: int,
-        uuid: str,
         do_weight_sync_check: bool = False,
+        weight_step: Optional[int] = None,
+        total_steps: Optional[int] = None,
+        **kwargs,
     ):
-        super().__init__(
-            uuid, CommandScope.LOCAL, CommandType.POLICY_TO_ROLLOUT_UNICAST
-        )
+        kwargs["scope"] = CommandScope.LOCAL
+        kwargs["command_type"] = CommandType.POLICY_TO_ROLLOUT_UNICAST
+        super().__init__(**kwargs)
         self.src_replica_name = src_replica_name
         self.dst_replica_name = dst_replica_name
         self.src_replica_size = src_replica_size
         self.dst_replica_size = dst_replica_size
         self.do_weight_sync_check = do_weight_sync_check
+        self.weight_step = weight_step
+        self.total_steps = total_steps
 
-    src_replica_name: Optional[str] = None
-    dst_replica_name: Optional[str] = None
-    src_replica_size: Optional[int] = None
-    dst_replica_size: Optional[int] = None
-    do_weight_sync_check: Optional[bool] = None
+    src_replica_name: str
+    dst_replica_name: str
+    src_replica_size: int
+    dst_replica_size: int
+    do_weight_sync_check: bool
+    weight_step: Optional[int]
+    total_steps: Optional[int]
 
     @classmethod
     def trigger(
@@ -306,41 +260,29 @@ class PolicyToRolloutUnicastCommand(Command):
         dst_replica: Replica,  # Rollout Replica
         src_replica_size: int,
         dst_replica_size: int,
+        weight_step: Optional[int],
+        total_steps: Optional[int],
         redis_handler: RedisStreamHandler,
-        optimize_step: int,
-        status_manager: RolloutStatusManager,
     ):
         cmd = cls(
             src_replica.name,
             dst_replica.name,
             src_replica_size,
             dst_replica_size,
-            cls.new_uuid(),
-            cls.do_weight_sync_check_flag,
+            cls._do_weight_sync_check_flag,
+            weight_step,
+            total_steps,
         )
         redis_handler.publish_command(cmd.pack(), src_replica.name)
         redis_handler.publish_command(cmd.pack(), dst_replica.name)
-
-        dst_replica.weight_step = optimize_step
-        status_manager.set_optimize_step(dst_replica.name, optimize_step)
-        # set the weight ready.
-        status_manager.set_status(dst_replica.name, RolloutStatus.READY)
-
         dst_replica.weights_loaded_in_view_of_command = True
 
-        if cls.do_weight_sync_check_flag:
-            cls.do_weight_sync_check_flag = False
+        if cls._do_weight_sync_check_flag:
+            cls._do_weight_sync_check_flag = False
 
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["src_replica_name"],
-            dict_v["dst_replica_name"],
-            dict_v["src_replica_size"],
-            dict_v["dst_replica_size"],
-            dict_v["uuid"],
-            dict_v["do_weight_sync_check"],
-        )
+        return cls(**dict_v)
 
 
 class RolloutToRolloutBroadcastCommand(Command):
@@ -348,47 +290,59 @@ class RolloutToRolloutBroadcastCommand(Command):
     Used for rollout weight update.(After `PolicyToRolloutUnicastCommand` on `src_replica_name`)
     """
 
-    def __init__(self, src_replica_name: str, dst_replica_names: List[str], uuid: str):
-        super().__init__(
-            uuid, CommandScope.GLOBAL, CommandType.ROLLOUT_TO_ROLLOUT_BROADCAST
-        )
+    def __init__(
+        self,
+        src_replica_name: str,
+        dst_replica_names: List[str],
+        weight_step: Optional[int],
+        total_steps: Optional[int],
+        **kwargs,
+    ):
+        kwargs["scope"] = CommandScope.GLOBAL
+        kwargs["command_type"] = CommandType.ROLLOUT_TO_ROLLOUT_BROADCAST
+        super().__init__(**kwargs)
         self.src_replica_name = src_replica_name
         self.dst_replica_names = dst_replica_names
+        self.weight_step = weight_step
+        self.total_steps = total_steps
 
-    src_replica_name: Optional[str] = None
+    src_replica_name: str
     dst_replica_names: List[str]
+    weight_step: Optional[int]
+    total_steps: Optional[int]
 
     @classmethod
     def trigger(
         cls,
         src_replica: Replica,
         dst_replicas: List[Replica],
+        weight_step: Optional[int],
+        total_steps: Optional[int],
         redis_handler: RedisStreamHandler,
-        optimize_step: int,
-        status_manager: RolloutStatusManager,
     ):
         # dst_replicas will contains the src_replica
         if not src_replica.in_mesh:
             return
         cmd = cls(
-            src_replica.name, [replica.name for replica in dst_replicas], cls.new_uuid()
+            src_replica.name,
+            [replica.name for replica in dst_replicas],
+            weight_step,
+            total_steps,
         )
         for replica in dst_replicas:
             if not replica.in_mesh:
                 continue
             redis_handler.publish_command(cmd.pack(), replica.name)
             replica.weights_loaded_in_view_of_command = True
-            replica.weight_step = optimize_step
-            status_manager.set_optimize_step(replica.name, optimize_step)
-            status_manager.set_status(replica.name, RolloutStatus.READY)
+
+    def replica_should_stop(self):
+        if self.weight_step is not None and self.total_steps is not None:
+            return self.weight_step >= self.total_steps
+        return False
 
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["src_replica_name"],
-            dict_v["dst_replica_names"],
-            dict_v["uuid"],
-        )
+        return cls(**dict_v)
 
 
 class DataFetchCommand(Command):
@@ -405,17 +359,19 @@ class DataFetchCommand(Command):
         global_step: int,
         total_steps: int,
         remain_samples_num: int,
-        uuid: str,
         # For profiling
-        do_profile: bool,
-        active_steps: int,
-        rank_filter: List[int],
-        record_shape: bool,
-        profile_memory: bool,
-        with_stack: bool,
-        with_modules: bool,
+        do_profile: Optional[bool] = None,
+        active_steps: Optional[int] = None,
+        rank_filter: Optional[List[int]] = None,
+        record_shape: Optional[bool] = None,
+        profile_memory: Optional[bool] = None,
+        with_stack: Optional[bool] = None,
+        with_modules: Optional[bool] = None,
+        **kwargs,
     ):
-        super().__init__(uuid, CommandScope.LOCAL, CommandType.DATA_FETCH)
+        kwargs["scope"] = CommandScope.LOCAL
+        kwargs["command_type"] = CommandType.DATA_FETCH
+        super().__init__(**kwargs)
         self.replica_name = replica_name
         self.items_count = items_count
         self.global_step = global_step
@@ -431,27 +387,27 @@ class DataFetchCommand(Command):
         self.with_stack = with_stack
         self.with_modules = with_modules
 
-    replica_name: Optional[str] = None
-    items_count: Optional[int] = None
-    global_step: Optional[int] = None
-    total_steps: Optional[int] = None
-    remain_samples_num: Optional[int] = None
+    replica_name: str
+    items_count: int
+    global_step: Optional[int]
+    total_steps: Optional[int]
+    remain_samples_num: int
 
-    do_profile: Optional[bool] = None
-    active_steps: Optional[int] = None
-    rank_filter: Optional[List[int]] = None
-    record_shape: Optional[bool] = None
-    profile_memory: Optional[bool] = None
-    with_stack: Optional[bool] = None
-    with_modules: Optional[bool] = None
+    do_profile: bool
+    active_steps: int
+    rank_filter: List[int]
+    record_shape: bool
+    profile_memory: bool
+    with_stack: bool
+    with_modules: bool
 
     @classmethod
     def trigger(
         cls,
         replica: Replica,
         items_count: int,
-        global_step: int,
-        total_steps: int,
+        global_step: Optional[int],
+        total_steps: Optional[int],
         remain_samples_num: int,
         redis_handler: RedisStreamHandler,
     ):
@@ -461,7 +417,6 @@ class DataFetchCommand(Command):
             global_step,
             total_steps,
             remain_samples_num,
-            cls.new_uuid(),
             replica.sub_profiler_config.do_profile,
             replica.sub_profiler_config.active_steps,
             replica.sub_profiler_config.rank_filter,
@@ -472,77 +427,14 @@ class DataFetchCommand(Command):
         )
         redis_handler.publish_command(cmd.pack(), replica.name)
 
-    @classmethod
-    def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["replica_name"],
-            dict_v["items_count"],
-            dict_v["global_step"],
-            dict_v["total_steps"],
-            dict_v["remain_samples_num"],
-            dict_v["uuid"],
-            # For profiling
-            dict_v["do_profile"],
-            dict_v["active_steps"],
-            dict_v["rank_filter"],
-            dict_v["record_shape"],
-            dict_v["profile_memory"],
-            dict_v["with_stack"],
-            dict_v["with_modules"],
-        )
-
-
-class AllReduceCommand(Command):
-    """
-    Used to perform all-reduce operation.
-    replica_name_to_rank: Dict[str, int], Mapping of replica names to ranks.
-    """
-
-    def __init__(self, replica_name_to_rank: Dict[str, int], uuid: str):
-        super().__init__(uuid, CommandScope.LOCAL, CommandType.ALL_REDUCE)
-        self.replica_name_to_rank = replica_name_to_rank
-
-    replica_name_to_rank: Dict[str, int]
-
-    @classmethod
-    def trigger(
-        cls, replica_name_to_rank: Dict[str, int], redis_handler: RedisStreamHandler
-    ):
-        cmd = cls(replica_name_to_rank, cls.new_uuid())
-        for replica_name, _ in replica_name_to_rank.items():
-            redis_handler.publish_command(cmd.pack(), replica_name)
+    def replica_should_stop(self):
+        if self.global_step is not None and self.total_steps is not None:
+            return self.global_step >= self.total_steps
+        return False
 
     @classmethod
     def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["replica_name_to_rank"],
-            dict_v["uuid"],
-        )
-
-
-class ValidateCommand(Command):
-    """
-    Used to validate the command.
-    This command triggers validation on the rollout replica.
-    """
-
-    replica_name: Optional[str] = None
-
-    def __init__(self, replica_name: str, uuid: str):
-        super().__init__(uuid, CommandScope.LOCAL, CommandType.VALIDATE)
-        self.replica_name = replica_name
-
-    @classmethod
-    def trigger(cls, replica: Replica, redis_handler: RedisStreamHandler):
-        cmd = cls(replica.name, cls.new_uuid())
-        redis_handler.publish_command(cmd.pack(), replica.name)
-
-    @classmethod
-    def from_dict(cls, dict_v: Dict):
-        return cls(
-            dict_v["replica_name"],
-            dict_v["uuid"],
-        )
+        return cls(**dict_v)
 
 
 class CommandRegistry:

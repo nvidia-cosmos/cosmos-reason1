@@ -64,13 +64,9 @@ class DatasetConfig:
         },
     )
 
-    train_split: Union[str, List[str]] = field(
+    split: Union[str, List[str]] = field(
         default_factory=list,
         metadata={"help": "A list of dataset splits to train"},
-    )
-
-    test_split: Union[str, List[str]] = field(
-        default="test", metadata={"help": "A list of Dataset split to test"}
     )
 
     test_size: Optional[Union[float, int]] = field(
@@ -539,7 +535,7 @@ class TrainingConfig:
         default=False,
         metadata={"help": "Enable validation during training."},
     )
-    validation_freq: int = field(
+    validation_step: int = field(
         default=20,
         metadata={
             "help": "Validation frequency during training, in terms of training steps",
@@ -711,13 +707,6 @@ class ValidationConfig:
         },
     )
 
-    reward_function: List[str] = field(
-        default_factory=lambda: ["single_choice"],
-        metadata={
-            "help": "A List of reward functions for the model used in validation. Currently support `single_choice`, `boxed_math`, and `format`. ",
-        },
-    )
-
     temperature: float = field(
         default=0.9, metadata={"help": "Temperature for sampling during validation."}
     )
@@ -770,6 +759,10 @@ class RolloutConfig:
 
     batch_size: int = skip_ui_field(
         default=1, metadata={"help": "Batch size for rollout."}
+    )
+    val_batch_size: Optional[int] = field(
+        default=None,
+        metadata={"help": "Batch size for rollout generation during validation."},
     )
 
     # not used yet.
@@ -926,23 +919,19 @@ class Config:
                 len(self.train.train_policy.reward_function) > 0
             ), "reward_function must be a list of reward functions"
 
-        if isinstance(self.train.train_policy.dataset.train_split, str):
-            self.train.train_policy.dataset.train_split = [
-                self.train.train_policy.dataset.train_split
+        if isinstance(self.train.train_policy.dataset.split, str):
+            self.train.train_policy.dataset.split = [
+                self.train.train_policy.dataset.split
             ]
-        if isinstance(self.train.train_policy.dataset.test_split, str):
-            self.train.train_policy.dataset.test_split = [
-                self.train.train_policy.dataset.test_split
+        if isinstance(self.train.train_policy.dataset.split, str):
+            self.train.train_policy.dataset.split = [
+                self.train.train_policy.dataset.split
             ]
 
         if self.train.train_policy.type == "grpo":
             # Handle for evaludation configuration.
-            if isinstance(self.validation.dataset.test_split, str):
-                self.validation.dataset.test_split = [
-                    self.validation.dataset.test_split
-                ]
-            if isinstance(self.validation.reward_function, str):
-                self.validation.reward_function = [self.validation.reward_function]
+            if isinstance(self.validation.dataset.split, str):
+                self.validation.dataset.split = [self.validation.dataset.split]
 
         if self.train.ckpt.upload_s3:
             if self.train.ckpt.upload_s3 not in ["final", "all"]:

@@ -39,15 +39,15 @@ class CosmosSFTDataset(Dataset):
         self.config = config
         self.tokenizer = tokenizer
 
-        if config.train.train_policy.dataset.train_split:
-            if isinstance(config.train.train_policy.dataset.train_split, list):
+        if config.train.train_policy.dataset.split:
+            if isinstance(config.train.train_policy.dataset.split, list):
                 dataset_list = []
-                for split_name in config.train.train_policy.dataset.train_split:
+                for split_name in config.train.train_policy.dataset.split:
                     dataset_list.append(self.dataset[split_name])
                 self.dataset = ConcatDataset(dataset_list)
             else:
-                assert isinstance(config.train.train_policy.dataset.train_split, str)
-                self.dataset = self.dataset[config.train.train_policy.dataset.train_split]
+                assert isinstance(config.train.train_policy.dataset.split, str)
+                self.dataset = self.dataset[config.train.train_policy.dataset.split]
 
         # get multi-modal files paths
         cosmos_cache_dir = os.environ.get(
@@ -116,8 +116,7 @@ if __name__ == "__main__":
     # Download HF dataset only on launcher worker
     dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
     # Prepare video files
-    util.prepare_cosmos_data(config=config, fps=FPS, max_pixels=MAX_PIXELS)
-
+    util.prepare_cosmos_data(dataset=config.train.train_policy.dataset, fps=FPS, max_pixels=MAX_PIXELS)
     launch_dispatcher(
         dataset=CosmosSFTDataset(dataset=dataset),
     )

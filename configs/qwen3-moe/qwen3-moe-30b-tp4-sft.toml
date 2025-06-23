@@ -35,10 +35,8 @@ experiment_name = "None"
 type = "sft"
 dataset.name = "LNTANOooo/sharegpt52k"
 dataset.subset = ""
-dataset.train_split = "train"
-dataset.test_split = "test"
+dataset.split = "train"
 conversation_column_name = "conversation"
-
 
 [train.ckpt]
 enable_checkpoint = true
