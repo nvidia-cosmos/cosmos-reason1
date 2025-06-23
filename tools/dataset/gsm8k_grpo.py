@@ -36,7 +36,7 @@ class GSM8kDataset(Dataset):
         '''
         self.config = config
         self.tokenizer = tokenizer
-        modelscope_dataset_if_enabled = modelscope_load_dataset('AI-ModelScope/gsm8k', subset_name='main', split='train')
+        modelscope_dataset_if_enabled = modelscope_load_dataset(config.train.train_policy.dataset.name, subset_name='main', split='train')
         if modelscope_dataset_if_enabled is None:
             self.dataset = load_dataset("openai/gsm8k", "main", split="train")
         else:

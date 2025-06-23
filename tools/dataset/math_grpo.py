@@ -35,7 +35,7 @@ class MathDataset(Dataset):
         '''
         self.config = config
         self.tokenizer = tokenizer
-        modelscope_dataset_if_enabled = modelscope_load_dataset('AI-ModelScope/MATH-lighteval', subset_name='main', split='train')
+        modelscope_dataset_if_enabled = modelscope_load_dataset(config.train.train_policy.dataset.name, subset_name="default", split='train')
         if modelscope_dataset_if_enabled is None:
             self.dataset = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default", split="train")
         else:

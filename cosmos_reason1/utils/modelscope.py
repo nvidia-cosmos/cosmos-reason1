@@ -125,6 +125,15 @@ def update_config_if_modelscope(loaded_config: Any):
         subset_name=loaded_config.train.train_policy.dataset.subset,
         revision=loaded_config.train.train_policy.dataset.revision,
     )
+
+    if loaded_config.validation.dataset.name:
+        loaded_config.validation.dataset.name = modelscope_download(
+            loaded_config.validation.dataset.name,
+            "dataset",
+            subset_name=loaded_config.validation.dataset.subset,
+            revision=loaded_config.validation.dataset.revision,
+        )
+
     return loaded_config
 
 
@@ -135,5 +144,9 @@ def modelscope_load_dataset(dataset_name: str, subset_name: str, split: str):
     if os.environ.get("COSMOS_USE_MODELSCOPE", False) in [True, "True", "true", "1"]:
         from modelscope.msdatasets import MsDataset
 
+        if os.path.exists(dataset_name):
+            from datasets import load_dataset
+
+            return load_dataset(dataset_name, subset_name, split=split)
         return MsDataset.load(dataset_name, subset_name=subset_name, split=split)
     return None

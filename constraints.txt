@@ -1,1 +1,2 @@
 nvidia-nccl-cu12==2.27.3
+datasets==2.21.0
