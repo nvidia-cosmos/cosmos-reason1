@@ -19,11 +19,11 @@ import copy
 import toml
 from torch.utils.data import Dataset, ConcatDataset
 from datasets import load_dataset
-from cosmos_reason1.dispatcher.run_web_panel import main as launch_dispatcher
-import cosmos_reason1.utils.util as util
-from cosmos_reason1.policy.config import Config
+from cosmos_rl.dispatcher.run_web_panel import main as launch_dispatcher
+import cosmos_rl.utils.util as util
+from cosmos_rl.policy.config import Config
 from transformers import AutoTokenizer 
-from cosmos_reason1.utils.util import basename_from_modelpath
+from cosmos_rl.utils.util import basename_from_modelpath
 
 FPS = 1
 MAX_PIXELS = 81920

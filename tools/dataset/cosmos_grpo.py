@@ -17,15 +17,15 @@ import os
 from typing import Optional, Any, List, Dict
 from torch.utils.data import Dataset, ConcatDataset, Subset
 from datasets import load_dataset
-from cosmos_reason1.dispatcher.run_web_panel import main as launch_dispatcher
-import cosmos_reason1.utils.util as util
-from cosmos_reason1.policy.config import Config
-from cosmos_reason1.dispatcher.algo.reward import single_choice_reward_fn, format_reward_fn
+from cosmos_rl.dispatcher.run_web_panel import main as launch_dispatcher
+import cosmos_rl.utils.util as util
+from cosmos_rl.policy.config import Config
+from cosmos_rl.dispatcher.algo.reward import single_choice_reward_fn, format_reward_fn
 from transformers import AutoTokenizer 
-from cosmos_reason1.utils.util import basename_from_modelpath
-from cosmos_reason1.dispatcher.data.packer.base import DataPacker
-from cosmos_reason1.dispatcher.data.packer.qwen2_5_vlm_data_packer import Qwen2_5_VLM_DataPacker
-from cosmos_reason1.utils.logging import logger
+from cosmos_rl.utils.util import basename_from_modelpath
+from cosmos_rl.dispatcher.data.packer.base import DataPacker
+from cosmos_rl.dispatcher.data.packer.qwen2_5_vlm_data_packer import Qwen2_5_VLM_DataPacker
+from cosmos_rl.utils.logging import logger
 import toml
 import argparse
 
