@@ -27,7 +27,7 @@ For the evaluation or inference, single GPU with at least 24GB memory is suffici
 apt-get update && apt-get install redis-server
 
 # Install cosmos-rl
-pip install git+https://github.com/nvidia-cosmos/cosmos-rl.git@v0.1.1#egg=cosmos_rl
+pip install git+https://github.com/nvidia-cosmos/cosmos-rl.git@v0.1.2#egg=cosmos_rl
 ```
 
 ### 📈 Monitor

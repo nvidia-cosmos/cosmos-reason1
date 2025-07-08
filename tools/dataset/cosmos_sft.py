@@ -14,28 +14,30 @@
 # limitations under the License.
 
 import os
-import argparse
 import copy
-import toml
 from torch.utils.data import Dataset, ConcatDataset
 from datasets import load_dataset
-from cosmos_rl.dispatcher.run_web_panel import main as launch_dispatcher
+from cosmos_rl.launcher.worker_entry import main as launch_worker
 import cosmos_rl.utils.util as util
 from cosmos_rl.policy.config import Config
-from transformers import AutoTokenizer 
 from cosmos_rl.utils.util import basename_from_modelpath
+from cosmos_rl.policy.config import Config as CosmosConfig
+from transformers import AutoTokenizer
+import argparse
+import toml
 
 FPS = 1
 MAX_PIXELS = 81920
+
 
 class CosmosSFTDataset(Dataset):
     def __init__(self, dataset: Dataset):
         self.dataset = dataset
 
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
-        '''
+        """
         Called by launcher after being mounted
-        '''
+        """
         self.config = config
         self.tokenizer = tokenizer
 
@@ -67,9 +69,7 @@ class CosmosSFTDataset(Dataset):
         mm_files_paths = {}
         for root, dirs, files in os.walk(video_clips_path):
             for file in files:
-                if file.endswith(
-                    (".mp4", ".avi", ".mov")
-                ):  # Common video extensions
+                if file.endswith((".mp4", ".avi", ".mov")):  # Common video extensions
                     mm_files_paths[file] = os.path.join(root, file)
         self.mm_files_paths = mm_files_paths
 
@@ -77,34 +77,32 @@ class CosmosSFTDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> tuple[str, str]:
-        '''
-            Return a tuple of (prompt, reference answer)
-        '''
+        """
+        Return a tuple of (prompt, reference answer)
+        """
         payload = self.dataset[idx]
-        grpo_config = self.config.train.train_policy
-        conversations = copy.deepcopy(payload['conversations'])
+        conversations = copy.deepcopy(payload["conversations"])
 
         for conv in conversations:
             if conv["role"] == "user":
-                assert isinstance(
-                    conv["content"], str
-                ), "User message must be string"
+                assert isinstance(conv["content"], str), "User message must be string"
                 # Rewrite to support image/video tokens
                 content = [
                     {
                         "type": "video",
                         "video": self.mm_files_paths[payload["video"].split("/")[-1]],
                         "max_pixels": MAX_PIXELS,
-                        "fps": FPS
+                        "fps": FPS,
                     },
                     {
                         "type": "text",
                         "text": conv["content"],
-                    }
+                    },
                 ]
                 conv["content"] = content
 
         return conversations
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -113,10 +111,22 @@ if __name__ == "__main__":
     with open(args.config, "r") as f:
         config = toml.load(f)
     config = Config.from_dict(config)
-    # Download HF dataset only on launcher worker
-    dataset = load_dataset(config.train.train_policy.dataset.name, config.train.train_policy.dataset.subset)
-    # Prepare video files
-    util.prepare_cosmos_data(dataset=config.train.train_policy.dataset, fps=FPS, max_pixels=MAX_PIXELS)
-    launch_dispatcher(
-        dataset=CosmosSFTDataset(dataset=dataset),
+
+    # Each worker needs to prepare the data independently
+    util.prepare_cosmos_data(
+        dataset=config.train.train_policy.dataset, fps=FPS, max_pixels=MAX_PIXELS
+    )
+
+    def get_dataset(config: CosmosConfig) -> Dataset:
+        dataset = load_dataset(
+            config.train.train_policy.dataset.name,
+            config.train.train_policy.dataset.subset,
+        )
+        # Prepare video files
+        return CosmosSFTDataset(dataset)
+
+    # It is best practice to pass the dataset as a factory function
+    # so that the dataset can be loaded on demand. (Not all workers need it)
+    launch_worker(
+        dataset=get_dataset,
     )
