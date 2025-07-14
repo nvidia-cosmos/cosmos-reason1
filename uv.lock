@@ -536,6 +536,9 @@ dependencies = [
 ]
 
 [package.dev-dependencies]
+build = [
+    { name = "torch" },
+]
 training = [
     { name = "cosmos-rl" },
     { name = "wandb" },
@@ -549,6 +552,7 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
+build = [{ name = "torch" }]
 training = [
     { name = "cosmos-rl", git = "https://github.com/nvidia-cosmos/cosmos-rl.git" },
     { name = "wandb" },
