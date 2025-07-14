@@ -5,6 +5,17 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "qwen_vl_utils",
-    "transformers>=4.51.1,!=4.52.*,!=4.53.*", # # 4.53.* error: https://github.com/vllm-project/vllm-ascend/pull/1482, 4.52.* warning: https://github.com/huggingface/transformers/pull/38366
-    "vllm>=0.8.5",
+    "transformers",
+    "vllm",
 ]
+
+[dependency-groups]
+training = ["cosmos-rl", "wandb"]
+
+[tool.uv]
+default-groups = ["training"]
+no-build-isolation-package = ["flash-attn"]
+override-dependencies = ["transformers>=4.53"]
+
+[tool.uv.sources]
+cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }

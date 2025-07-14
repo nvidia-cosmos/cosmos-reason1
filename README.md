@@ -15,6 +15,28 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 * [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B)
 
 ## Getting Started
+
+### Install
+
+Install UV (https://docs.astral.sh/uv/getting-started/installation/)
+
+```sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Install package
+
+```sh
+# Install inference dependencies
+uv sync --no-default-groups
+
+# [Optional] Install training dependencies
+uv sync
+
+# Source the environment
+source .venv/bin/activate
+```
+
 ### Inference
 > **NOTE:** We suggest using `fps=4` for the input video and `max_tokens=4096` to avoid truncated response.
 ```python
