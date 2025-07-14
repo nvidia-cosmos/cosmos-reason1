@@ -118,7 +118,7 @@ The SFT training can improve the model's capability on certain tasks with a simi
 In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
 
 ```shell
-cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml ./tools/dataset/cosmos_sft.py
+uv run cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml ./tools/dataset/cosmos_sft.py
 ```
 
 After training finishes, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
@@ -169,7 +169,7 @@ The RL training can improve the model's reasoning capability on certain tasks wi
 In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
-cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
+uv run cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 
@@ -177,7 +177,7 @@ After training is done, the huggingface checkpoint gets saved to the directory `
 You may refer to the `inference.py` code snippet adopted from the [Qwen2.5-VL repo](https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md#inference-locally) to run inference with the Cosmos-Reason1 model.
 
 ```shell
-python tools/eval/inference.py
+uv run tools/eval/inference.py
 ```
 
 ## ✅ Evaluation Guide: `evaluate.py`
@@ -191,7 +191,7 @@ This document explains how to set up and run evaluation experiments using the `e
 Download annotations and sample video clips using the script below:
 
 ```bash
-python tools/eval/download_hf_data.py \
+uv run tools/eval/download_hf_data.py \
     --target data \
     --task benchmark 
 ```
@@ -288,7 +288,7 @@ For open-ended questions, a prediction is considered correct if it exactly match
 Run the following command to compute accuracy:
 
 ```bash
-python tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
+uv run tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
 ```
 
 - `--result_dir`: Path to the directory containing the model's prediction results. This should match the `--result_dir` used during evaluation in `evaluate.py`.

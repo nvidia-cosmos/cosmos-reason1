@@ -18,22 +18,18 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 ### Install
 
-Install UV (https://docs.astral.sh/uv/getting-started/installation/)
-
 ```sh
+# Install uv/just
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+source $HOME/.local/bin/env
+uv tool install rust-just
 
-Install package
+# Clone the repository
+git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
+cd cosmos-reason1
 
-```sh
-# Install inference dependencies
-uv sync --no-default-groups
-
-# [Optional] Install training dependencies
-uv sync
-
-# Source the environment
+# Install the package
+just install
 source .venv/bin/activate
 ```
 
