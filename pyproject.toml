@@ -1,0 +1,32 @@
+[project]
+name = "cosmos-reason1"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "qwen_vl_utils",
+    "transformers>=4.51.1,!=4.52.*,!=4.53.*", # # 4.53.* error: https://github.com/vllm-project/vllm-ascend/pull/1482, 4.52.* warning: https://github.com/huggingface/transformers/pull/38366
+]
+
+[project.optional-dependencies]
+build = [
+    "cmake",
+    "setuptools",
+]
+compile = [
+    "vllm>=0.8.5",
+]
+# rl = [
+#     "cosmos-rl @ git+https://github.com/nvidia-cosmos/cosmos-rl.git@main",
+# ]
+
+# [project.scripts]
+# video_critic = "examples.video_critic:main"
+
+[tool.uv]
+no-build-isolation-package = ["sentencepiece"]
+override-dependencies = ["sklearn; sys_platform == 'never'"]
+
+# [build-system]
+# requires = ["hatchling"]
+# build-backend = "hatchling.build"
