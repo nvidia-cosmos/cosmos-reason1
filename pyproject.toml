@@ -6,8 +6,7 @@ requires-python = ">=3.10"
 dependencies = ["qwen_vl_utils", "transformers", "vllm"]
 
 [project.optional-dependencies]
-build = ["torch"]
-training = [
+train = [
     "attrs",
     "cosmos-rl",
     "datasets",
@@ -19,15 +18,16 @@ training = [
     "numpy",
     "tqdm",
     "opencv-python",
-    "ffmpeg-python"
+    "ffmpeg-python",
+    "torch",
+    "wandb"
 ]
 
 [dependency-groups]
-lint = ["deptry"]
-training = ["wandb"]
+build = ["torch"]
+dev = ["deptry"]
 
 [tool.uv]
-default-groups = ["training"]
 no-build-isolation-package = ["flash-attn"]
 override-dependencies = ["transformers>=4.53"]
 
@@ -40,3 +40,6 @@ known_first_party = ["tools"]
 [tool.deptry.package_module_name_map]
 ffmpeg-python = "ffmpeg"
 opencv-python = "cv2"
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["wandb"]

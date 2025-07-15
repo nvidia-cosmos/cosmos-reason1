@@ -15,7 +15,7 @@ Run the following script to download and preprocess video clips, take `holoassis
 # Export HF_TOKEN to get access to Cosmos Reason dataset
 export HF_TOKEN=...
 
-uv run --extra training tools/eval/process_raw_data.py \
+uv run --extra train tools/eval/process_raw_data.py \
   --dataset holoassist \
   --data_dir data \
   --task benchmark

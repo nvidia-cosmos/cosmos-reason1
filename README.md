@@ -30,7 +30,6 @@ cd cosmos-reason1
 
 # Install the package
 just install
-source .venv/bin/activate
 ```
 
 ### Inference

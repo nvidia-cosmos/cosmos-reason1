@@ -566,10 +566,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-build = [
-    { name = "torch" },
-]
-training = [
+train = [
     { name = "attrs" },
     { name = "cosmos-rl" },
     { name = "datasets" },
@@ -581,41 +578,44 @@ training = [
     { name = "pyyaml" },
     { name = "tensorflow-datasets" },
     { name = "toml" },
+    { name = "torch" },
     { name = "tqdm" },
+    { name = "wandb" },
 ]
 
 [package.dev-dependencies]
-lint = [
-    { name = "deptry" },
+build = [
+    { name = "torch" },
 ]
-training = [
-    { name = "wandb" },
+dev = [
+    { name = "deptry" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "attrs", marker = "extra == 'training'" },
-    { name = "cosmos-rl", marker = "extra == 'training'", git = "https://github.com/nvidia-cosmos/cosmos-rl.git" },
-    { name = "datasets", marker = "extra == 'training'" },
-    { name = "ffmpeg-python", marker = "extra == 'training'" },
-    { name = "huggingface-hub", marker = "extra == 'training'" },
-    { name = "numpy", marker = "extra == 'training'" },
-    { name = "opencv-python", marker = "extra == 'training'" },
-    { name = "pillow", marker = "extra == 'training'" },
-    { name = "pyyaml", marker = "extra == 'training'" },
+    { name = "attrs", marker = "extra == 'train'" },
+    { name = "cosmos-rl", marker = "extra == 'train'", git = "https://github.com/nvidia-cosmos/cosmos-rl.git" },
+    { name = "datasets", marker = "extra == 'train'" },
+    { name = "ffmpeg-python", marker = "extra == 'train'" },
+    { name = "huggingface-hub", marker = "extra == 'train'" },
+    { name = "numpy", marker = "extra == 'train'" },
+    { name = "opencv-python", marker = "extra == 'train'" },
+    { name = "pillow", marker = "extra == 'train'" },
+    { name = "pyyaml", marker = "extra == 'train'" },
     { name = "qwen-vl-utils" },
-    { name = "tensorflow-datasets", marker = "extra == 'training'" },
-    { name = "toml", marker = "extra == 'training'" },
-    { name = "torch", marker = "extra == 'build'" },
-    { name = "tqdm", marker = "extra == 'training'" },
+    { name = "tensorflow-datasets", marker = "extra == 'train'" },
+    { name = "toml", marker = "extra == 'train'" },
+    { name = "torch", marker = "extra == 'train'" },
+    { name = "tqdm", marker = "extra == 'train'" },
     { name = "transformers" },
     { name = "vllm" },
+    { name = "wandb", marker = "extra == 'train'" },
 ]
-provides-extras = ["build", "training"]
+provides-extras = ["train"]
 
 [package.metadata.requires-dev]
-lint = [{ name = "deptry" }]
-training = [{ name = "wandb" }]
+build = [{ name = "torch" }]
+dev = [{ name = "deptry" }]
 
 [[package]]
 name = "cosmos-rl"
