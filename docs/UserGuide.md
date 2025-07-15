@@ -25,24 +25,16 @@ For the evaluation or inference, single GPU with at least 24GB memory is suffici
 ```bash
 # Install redis-server
 apt-get update && apt-get install redis-server
-
-# Install cosmos-rl
-pip install git+https://github.com/nvidia-cosmos/cosmos-rl.git@v0.1.2#egg=cosmos_rl
 ```
 
 ### 📈 Monitor
 
 We recommend that you to use wandb for training monitoring
 
-1. Install wandb
-```bash
-pip install wandb
-```
-
-2. Login wandb, you can acquire your WANDB_API_KEY from [here](https://wandb.ai/authorize). Then you can login wandb by:
+1. Login wandb, you can acquire your WANDB_API_KEY from [here](https://wandb.ai/authorize). Then you can login wandb by:
 
 ```bash
-wandb login # Then enter your WANDB_API_KEY 
+uv run --group training wandb login # Then enter your WANDB_API_KEY 
 ```
 
 or you can add WANDB_API_KEY to your environment variables by adding the line to your shell config (e.g., `~/.bashrc`):
@@ -50,8 +42,7 @@ or you can add WANDB_API_KEY to your environment variables by adding the line to
 export WANDB_API_KEY=${WANDB_API_KEY}
 ```
 
-
-3. Launch training with the following Training Scripts, you will see the wandb link in the logging:
+2. Launch training with the following Training Scripts, you will see the wandb link in the logging:
 ```bash
 wandb: Currently logged in as: ${WANDB_USER_NAME} to https://api.wandb.ai. Use `wandb login --relogin` to force relogin                                  
 wandb: Tracking run with wandb version 0.19.11                                                                                                                           
@@ -118,7 +109,7 @@ The SFT training can improve the model's capability on certain tasks with a simi
 In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
 
 ```shell
-uv run cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml ./tools/dataset/cosmos_sft.py
+uv run --extra training cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-tp2-sft.toml ./tools/dataset/cosmos_sft.py
 ```
 
 After training finishes, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
@@ -169,7 +160,7 @@ The RL training can improve the model's reasoning capability on certain tasks wi
 In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
-uv run cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
+uv run --extra training cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 
@@ -191,7 +182,7 @@ This document explains how to set up and run evaluation experiments using the `e
 Download annotations and sample video clips using the script below:
 
 ```bash
-uv run tools/eval/download_hf_data.py \
+uv run --extra training tools/eval/download_hf_data.py \
     --target data \
     --task benchmark 
 ```
@@ -288,7 +279,7 @@ For open-ended questions, a prediction is considered correct if it exactly match
 Run the following command to compute accuracy:
 
 ```bash
-uv run tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
+uv run --extra training tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
 ```
 
 - `--result_dir`: Path to the directory containing the model's prediction results. This should match the `--result_dir` used during evaluation in `evaluate.py`.

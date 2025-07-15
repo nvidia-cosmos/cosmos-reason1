@@ -3,4 +3,4 @@ default:
 
 install:
     uv sync --only-group build --inexact
-    uv sync
+    uv sync --all-extras --all-groups
