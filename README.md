@@ -27,9 +27,22 @@ uv tool install rust-just
 # Clone the repository
 git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
 cd cosmos-reason1
+```
 
-# Install the package
+Install the package using your preferred environment:
+
+1. venv
+
+```sh
 just install
+source .venv/bin/activate
+```
+
+2. conda
+
+```sh
+just conda-env
+conda activate cosmos-reason1
 ```
 
 ### Inference

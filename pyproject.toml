@@ -2,7 +2,7 @@
 name = "cosmos-reason1"
 version = "0.1.0"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.10, <3.13"
 dependencies = ["qwen_vl_utils", "transformers", "vllm"]
 
 [project.optional-dependencies]
