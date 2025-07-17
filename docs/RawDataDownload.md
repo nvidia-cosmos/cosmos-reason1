@@ -2,14 +2,6 @@
 
 This document guides you through manually downloading and preprocessing video clips from the AgiBot, BridgeV2, and HoloAssist datasets for evaluation.
 
-## 📦 Install Dependencies
-
-Before preprocessing, make sure the following packages are installed:
-
-```bash
-pip install tensorflow tensorflow_datasets ffmpeg-python
-```
-
 ## 📥 Get Access for AgiBot
 
 - **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)  

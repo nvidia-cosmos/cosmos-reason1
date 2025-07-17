@@ -15,6 +15,36 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 * [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B)
 
 ## Getting Started
+
+### Install
+
+```sh
+# Install uv/just
+curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
+uv tool install rust-just
+
+# Clone the repository
+git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
+cd cosmos-reason1
+```
+
+Install the package using your preferred environment:
+
+1. venv
+
+```sh
+just install
+source .venv/bin/activate
+```
+
+2. conda
+
+```sh
+just conda-env
+conda activate cosmos-reason1
+```
+
 ### Inference
 > **NOTE:** We suggest using `fps=4` for the input video and `max_tokens=4096` to avoid truncated response.
 ```python

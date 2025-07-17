@@ -1,0 +1,45 @@
+[project]
+name = "cosmos-reason1"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10, <3.13"
+dependencies = ["qwen_vl_utils", "transformers", "vllm"]
+
+[project.optional-dependencies]
+train = [
+    "attrs",
+    "cosmos-rl",
+    "datasets",
+    "tensorflow_datasets",
+    "toml",
+    "pillow",
+    "pyyaml",
+    "huggingface-hub",
+    "numpy",
+    "tqdm",
+    "opencv-python",
+    "ffmpeg-python",
+    "torch",
+    "wandb"
+]
+
+[dependency-groups]
+build = ["torch"]
+dev = ["deptry"]
+
+[tool.uv]
+no-build-isolation-package = ["flash-attn"]
+override-dependencies = ["transformers>=4.53"]
+
+[tool.uv.sources]
+cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
+
+[tool.deptry]
+known_first_party = ["tools"]
+
+[tool.deptry.package_module_name_map]
+ffmpeg-python = "ffmpeg"
+opencv-python = "cv2"
+
+[tool.deptry.per_rule_ignores]
+DEP002 = ["wandb"]

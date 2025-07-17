@@ -25,21 +25,13 @@ For the evaluation or inference, single GPU with at least 24GB memory is suffici
 ```bash
 # Install redis-server
 apt-get update && apt-get install redis-server
-
-# Install cosmos-rl
-pip install git+https://github.com/nvidia-cosmos/cosmos-rl.git@v0.1.2#egg=cosmos_rl
 ```
 
 ### 📈 Monitor
 
 We recommend that you to use wandb for training monitoring
 
-1. Install wandb
-```bash
-pip install wandb
-```
-
-2. Login wandb, you can acquire your WANDB_API_KEY from [here](https://wandb.ai/authorize). Then you can login wandb by:
+1. Login wandb, you can acquire your WANDB_API_KEY from [here](https://wandb.ai/authorize). Then you can login wandb by:
 
 ```bash
 wandb login # Then enter your WANDB_API_KEY 
@@ -50,8 +42,7 @@ or you can add WANDB_API_KEY to your environment variables by adding the line to
 export WANDB_API_KEY=${WANDB_API_KEY}
 ```
 
-
-3. Launch training with the following Training Scripts, you will see the wandb link in the logging:
+2. Launch training with the following Training Scripts, you will see the wandb link in the logging:
 ```bash
 wandb: Currently logged in as: ${WANDB_USER_NAME} to https://api.wandb.ai. Use `wandb login --relogin` to force relogin                                  
 wandb: Tracking run with wandb version 0.19.11                                                                                                                           

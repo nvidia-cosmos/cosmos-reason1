@@ -52,7 +52,7 @@ Cosmos-Reason1 is tasked to analyze each video element-by-element, and organize 
 We also provide an [example script](video_critic.py) that demonstrates how to parse the Reason1 output and reformat it into an html report.
 
 ```bash
-python -m examples.video_critic --video_path assets/sample.mp4 --num_trials 4
+python examples/video_critic.py --video_path assets/sample.mp4 --num_trials 4
 # The resulting html file will be saved to assets/sample.html
 ```
 
