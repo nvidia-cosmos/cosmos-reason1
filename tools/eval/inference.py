@@ -13,67 +13,76 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from transformers import AutoProcessor
-from vllm import LLM, SamplingParams
+"""Run inference on a model with a given prompt."""
+
+import argparse
+from transformers import (
+    Qwen2_5_VLForConditionalGeneration,
+    AutoProcessor,
+    Qwen2_5_VLProcessor,
+)
 from qwen_vl_utils import process_vision_info
+from rich import print
 
-# You can also replace the MODEL_PATH by a safetensors folder path mentioned above
-MODEL_PATH = "nvidia/Cosmos-Reason1-7B"
 
-llm = LLM(
-    model=MODEL_PATH,
-    limit_mm_per_prompt={"image": 10, "video": 10},
-)
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str, default="Qwen/Qwen2.5-VL-7B-Instruct")
+    parser.add_argument("--prompt", type=str, required=True)
+    parser.add_argument("--image", type=str, nargs="*")
+    parser.add_argument("--video", type=str, nargs="*")
+    args = parser.parse_args()
 
-sampling_params = SamplingParams(
-    temperature=0.6,
-    top_p=0.95,
-    repetition_penalty=1.05,
-    max_tokens=4096,
-)
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        args.model, torch_dtype="auto", device_map="auto"
+    )
+    processor: Qwen2_5_VLProcessor = AutoProcessor.from_pretrained(args.model, use_fast=True)
 
-video_messages = [
-    {"role": "system", "content": "You are a helpful assistant. Answer the question in the following format: <think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>."},
-    {"role": "user", "content": [
-            {"type": "text", "text": (
-                    "Is it safe to turn right?"
-                )
-            },
-            {
-                "type": "video", 
-                "video": "assets/sample.mp4",
-                "fps": 4,
-            }
-        ]
-    },
-]
+    content = []
+    for image in args.image:
+        content.append({"type": "image", "image": image})
+    for video in args.video:
+        content.append({"type": "video", "video": video})
+    content.append({"type": "text", "text": args.prompt})
+    messages = [
+        {
+            "role": "system",
+            "content": "Answer the questions.",
+        },
+        {
+            "role": "user",
+            "content": content,
+        },
+    ]
+    print(messages)
 
-# Here we use video messages as a demonstration
-messages = video_messages
+    # Preparation for inference
+    text = processor.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    image_inputs, video_inputs = process_vision_info(messages)
+    inputs = processor(
+        text=[text],
+        images=image_inputs,
+        videos=video_inputs,
+        padding=True,
+        return_tensors="pt",
+    )
+    inputs = inputs.to(model.device)
 
-processor = AutoProcessor.from_pretrained(MODEL_PATH)
-prompt = processor.apply_chat_template(
-    messages,
-    tokenize=False,
-    add_generation_prompt=True,
-)
-image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    # Inference: Generation of the output
+    generated_ids = model.generate(**inputs, max_new_tokens=128)
+    generated_ids_trimmed = [
+        out_ids[len(in_ids) :]
+        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+    ]
+    output_text = processor.batch_decode(
+        generated_ids_trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
+    )
+    print(output_text)
 
-mm_data = {}
-if image_inputs is not None:
-    mm_data["image"] = image_inputs
-if video_inputs is not None:
-    mm_data["video"] = video_inputs
 
-llm_inputs = {
-    "prompt": prompt,
-    "multi_modal_data": mm_data,
-
-    # FPS will be returned in video_kwargs
-    "mm_processor_kwargs": video_kwargs,
-}
-
-outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
-generated_text = outputs[0].outputs[0].text
-
-print(generated_text)
+if __name__ == "__main__":
+    main()

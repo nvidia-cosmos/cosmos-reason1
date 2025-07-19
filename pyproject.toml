@@ -3,24 +3,34 @@ name = "cosmos-reason1"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
-dependencies = ["qwen_vl_utils", "transformers", "vllm"]
+dependencies = [
+    "accelerate",
+    "qwen_vl_utils",
+    "transformers",
+    "vllm==0.9.1",   # https://nvidia.slack.com/archives/C098A6VGEL9/p1753834930161799
+]
 
 [project.optional-dependencies]
+cosmos-rl = [
+    "cosmos-rl",
+]
 train = [
     "attrs",
-    "cosmos-rl",
     "datasets",
-    "tensorflow_datasets",
-    "toml",
-    "pillow",
-    "pyyaml",
+    "ffmpeg-python",
     "huggingface-hub",
     "numpy",
-    "tqdm",
     "opencv-python",
-    "ffmpeg-python",
+    "pillow",
+    "pydantic",
+    "pyyaml",
+    "rich",
+    "tensorflow_datasets",
+    "toml",
     "torch",
-    "wandb"
+    "tqdm",
+    "wandb",
+    "webdataset",
 ]
 
 [dependency-groups]
