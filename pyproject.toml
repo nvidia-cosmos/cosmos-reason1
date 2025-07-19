@@ -3,36 +3,39 @@ name = "cosmos-reason1"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
-dependencies = ["qwen_vl_utils", "transformers", "vllm"]
+dependencies = ["accelerate", "qwen_vl_utils", "transformers", "vllm"]
 
 [project.optional-dependencies]
 train = [
     "attrs",
     "cosmos-rl",
     "datasets",
-    "tensorflow_datasets",
-    "toml",
-    "pillow",
-    "pyyaml",
+    "ffmpeg-python",
     "huggingface-hub",
     "numpy",
-    "tqdm",
     "opencv-python",
-    "ffmpeg-python",
+    "pillow",
+    "polars",
+    "pyyaml",
+    "tensorflow_datasets",
+    "toml",
     "torch",
-    "wandb"
+    "tqdm",
+    "wandb",
 ]
 
 [dependency-groups]
 build = ["torch"]
-dev = ["deptry"]
+dev = ["deptry", "pdbr", "rich"]
 
 [tool.uv]
 no-build-isolation-package = ["flash-attn"]
 override-dependencies = ["transformers>=4.53"]
 
 [tool.uv.sources]
-cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
+# HACK
+cosmos-rl = { path = "../cosmos-rl/", editable = true }
+# cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
 
 [tool.deptry]
 known_first_party = ["tools"]
