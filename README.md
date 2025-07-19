@@ -33,17 +33,25 @@ Install the package using your preferred environment:
 
 1. venv
 
-```sh
-just install
-source .venv/bin/activate
-```
+  Prerequiesites:
+
+  * redis-server
+
+  ```sh
+  just install
+  source .venv/bin/activate
+  ```
 
 2. conda
 
-```sh
-just install-conda
-conda activate cosmos-reason1
-```
+  Prerequiesites:
+
+  * conda/mamba
+
+  ```sh
+  just install-conda <conda|mamba|micromamba>
+  <conda|mamba|micromamba> activate cosmos-reason1
+  ```
 
 ### Inference
 > **NOTE:** We suggest using `fps=4` for the input video and `max_tokens=4096` to avoid truncated response.

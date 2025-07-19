@@ -7,12 +7,15 @@ install:
     uv sync --all-extras --inexact
 
 # Create a new conda environment
-_conda-env:
+_conda-env conda='conda':
+    #!/usr/bin/env bash
+    set -euo pipefail
     rm -rf .venv
-    conda env create -y --no-default-packages -f conda.yaml
-    ln -sf "$(conda info --base)/envs/cosmos-reason1" .venv
+    INFO=$({{ conda }} env create -y -f environment.yml --json)
+    VENV=$(echo $INFO | jq -r '."prefix"')
+    ln -sf $VENV .venv
 
 # Install in a new conda environment
-install-conda:
-    just -f {{ justfile() }} _conda-env
+install-conda conda='conda':
+    just -f {{ justfile() }} _conda-env {{ conda }}
     just -f {{ justfile() }} install
