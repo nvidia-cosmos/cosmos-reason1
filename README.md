@@ -41,7 +41,7 @@ source .venv/bin/activate
 2. conda
 
 ```sh
-just conda-env
+just install-conda
 conda activate cosmos-reason1
 ```
 
