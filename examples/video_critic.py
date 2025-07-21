@@ -208,7 +208,7 @@ def run_critic(args):
         {"role": "user", "content": [
                 {
                     "type": "video",
-                    "video": "assets/sample.mp4",
+                    "video": args.video_path,
                     # Recommended settings for video critic:
                     "fps": 16,
                     "total_pixels": 8192 * 28 * 28,
