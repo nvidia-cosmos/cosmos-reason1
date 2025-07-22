@@ -3,10 +3,10 @@ redis = "12800"
 [train]
 resume = false
 epoch = 1
-output_dir = "./outputs/cosmos-reason1-7b-tp2-dpx-sft"
+output_dir = "./outputs/cosmos-reason1-7b-fsdp8-sft"
 epsilon = 1e-6
 optm_name = "AdamW"
-optm_lr = 1e-6
+optm_lr = 2e-6
 optm_impl = "fused"
 optm_weight_decay = 0.01
 optm_betas = [ 0.9, 0.999,]
@@ -18,7 +18,7 @@ param_dtype = "bfloat16"
 fsdp_reduce_dtype = "float32"
 fsdp_offload = false
 fsdp_reshard_after_forward = "default"
-train_batch_per_replica = 4
+train_batch_per_replica = 32
 sync_weight_interval = 1
 enable_validation = true
 validation_step = 30
@@ -44,6 +44,7 @@ enable_dataset_cache = false
 dataloader_num_workers = 4
 dataloader_prefetch_factor = 4
 conversation_column_name = "conversations"
+mini_batch = 4
 
 [train.ckpt]
 enable_checkpoint = true
@@ -52,9 +53,9 @@ save_mode = "async"
 
 [policy.parallelism]
 n_init_replicas = 1
-tp_size = 2
+tp_size = 1
 cp_size = 1
-dp_shard_size = -1
+dp_shard_size = 8
 pp_size = 1
 dp_replicate_size = 1
 cp_rotate_method = "allgather"
