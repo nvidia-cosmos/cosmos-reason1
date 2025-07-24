@@ -1,7 +1,4 @@
-"""Curate VLADBench dataset.
-
-https://huggingface.co/datasets/depth2world/VLADBench
-"""
+"""Download VLADBench dataset."""
 
 import argparse
 from pathlib import Path
@@ -92,45 +89,38 @@ def main():
         type=Path,
         help="Path to the input directory.",
     )
-    parser.add_argument(
-        "output",
-        type=Path,
-        help="Path to the output directory.",
-    )
     args = parser.parse_args()
     input_path: Path = args.input
-    output_path = args.output
 
     # Process tasks
-    if True:
-        all_subsets: dict[str, dict[str, list[str]]] = json.load(
-            (input_path / "all_tasks.json").open()
-        )
-        configs = []
-        for k1, v1 in sorted(all_subsets.items()):
-            for k2, v2 in sorted(v1.items()):
-                for k3 in sorted(v2):
-                    subset_name = "/".join([k1, k2, k3])
-                    process_subset(input_path, subset_name)
-                    configs.append(
-                        {
-                            "config_name": "_".join(
-                                [k.replace("_", "") for k in [k1, k2, k3]]
-                            ),
-                            "data_files": f"{subset_name}/metadata.jsonl",
-                        }
-                    )
+    all_subsets: dict[str, dict[str, list[str]]] = json.load(
+        (input_path / "all_tasks.json").open()
+    )
+    configs = []
+    for k1, v1 in sorted(all_subsets.items()):
+        for k2, v2 in sorted(v1.items()):
+            for k3 in sorted(v2):
+                subset_name = "/".join([k1, k2, k3])
+                process_subset(input_path, subset_name)
+                configs.append(
+                    {
+                        "config_name": "_".join(
+                            [k.replace("_", "") for k in [k1, k2, k3]]
+                        ),
+                        "data_files": f"{subset_name}/metadata.jsonl",
+                    }
+                )
 
-        # Write configs
-        with (input_path / "README.md").open("w") as f:
-            f.write("---\n")
-            yaml.dump(
-                {
-                    "configs": configs,
-                },
-                f,
-            )
-            f.write("---\n")
+    # Write configs
+    with (input_path / "README.md").open("w") as f:
+        f.write("---\n")
+        yaml.dump(
+            {
+                "configs": configs,
+            },
+            f,
+        )
+        f.write("---\n")
 
 
 if __name__ == "__main__":

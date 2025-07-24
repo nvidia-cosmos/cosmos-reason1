@@ -13,6 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Run inference on a model with a given prompt."""
+
 import argparse
 from transformers import (
     Qwen2_5_VLForConditionalGeneration,

@@ -3,7 +3,7 @@ redis = "12800"
 [train]
 resume = false
 epoch = 1
-output_dir = "./outputs/cosmos-reason1-7b-vlad-bench-sft"
+output_dir = "./outputs/cosmos-reason1.1-7b-nexar-collision-prediction-sft"
 epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = [1e-5, 1e-5]
@@ -22,7 +22,7 @@ train_batch_per_replica = 64
 sync_weight_interval = 1
 
 [policy]
-model_name_or_path = "nvidia/Cosmos-Reason1-7B"
+model_name_or_path = "nvidia/Cosmos-Reason1.1-7B"
 model_max_length = 4096
 model_gradient_checkpointing = true
 
@@ -33,9 +33,9 @@ experiment_name = "cosmos-reason1-sft"
 
 [train.train_policy]
 type = "sft"
-dataset.name = "/mnt/pvc/datasets/VLADBench"
-dataset.subset = "TrafficKnowledgeUnderstanding_RoadTrafficSignals_TrafficSign"
-dataset.split = "train"
+dataset.name = "file://data/nexar_collision_prediction"
+dataset.subset = ""
+dataset.split = ""
 conversation_column_name = "conversations"
 mini_batch = 8
 
@@ -48,6 +48,6 @@ save_mode = "async"
 n_init_replicas = 1
 tp_size = 2
 cp_size = 1
-dp_shard_size = -1
+dp_shard_size = 1
 pp_size = 2
 dp_replicate_size = 1
