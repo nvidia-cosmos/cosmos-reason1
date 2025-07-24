@@ -23,6 +23,7 @@ train = [
     "torch",
     "tqdm",
     "wandb",
+    "webdataset",
 ]
 
 [dependency-groups]

@@ -23,6 +23,7 @@ import cosmos_rl.launcher.worker_entry
 import cosmos_rl.policy.config
 import argparse
 import toml
+import webdataset as wds
 
 # Downsampling parameters
 # Used by https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
@@ -80,7 +81,10 @@ if __name__ == "__main__":
 
     def get_dataset(config: cosmos_rl.policy.config.Config) -> torch.utils.data.Dataset:
         dataset_config = config.train.train_policy.dataset
-        if dataset_config.name.startswith("file://"):
+        breakpoint()
+        if dataset_config.name.startswith("webdataset://"):
+            dataset = wds.WebDataset(dataset_config.name.lstrip("webdataset://"), shardshuffle=False)
+        elif dataset_config.name.startswith("file://"):
             dataset = datasets.load_from_disk(dataset_config.name.lstrip("file://"))
         else:
             dataset = datasets.load_dataset(
