@@ -17,6 +17,7 @@ train = [
     "pillow",
     "polars",
     "pyyaml",
+    "rich",
     "tensorflow_datasets",
     "toml",
     "torch",
@@ -26,16 +27,14 @@ train = [
 
 [dependency-groups]
 build = ["torch"]
-dev = ["deptry", "pdbr", "rich"]
+dev = ["deptry"]
 
 [tool.uv]
 no-build-isolation-package = ["flash-attn"]
 override-dependencies = ["transformers>=4.53"]
 
 [tool.uv.sources]
-# HACK
-cosmos-rl = { path = "../cosmos-rl/", editable = true }
-# cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
+cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
 
 [tool.deptry]
 known_first_party = ["tools"]
