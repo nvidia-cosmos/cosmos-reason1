@@ -36,7 +36,7 @@ experiment_name = "cosmos-reason1-sft"
 
 [train.train_policy]
 type = "sft"
-dataset.name = "data/nuscenes"
+dataset.name = "data/nuscenes/processed"
 dataset.split = "train"
 conversation_column_name = "conversations"
 mini_batch = 8

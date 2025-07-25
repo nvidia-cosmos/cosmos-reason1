@@ -11,21 +11,6 @@ import torch
 import webdataset
 import datasets
 
-def _join_webdataset_columns(dataset: webdataset.WebDataset) -> list[dict]:
-    """Join webdataset columns by key."""    
-    samples = collections.defaultdict(dict)
-    for other in dataset:
-        sample = samples[other["__key__"]]
-        for k, v in other.items():
-            if k.startswith("_"):
-                continue
-            if k not in sample:
-                sample[k] = v
-            elif sample[k] != v:
-                raise ValueError(f"Duplicate key {k} with different values")
-    return list(samples.values())
-
-
 def load_webdataset(
     dataset_path: str, dataset_kwargs: dict = {}
 ) -> torch.utils.data.Dataset:
@@ -58,8 +43,8 @@ def _update_dict(d: dict, key: str, val: Any):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("-i", "--input", type=str, required=True)
-    parser.add_argument("-o", "--output", type=str, required=True)
+    parser.add_argument("input", type=str, help="Input directory containing webdataset.")
+    parser.add_argument("output", type=str, help="Output directory to save huggingface dataset.")
     parser.add_argument("--meta", type=str, nargs="+", help="Meta column names.")
     parser.add_argument("--media", type=str, nargs="+", help="Media column names.")
     args = parser.parse_args()
@@ -107,40 +92,7 @@ def main():
     dataset = datasets.Dataset.from_dict(data)
     print(dataset)
 
-    def add_conversations(sample: dict) -> dict:
-        conversations = [
-            {
-                    "role": "system",
-                    "content": "Answer the questions.",
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps([
-                        {
-                            "type": "video",
-                            "video": "video",
-                        },
-                        {
-                            "type": "text",
-                            "text": "What is the weather in this video? Choose from ['Rain', 'Cloudy', 'Snow', 'Clear'].",
-                        },
-                    ]),
-                },
-                {
-                    "role": "assistant",
-                    "content": str(sample["weather"]),
-                },
-        ]
-        return {
-            "conversations": conversations,
-        }
-    dataset.map(add_conversations)
-
-    # Save to disk
     dataset.save_to_disk(str(output_dir))
-
-    dataset = datasets.load_from_disk(str(output_dir))
-    breakpoint()
 
 if __name__ == "__main__":
     main()
