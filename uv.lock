@@ -548,7 +548,7 @@ dev = [
 requires-dist = [
     { name = "accelerate" },
     { name = "attrs", marker = "extra == 'train'" },
-    { name = "cosmos-rl", marker = "extra == 'train'", git = "https://github.com/nvidia-cosmos/cosmos-rl.git" },
+    { name = "cosmos-rl", marker = "extra == 'train'", editable = "../cosmos-rl" },
     { name = "datasets", marker = "extra == 'train'" },
     { name = "ffmpeg-python", marker = "extra == 'train'" },
     { name = "huggingface-hub", marker = "extra == 'train'" },
@@ -576,8 +576,7 @@ dev = [{ name = "deptry" }]
 
 [[package]]
 name = "cosmos-rl"
-version = "0.2.2"
-source = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git#26567d5a6c070d40dffa740fec718aa03341abb2" }
+source = { editable = "../cosmos-rl" }
 dependencies = [
     { name = "blobfile" },
     { name = "boto3" },
@@ -606,6 +605,37 @@ dependencies = [
     { name = "transformers" },
     { name = "uvicorn" },
     { name = "vllm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "blobfile" },
+    { name = "boto3" },
+    { name = "click" },
+    { name = "cloudpickle" },
+    { name = "datasets" },
+    { name = "fastapi" },
+    { name = "flash-attn", specifier = ">=2.7.4.post1" },
+    { name = "math-verify" },
+    { name = "modelscope" },
+    { name = "msgpack" },
+    { name = "nvidia-nccl-cu12", specifier = ">=2.26.2" },
+    { name = "pybind11", extras = ["global"] },
+    { name = "pydantic" },
+    { name = "pynvml" },
+    { name = "pyyaml" },
+    { name = "qwen-vl-utils" },
+    { name = "redis" },
+    { name = "rich" },
+    { name = "strenum" },
+    { name = "tensordict", specifier = "==0.7.2" },
+    { name = "toml" },
+    { name = "torch", specifier = ">=2.6.0" },
+    { name = "torchao", specifier = ">=0.10.0" },
+    { name = "torchvision", specifier = ">=0.21.0" },
+    { name = "transformers", specifier = ">=4.51.1,!=4.52.*,!=4.53.*" },
+    { name = "uvicorn" },
+    { name = "vllm", specifier = ">=0.8.5" },
 ]
 
 [[package]]

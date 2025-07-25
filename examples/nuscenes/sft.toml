@@ -1,5 +1,8 @@
 redis = "12800"
 
+[custom]
+dataset_type = "webdataset"
+
 [train]
 resume = false
 epoch = 1

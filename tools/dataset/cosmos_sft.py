@@ -15,30 +15,52 @@
 
 """Dataset adapter for huggingface datasets for SFT training cosmos models."""
 
+import enum
 import json
 import copy
+from typing import assert_never
 import torch.utils.data
 import datasets
 import cosmos_rl.launcher.worker_entry
 import cosmos_rl.policy.config
 import argparse
 import toml
-import webdataset as wds
+import webdataset
+import pydantic
 
-# Downsampling parameters
-# Used by https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
-FPS = 1
-MAX_PIXELS = 81920
+
+class DatasetType(str, enum.Enum):
+    """Dataset type for SFT training."""
+
+    HUGGINGFACE_HUB = "huggingface_hub"
+    """Dataset generated using `datasets.Dataset.push_to_hub`."""
+    HUGGINGFACE_DISK = "huggingface_disk"
+    """Dataset generated using `datasets.Dataset.save_to_disk`."""
+    WEBDATASET = "webdataset"
+    """Dataset generated using `webdataset`."""
+
+
+class CosmosSFTConfig(pydantic.BaseModel):
+    """Config for Cosmos SFT training."""
+
+    dataset_type: DatasetType = pydantic.Field()
+    """Dataset type."""
+
+    fps: int = pydantic.Field(default=1)
+    """Downsample video frame rate."""
+    max_pixels: int = pydantic.Field(default=81920)
+    """Downsample image/video max pixels per frame."""
 
 
 class CosmosSFTDataset(torch.utils.data.Dataset):
     """Dataset adapter for using huggingface datasets with SFT trainer."""
 
     def __init__(
-        self, dataset: datasets.Dataset, config: cosmos_rl.policy.config.Config
+        self, dataset: datasets.Dataset, config: cosmos_rl.policy.config.Config, custom_config: CosmosSFTConfig
     ):
         self.dataset = dataset
         self.config = config
+        self.custom_config = custom_config
 
     def __len__(self):
         return len(self.dataset)
@@ -56,19 +78,22 @@ class CosmosSFTDataset(torch.utils.data.Dataset):
                 conv["content"] = json.loads(conv["content"])
                 assert isinstance(conv["content"], list), "User messages must be a list"
                 for msg in conv["content"]:
+                    # Set parameters for https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
                     if "image" in msg:
                         col_name = msg["image"]
                         msg["image"] = sample[col_name]
-                        msg["max_pixels"] = MAX_PIXELS
+                        msg["max_pixels"] = self.custom_config.max_pixels
                     if "video" in msg:
                         col_name = msg["video"]
                         video = sample[col_name]
-                        if isinstance(self.dataset.features.get(col_name), datasets.Video):
+                        if isinstance(
+                            self.dataset.features.get(col_name), datasets.Video
+                        ):
                             video = video["path"]
                             assert video is not None
                         msg["video"] = video
-                        msg["fps"] = FPS
-                        msg["max_pixels"] = MAX_PIXELS
+                        msg["fps"] = self.custom_config.fps
+                        msg["max_pixels"] = self.custom_config.max_pixels
         return conversations
 
 
@@ -80,24 +105,27 @@ if __name__ == "__main__":
         config = cosmos_rl.policy.config.Config.from_dict(toml.load(f))
 
     def get_dataset(config: cosmos_rl.policy.config.Config) -> torch.utils.data.Dataset:
+        custom_config = CosmosSFTConfig.model_validate(config.custom)
         dataset_config = config.train.train_policy.dataset
-        breakpoint()
-        if dataset_config.name.startswith("webdataset://"):
-            dataset = wds.WebDataset(dataset_config.name.lstrip("webdataset://"), shardshuffle=False)
-        elif dataset_config.name.startswith("file://"):
-            dataset = datasets.load_from_disk(dataset_config.name.lstrip("file://"))
-        else:
+
+        if custom_config.dataset_type == DatasetType.HUGGINGFACE_HUB:
             dataset = datasets.load_dataset(
                 dataset_config.name,
                 dataset_config.subset or None,
+                split=dataset_config.split or None,
             )
-            if dataset_config.split:
-                dataset = dataset[dataset_config.split]
-        assert isinstance(dataset, datasets.Dataset)
+        elif custom_config.dataset_type == DatasetType.HUGGINGFACE_DISK:
+            dataset = datasets.load_from_disk(dataset_config.name)
+        elif custom_config.dataset_type == DatasetType.WEBDATASET:
+            dataset = webdataset.WebDataset(
+                dataset_config.name.lstrip("webdataset://"), shardshuffle=False
+            )
+        else:
+            assert_never(custom_config.dataset_type)
         for col_name, col in dataset.features.items():
             if isinstance(col, datasets.Video):
                 dataset = dataset.cast_column(col_name, datasets.Video(decode=False))
-        return CosmosSFTDataset(dataset, config=config)
+        return CosmosSFTDataset(dataset, config=config, custom_config=custom_config)
 
     # Test
     dataset = get_dataset(config)

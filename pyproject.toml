@@ -35,7 +35,9 @@ no-build-isolation-package = ["flash-attn"]
 override-dependencies = ["transformers>=4.53"]
 
 [tool.uv.sources]
-cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
+# HACK
+# cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
+cosmos-rl = { path = "../cosmos-rl", editable = true }
 
 [tool.deptry]
 known_first_party = ["tools"]

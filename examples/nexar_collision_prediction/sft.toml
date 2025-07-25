@@ -1,5 +1,8 @@
 redis = "12800"
 
+[script]
+dataset_type = "huggingface_disk"
+
 [train]
 resume = false
 epoch = 1
@@ -33,9 +36,7 @@ experiment_name = "cosmos-reason1-sft"
 
 [train.train_policy]
 type = "sft"
-dataset.name = "file://data/nexar_collision_prediction"
-dataset.subset = ""
-dataset.split = ""
+dataset.name = "data/nexar_collision_prediction"
 conversation_column_name = "conversations"
 mini_batch = 8
 
