@@ -1,6 +1,6 @@
 redis = "12800"
 
-[script]
+[custom]
 dataset_type = "huggingface_disk"
 
 [train]

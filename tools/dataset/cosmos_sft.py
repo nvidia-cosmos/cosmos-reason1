@@ -15,10 +15,12 @@
 
 """Dataset adapter for huggingface datasets for SFT training cosmos models."""
 
+import collections
 import enum
 import json
 import copy
-from typing import assert_never
+import os
+from typing import Callable, assert_never
 import torch.utils.data
 import datasets
 import cosmos_rl.launcher.worker_entry
@@ -36,8 +38,6 @@ class DatasetType(str, enum.Enum):
     """Dataset generated using `datasets.Dataset.push_to_hub`."""
     HUGGINGFACE_DISK = "huggingface_disk"
     """Dataset generated using `datasets.Dataset.save_to_disk`."""
-    WEBDATASET = "webdataset"
-    """Dataset generated using `webdataset`."""
 
 
 class CosmosSFTConfig(pydantic.BaseModel):
@@ -45,6 +45,8 @@ class CosmosSFTConfig(pydantic.BaseModel):
 
     dataset_type: DatasetType = pydantic.Field()
     """Dataset type."""
+    dataset_kwargs: dict = pydantic.Field(default_factory=dict)
+    """Additional kwargs for dataset loading."""
 
     fps: int = pydantic.Field(default=1)
     """Downsample video frame rate."""
@@ -56,7 +58,10 @@ class CosmosSFTDataset(torch.utils.data.Dataset):
     """Dataset adapter for using huggingface datasets with SFT trainer."""
 
     def __init__(
-        self, dataset: datasets.Dataset, config: cosmos_rl.policy.config.Config, custom_config: CosmosSFTConfig
+        self,
+        dataset: datasets.Dataset,
+        config: cosmos_rl.policy.config.Config,
+        custom_config: CosmosSFTConfig,
     ):
         self.dataset = dataset
         self.config = config
@@ -97,6 +102,34 @@ class CosmosSFTDataset(torch.utils.data.Dataset):
         return conversations
 
 
+def load_dataset(
+    dataset_config: cosmos_rl.policy.config.DatasetConfig,
+    custom_config: CosmosSFTConfig,
+) -> torch.utils.data.Dataset:
+    if custom_config.dataset_type == DatasetType.HUGGINGFACE_HUB:
+        dataset = datasets.load_dataset(
+            dataset_config.name,
+            **(
+                dict(
+                    name=dataset_config.subset,
+                    split=dataset_config.split,
+                )
+                | custom_config.dataset_kwargs
+            ),
+        )
+    elif custom_config.dataset_type == DatasetType.HUGGINGFACE_DISK:
+        dataset = datasets.load_from_disk(
+            dataset_config.name,
+            **custom_config.dataset_kwargs,
+        )
+    else:
+        assert_never(custom_config.dataset_type)
+    for col_name, col in dataset.features.items():
+        if isinstance(col, datasets.Video):
+            dataset = dataset.cast_column(col_name, datasets.Video(decode=False))
+    return CosmosSFTDataset(dataset, config=config, custom_config=custom_config)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
@@ -105,27 +138,9 @@ if __name__ == "__main__":
         config = cosmos_rl.policy.config.Config.from_dict(toml.load(f))
 
     def get_dataset(config: cosmos_rl.policy.config.Config) -> torch.utils.data.Dataset:
-        custom_config = CosmosSFTConfig.model_validate(config.custom)
         dataset_config = config.train.train_policy.dataset
-
-        if custom_config.dataset_type == DatasetType.HUGGINGFACE_HUB:
-            dataset = datasets.load_dataset(
-                dataset_config.name,
-                dataset_config.subset or None,
-                split=dataset_config.split or None,
-            )
-        elif custom_config.dataset_type == DatasetType.HUGGINGFACE_DISK:
-            dataset = datasets.load_from_disk(dataset_config.name)
-        elif custom_config.dataset_type == DatasetType.WEBDATASET:
-            dataset = webdataset.WebDataset(
-                dataset_config.name.lstrip("webdataset://"), shardshuffle=False
-            )
-        else:
-            assert_never(custom_config.dataset_type)
-        for col_name, col in dataset.features.items():
-            if isinstance(col, datasets.Video):
-                dataset = dataset.cast_column(col_name, datasets.Video(decode=False))
-        return CosmosSFTDataset(dataset, config=config, custom_config=custom_config)
+        custom_config = CosmosSFTConfig.model_validate(config.custom)
+        return load_dataset(dataset_config=dataset_config, custom_config=custom_config)
 
     # Test
     dataset = get_dataset(config)
