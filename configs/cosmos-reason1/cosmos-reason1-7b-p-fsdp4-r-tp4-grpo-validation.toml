@@ -57,8 +57,8 @@ temperature = 0.9
 epsilon_low = 0.2
 epsilon_high = 0.2
 kl_beta = 0.0
-mu_iterations = 2
-mini_batch = 4
+mu_iterations = 1
+mini_batch = 2
 
 [train.ckpt]
 enable_checkpoint = true
@@ -72,9 +72,9 @@ pp_size = 1
 
 [policy.parallelism]
 n_init_replicas = 1
-tp_size = 2
+tp_size = 1
 cp_size = 1
-dp_shard_size = 2
+dp_shard_size = 4
 pp_size = 1
 dp_replicate_size = 1
 cp_rotate_method = "allgather"

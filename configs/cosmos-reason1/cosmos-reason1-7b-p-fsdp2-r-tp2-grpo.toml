@@ -14,6 +14,7 @@ optm_warmup_steps = 20
 optm_grad_norm_clip = 1.0
 async_tp_enabled = false
 compile = false
+master_dtype = "float32"
 param_dtype = "bfloat16"
 fsdp_reduce_dtype = "float32"
 fsdp_offload = false
@@ -55,7 +56,7 @@ epsilon_high = 0.2
 kl_beta = 0.0
 mu_iterations = 1
 min_filter_prefix_tokens = 1
-mini_batch = 4
+mini_batch = 2
 
 [train.ckpt]
 enable_checkpoint = true
@@ -71,9 +72,9 @@ pp_size = 1
 
 [policy.parallelism]
 n_init_replicas = 1
-tp_size = 2
+tp_size = 1
 cp_size = 1
-dp_shard_size = 1
+dp_shard_size = 2
 pp_size = 1
 dp_replicate_size = 1
 cp_rotate_method = "allgather"

@@ -256,12 +256,12 @@ if __name__ == "__main__":
     config = Config.from_dict(config)
 
     util.prepare_cosmos_data(
-        dataset=config.train.train_policy.dataset, fps=FPS, max_pixels=MAX_PIXELS
+        dataset=config.train.train_policy.dataset
     )
     if config.train.enable_validation:
         util.prepare_cosmos_data(
-            dataset=config.validation.dataset, fps=FPS, max_pixels=MAX_PIXELS
-        )
+            dataset=config.validation.dataset
+    )
 
     # It is best practice to pass the dataset and val_dataset as factory functions
     # so that the dataset and val_dataset can be loaded on demand. (Not all workers need them)
