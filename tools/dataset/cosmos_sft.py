@@ -114,7 +114,7 @@ if __name__ == "__main__":
 
     # Each worker needs to prepare the data independently
     util.prepare_cosmos_data(
-        dataset=config.train.train_policy.dataset, fps=FPS, max_pixels=MAX_PIXELS
+        dataset=config.train.train_policy.dataset
     )
 
     def get_dataset(config: CosmosConfig) -> Dataset:
