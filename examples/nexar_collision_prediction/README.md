@@ -7,5 +7,5 @@ Post-training example using [Nexar Collision Prediction dataset](https://hugging
 python examples/nexar_collision_prediction/download.py ~/datasets/nexar_collision_prediction/cosmos-rl
 
 # Run SFT
-cosmos-rl --config examples/nexar_collision_prediction/sft.toml ./tools/dataset/cosmos_sft.py
+cosmos-rl --config examples/nexar_collision_prediction/sft.toml ./tools/dataset/hf_cosmos_sft.py
 ```

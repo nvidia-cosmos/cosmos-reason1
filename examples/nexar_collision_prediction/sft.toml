@@ -6,7 +6,7 @@ path = "~/datasets/nexar_collision_prediction/cosmos-rl"
 [train]
 resume = false
 epoch = 1
-output_dir = "./outputs/cosmos-reason1.1-7b-nexar-collision-prediction-sft"
+output_dir = "~/outputs/cosmos-reason1/nexar-collision-prediction/sft"
 epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = [1e-5, 1e-5]
