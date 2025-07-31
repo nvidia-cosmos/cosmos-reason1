@@ -2,9 +2,8 @@
 
 This document provides usage instructions for scripts related to training and evaluating models on the Cosmos-Reason1 benchmark.
 
-
-
 ## Job recipes
+
 Overall, cosmos_reason1 can support SFT/RL training with a broad range of models and parallelisms, users can configure these with a config file. For convenience, we have provided several pre-defined configs in the `configs` folder. e.g:
 
 | Config File                                         | Policy TP | Policy FSDP | Policy PP | Rollout TP | Rollout PP | Num GPUs                     | Purpose |
@@ -20,11 +19,23 @@ For the evaluation or inference, single GPU with at least 24GB memory is suffici
 
 ## Setup
 
-### 🔧 Install [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl)
+### 🔧 Install
 
-```bash
-# Install redis-server
-apt-get update && apt-get install redis-server
+Install system dependencies:
+
+```sh
+brew install pkgx || curl https://pkgx.sh | sh
+curl -LsSf https://astral.sh/uv/install.sh | sh
+pkgm install just
+pkgm install redis-server
+```
+
+Install the package:
+
+```shell
+cd cosmos-reason1
+just install
+source .venv/bin/activate
 ```
 
 ### 📈 Monitor
@@ -94,6 +105,28 @@ s3_bucket = 'your-s3-bucket' # The S3 bucket name to upload the checkpoint and s
 s3_prefix = 'outputs' # The S3 prefix to upload the checkpoint and safetensors weight.
 ```
 
+## Download data
+
+### 📥 Get Access for AgiBot
+
+- **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)  
+
+### ⚙️ Run Preprocessing Script
+
+Run the following script to download and preprocess video clips, take `holoassist` as example:
+
+```bash
+# Export HF_TOKEN to get access to Cosmos Reason dataset
+export HF_TOKEN=...
+
+python tools/eval/process_raw_data.py \
+  --dataset holoassist \
+  --data_dir data \
+  --task benchmark
+```
+
+> 💡 Replace `holoassist` with `agibot` or `bridgev2` as needed.
+
 ## 📘 Training Scripts
 
 > **_NOTE:_**  Following the below training steps will trigger downloading around 200GB of model and dataset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
@@ -109,7 +142,7 @@ The SFT training can improve the model's capability on certain tasks with a simi
 In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
 
 ```shell
-cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-fsdp2-sft.toml ./tools/dataset/cosmos_sft.py
+cosmos-rl --config configs/cosmos-reason1-7b-fsdp2-sft.toml ./tools/dataset/cosmos_sft.py
 ```
 
 After training finishes, the DCP checkpoint will be saved to `$output_dir`, and also with `huggingface` style model saved.
@@ -160,7 +193,7 @@ The RL training can improve the model's reasoning capability on certain tasks wi
 In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
-cosmos-rl --config configs/cosmos-reason1/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
+cosmos-rl --config configs/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 

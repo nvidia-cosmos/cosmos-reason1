@@ -1,5 +1,5 @@
 [project]
-name = "cosmos-reason1"
+name = "cosmos-reason1-sft-dataset"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
@@ -25,7 +25,6 @@ train = [
 
 [dependency-groups]
 build = ["torch"]
-dev = ["deptry"]
 
 [tool.uv]
 no-build-isolation-package = ["flash-attn"]
@@ -33,13 +32,3 @@ override-dependencies = ["transformers>=4.53"]
 
 [tool.uv.sources]
 cosmos-rl = { git = "https://github.com/nvidia-cosmos/cosmos-rl.git" }
-
-[tool.deptry]
-known_first_party = ["tools"]
-
-[tool.deptry.package_module_name_map]
-ffmpeg-python = "ffmpeg"
-opencv-python = "cv2"
-
-[tool.deptry.per_rule_ignores]
-DEP002 = ["wandb"]

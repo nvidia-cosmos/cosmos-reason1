@@ -14,113 +14,36 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 * [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B)
 
-## Getting Started
+## Inference
 
-### Install
+Install system dependencies:
 
-```sh
-# Install uv/just
+```shell
 curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-uv tool install rust-just
-
-# Clone the repository
-git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
-cd cosmos-reason1
 ```
 
-Install the package using your preferred environment:
+Login to huggingface:
 
-1. venv
-
-  Prerequiesites:
-
-  * redis-server
-
-  ```sh
-  just install
-  source .venv/bin/activate
-  ```
-
-2. conda
-
-  Prerequiesites:
-
-  * conda/mamba
-
-  ```sh
-  just install-conda <conda|mamba|micromamba>
-  <conda|mamba|micromamba> activate cosmos-reason1
-  ```
-
-### Inference
-> **NOTE:** We suggest using `fps=4` for the input video and `max_tokens=4096` to avoid truncated response.
-```python
-from transformers import AutoProcessor
-from vllm import LLM, SamplingParams
-from qwen_vl_utils import process_vision_info
-
-# You can also replace the MODEL_PATH by a safetensors folder path mentioned above
-MODEL_PATH = "nvidia/Cosmos-Reason1-7B"
-
-llm = LLM(
-    model=MODEL_PATH,
-    limit_mm_per_prompt={"image": 10, "video": 10},
-)
-
-sampling_params = SamplingParams(
-    temperature=0.6,
-    top_p=0.95,
-    repetition_penalty=1.05,
-    max_tokens=4096,
-)
-
-video_messages = [
-    {"role": "system", "content": "You are a helpful assistant. Answer the question in the following format: <think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>."},
-    {"role": "user", "content": [
-            {"type": "text", "text": (
-                    "Is it safe to turn right?"
-                )
-            },
-            {
-                "type": "video", 
-                "video": "assets/sample.mp4",
-                "fps": 4,
-            }
-        ]
-    },
-]
-
-# Here we use video messages as a demonstration
-messages = video_messages
-
-processor = AutoProcessor.from_pretrained(MODEL_PATH)
-prompt = processor.apply_chat_template(
-    messages,
-    tokenize=False,
-    add_generation_prompt=True,
-)
-image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
-
-mm_data = {}
-if image_inputs is not None:
-    mm_data["image"] = image_inputs
-if video_inputs is not None:
-    mm_data["video"] = video_inputs
-
-llm_inputs = {
-    "prompt": prompt,
-    "multi_modal_data": mm_data,
-
-    # FPS will be returned in video_kwargs
-    "mm_processor_kwargs": video_kwargs,
-}
-
-outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
-generated_text = outputs[0].outputs[0].text
-
-print(generated_text)
+```shell
+uv tool install -U "huggingface_hub[cli]"
+hf auth login
 ```
+
+Example scripts:
+
+* [🤗 Transformers](scripts/inference.py)
+
+  ```shell
+  ./scripts/inference.py --prompt 'Please describe the video.' --videos assets/sample.mp4
+  ```
+
+* [vLLM](scripts/inference_vllm.py)
+
+  ```shell
+  ./scripts/inference_vllm.py
+  ```
+
+Example output:
 
 <table>
   <tr>
@@ -146,7 +69,7 @@ Based on the video, turning right may not be entirely safe due to the following 
   <tr>
     <td>
       <p>User prompt: Analyze the video for any artifacts or anomalies.</p>
-      <img src="assets/examples_video_critic/generation_3.gif" alt="Demo GIF" width="400" /><br/>
+      <img src="examples/video_critic/assets/generation_3.gif" alt="Demo GIF" width="400" /><br/>
     </td>
     <td style="vertical-align: top; padding-left: 20px;">
       <!-- Text on the right -->
@@ -162,10 +85,13 @@ The left robot arm approaches the orange bottle and makes contact with it. Howev
   </tr>
 </table>
 
-### Tutorial
-[Using Cosmos-Reason1 as Video Critic for Rejection Sampling](examples/video_critic.md).
+## Tutorials
 
-### SFT and RL Training
+* [Using Cosmos-Reason1 as Video Critic for Rejection Sampling](examples/video_critic/README.md)
+* [Post-training Cosmos-Reason1 using Cosmos-Reason1-SFT-Dataset](examples/cosmos_reason1_sft_dataset/README.md)
+
+## Post-Training
+
 The [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl)  repository is an async post-training framework specialized for Supervised Fine-Tuning (SFT) and Reinforcement Learning with Human Feedback (RLHF). It prioritizes performance, scalability, and fault tolerance.
 
 For detailed instructions on running SFT and PPO training, please refer to our [User Guide](docs/UserGuide.md).

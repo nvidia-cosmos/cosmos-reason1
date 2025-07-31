@@ -1,7 +1,0 @@
-name: cosmos-reason1
-channels:
-  - conda-forge
-  - nodefaults
-dependencies:
-  - python=3.12
-  - redis-server

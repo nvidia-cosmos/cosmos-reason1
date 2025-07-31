@@ -1,7 +1,7 @@
 # Using Cosmos-Reason1 as Video Critic for Rejection Sampling
 
 <p align="center">
-  <img src="../assets/examples_video_critic/rejection_sampling_diagram.png" alt="Rejection sampling workflow">
+  <img src="assets/rejection_sampling_diagram.png" alt="Rejection sampling workflow">
 </p>
 
 
@@ -18,21 +18,21 @@ Using the same input, the world model generates multiple video rollouts. Among t
   <tr>
     <td align="center">
       <strong>Generation 0</strong><br>
-      <img src="../assets/examples_video_critic/generation_0.gif" alt="Generation 0">
+      <img src="assets/generation_0.gif" alt="Generation 0">
     </td>
     <td align="center">
       <strong>Generation 1</strong><br>
-      <img src="../assets/examples_video_critic/generation_1.gif" alt="Generation 1">
+      <img src="assets/generation_1.gif" alt="Generation 1">
     </td>
   </tr>
   <tr>
     <td align="center">
       <strong>Generation 2</strong><br>
-      <img src="../assets/examples_video_critic/generation_2.gif" alt="Generation 2">
+      <img src="assets/generation_2.gif" alt="Generation 2">
     </td>
     <td align="center">
       <strong>Generation 3</strong><br>
-      <img src="../assets/examples_video_critic/generation_3.gif" alt="Generation 3">
+      <img src="assets/generation_3.gif" alt="Generation 3">
     </td>
   </tr>
 </table>
@@ -44,15 +44,15 @@ Cosmos-Reason1 is tasked to analyze each video element-by-element, and organize 
 
 | Video | Evaluation and Example Output |
 |-------|-------------------|
-| <img src="../assets/examples_video_critic/generation_0.gif" alt="Generation 0" width="300"> | Score: 0.0 <br><br> [Raw Output](../assets/examples_video_critic/generation_0_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_0_formatted.md) |
-| <img src="../assets/examples_video_critic/generation_1.gif" alt="Generation 1" width="300"> | **Score: 0.75 (Best)** <br><br> [Raw Output](../assets/examples_video_critic/generation_1_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_1_formatted.md) |
-| <img src="../assets/examples_video_critic/generation_2.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](../assets/examples_video_critic/generation_2_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_2_formatted.md) |
-| <img src="../assets/examples_video_critic/generation_3.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](../assets/examples_video_critic/generation_3_raw_output.txt) <br><br> [Formatted Output](../assets/examples_video_critic/generation_3_formatted.md) |
+| <img src="assets/generation_0.gif" alt="Generation 0" width="300"> | Score: 0.0 <br><br> [Raw Output](assets/generation_0_raw_output.txt) <br><br> [Formatted Output](assets/generation_0_formatted.md) |
+| <img src="assets/generation_1.gif" alt="Generation 1" width="300"> | **Score: 0.75 (Best)** <br><br> [Raw Output](assets/generation_1_raw_output.txt) <br><br> [Formatted Output](assets/generation_1_formatted.md) |
+| <img src="assets/generation_2.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](assets/generation_2_raw_output.txt) <br><br> [Formatted Output](assets/generation_2_formatted.md) |
+| <img src="assets/generation_3.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](assets/generation_3_raw_output.txt) <br><br> [Formatted Output](assets/generation_3_formatted.md) |
 
 We also provide an [example script](video_critic.py) that demonstrates how to parse the Reason1 output and reformat it into an html report.
 
 ```bash
-python examples/video_critic.py --video_path assets/sample.mp4 --num_trials 4
+./examples/video_critic/video_critic.py --video_path assets/sample.mp4 --num_trials 4
 # The resulting html file will be saved to assets/sample.html
 ```
 
