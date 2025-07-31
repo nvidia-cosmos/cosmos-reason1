@@ -1,3 +1,30 @@
+#!/usr/bin/env -S uv run --script
+#
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "accelerate",
+#   "qwen-vl-utils",
+#   "rich",
+#   "torch",
+#   "torchcodec",
+#   "torchvision",
+#   "transformers>=4.51.3",
+#   "vllm",
+# ]
+# exclude-newer = "2025-07-31T00:00:00Z"
+# ///
+
+"""Example script for using Cosmos Reason1 as a video critic.
+
+Example:
+
+```shell
+./examples/video_critic/video_critic.py
+```
+"""
+
+
 import argparse
 import os
 import base64
