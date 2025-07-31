@@ -222,10 +222,12 @@ def make_all_tasks(
                 if video_path.startswith('clips/') and '.' in video_path:
                     video_id = video_path.split('/')[-1].rsplit('.', 1)[0]
                     qa_data = item.get('qa_pairs')
+                    if video_id not in qa_pairs_dict:
+                        qa_pairs_dict[video_id] = []
                     if isinstance(qa_data, list):
-                        qa_pairs_dict[video_id] = qa_data
+                        qa_pairs_dict[video_id].extend(qa_data)
                     elif isinstance(qa_data, dict):
-                        qa_pairs_dict[video_id] = [qa_data]
+                        qa_pairs_dict[video_id].append(qa_data)
                     
         except (json.JSONDecodeError, FileNotFoundError) as e:
             log.error(f"Error loading QA pairs for {datasource_name}: {e}")
