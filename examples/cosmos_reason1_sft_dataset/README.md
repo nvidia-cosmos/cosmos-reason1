@@ -6,10 +6,10 @@ This document provides usage instructions for scripts related to training and ev
 
 Overall, cosmos_reason1 can support SFT/RL training with a broad range of models and parallelisms, users can configure these with a config file. For convenience, we have provided several pre-defined configs in the `configs` folder. e.g:
 
-| Config File                                         | Policy TP | Policy FSDP | Policy PP | Rollout TP | Rollout PP | Num GPUs                     | Purpose |
-| --------------------------------------------------- | --------- | ----------- | --------- | ---------- | ---------- | ---------------------------- | ------- |
-| `cosmos-reason1-7b-fsdp2-sft.toml`                    | 2         | 1           | 1         | -          | -          | 2                            | SFT     |
-| `cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml` | 2         | 1           | 1         | 2          | 1          | 2 for policy,  2 for rollout | GRPO    |
+| Config File                                 | Policy TP | Policy FSDP | Policy PP | Rollout TP | Rollout PP | Num GPUs                     | Purpose |
+| ------------------------------------------- | --------- | ----------- | --------- | ---------- | ---------- | ---------------------------- | ------- |
+| `cosmos-reason1-7b-fsdp2-sft.toml`          | 1         | 2           | 1         | -          | -          | 2                            | SFT     |
+| `cosmos-reason1-7b-p-fsdp2-r-tp2-grpo.toml` | 1         | 2           | 1         | 2          | 1          | 2 for policy,  2 for rollout | GRPO    |
 
 SFT training requires using a **minimum of 2** GPUs, and RL training requires **at least 4** GPUs. Depending on the size of the model you are going to train, for **7B (or larger size)** models, GPUs with **80GB** of memory are required. For **3B (or smaller size)** models, GPUs with **>=32GB** memory are required.
 
@@ -139,7 +139,7 @@ The SFT training can improve the model's capability on certain tasks with a simi
 
 > **_NOTE:_**  We set the `nvidia/Cosmos-Reason1-7B` as the default base model of SFT, which is already SFT trained on the `nvidia/Cosmos-Reason1-SFT-Dataset`. We recommend you use your own dataset for SFT exploration.
 
-In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with TP=2 on 2 GPUs:
+In this example, we demonstrate how to launch SFT training for `nvidia/Cosmos-Reason1-7B` with `FSDP=2` on 2 GPUs:
 
 ```shell
 cosmos-rl --config configs/cosmos-reason1-7b-fsdp2-sft.toml ./tools/dataset/cosmos_sft.py
@@ -190,10 +190,10 @@ To evaluate the improved performance of this sft model, please refer to the Eval
 
 The RL training can improve the model's reasoning capability on certain tasks with the reasoning training dataset.
 
-In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `TP=2` & `FSDP=1`, and with rollout of `TP=2`, in total 4 GPUs:
+In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-Reason1-7B` with `FSDP=2`, and with rollout of `TP=2`, in total 4 GPUs:
 
 ```shell
-cosmos-rl --config configs/cosmos-reason1-7b-p-fsdp1-tp2-r-tp2-pp1-grpo.toml tools/dataset/cosmos_grpo.py
+cosmos-rl --config configs/cosmos-reason1-7b-p-fsdp2-r-tp2-grpo.toml tools/dataset/cosmos_grpo.py
 ```
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.
 

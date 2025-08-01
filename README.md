@@ -92,9 +92,7 @@ The left robot arm approaches the orange bottle and makes contact with it. Howev
 
 ## Post-Training
 
-The [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl)  repository is an async post-training framework specialized for Supervised Fine-Tuning (SFT) and Reinforcement Learning with Human Feedback (RLHF). It prioritizes performance, scalability, and fault tolerance.
-
-For detailed instructions on running SFT and PPO training, please refer to our [User Guide](docs/UserGuide.md).
+The [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl) repository is an async post-training framework specialized for Supervised Fine-Tuning (SFT) and Reinforcement Learning with Human Feedback (RLHF). It prioritizes performance, scalability, and fault tolerance.
 
 ## License and Contact
 
