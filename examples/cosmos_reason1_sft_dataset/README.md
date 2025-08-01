@@ -9,7 +9,7 @@ Overall, cosmos_reason1 can support SFT/RL training with a broad range of models
 | Config File                                 | Policy TP | Policy FSDP | Policy PP | Rollout TP | Rollout PP | Num GPUs                     | Purpose |
 | ------------------------------------------- | --------- | ----------- | --------- | ---------- | ---------- | ---------------------------- | ------- |
 | `cosmos-reason1-7b-fsdp2-sft.toml`          | 1         | 2           | 1         | -          | -          | 2                            | SFT     |
-| `cosmos-reason1-7b-p-fsdp2-r-tp2-grpo.toml` | 1         |             | 1         | 2          | 1          | 2 for policy,  2 for rollout | GRPO    |
+| `cosmos-reason1-7b-p-fsdp2-r-tp2-grpo.toml` | 1         | 2           | 1         | 2          | 1          | 2 for policy,  2 for rollout | GRPO    |
 
 SFT training requires using a **minimum of 2** GPUs, and RL training requires **at least 4** GPUs. Depending on the size of the model you are going to train, for **7B (or larger size)** models, GPUs with **80GB** of memory are required. For **3B (or smaller size)** models, GPUs with **>=32GB** memory are required.
 
