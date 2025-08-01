@@ -8,7 +8,7 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 ## News
 * 2025-08-1: We added support for spatial-temporal reasoning for city and industrial operations. See latest checkpoint [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B).
-* 2025-06-11: We enhance the model’s capability on judging the physical plausibility of a video. See [this tutorial](https://github.com/nvidia-cosmos/cosmos-reason1/blob/main/examples/video_critic.md) for details.
+* 2025-06-11: We enhance the model’s capability on judging the physical plausibility of a video. See [this tutorial](examples/video_critic/README.md) for details.
 * 2025-05-17: We release model weights and training data under [Hugging Face](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7).
 
 ## Model
@@ -21,6 +21,7 @@ Install system dependencies:
 
 ```shell
 curl -LsSf https://astral.sh/uv/install.sh | sh
+source $HOME/.local/bin/env
 ```
 
 Login to huggingface:

@@ -38,4 +38,4 @@ A handheld barcode scanner rests on the right side of the table. It is black and
 **Anomaly**: 🟢 No 🟢
 
 ## Final Assessment
-**Result**: 🔴 Yes 🔴 
+**Result**: 🔴 Yes 🔴

@@ -131,7 +131,7 @@ def download_checkpoint(repo_id: str, checkpoint_output_dir: str) -> None:
     """
     if check_model_shards_complete(checkpoint_output_dir):
         return
-    
+
     log.info(f"Attempting to download all checkpoint files for {repo_id} to {checkpoint_output_dir}")
 
     os.makedirs(checkpoint_output_dir, exist_ok=True)

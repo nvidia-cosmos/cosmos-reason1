@@ -2,6 +2,14 @@
 
 We'd love to receive your patches and contributions. Please keep your PRs as draft until such time that you would like us to review them.
 
+## Testing
+
+To test your changes locally, run
+
+```shell
+just test
+```
+
 ## Code Reviews
 
 All submissions, including submissions by project members, require review. We use GitHub pull requests for this purpose. Consult

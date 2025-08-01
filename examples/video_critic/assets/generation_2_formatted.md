@@ -38,4 +38,4 @@ The table is made of wood and serves as the workspace for the robotic arms and o
 **Anomaly**: 🟢 No 🟢
 
 ## Final Assessment
-**Result**: 🔴 Yes 🔴 
+**Result**: 🔴 Yes 🔴

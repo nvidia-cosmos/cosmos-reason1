@@ -97,4 +97,3 @@ Analyze the video carefully and answer the question according to the following t
 ```
 Analyze the video for any artifacts or anomalies.
 ```
-
