@@ -4,7 +4,7 @@ We'd love to receive your patches and contributions. Please keep your PRs as dra
 
 ## Testing
 
-To test your changes, run
+To test your changes locally, run
 
 ```shell
 just test
