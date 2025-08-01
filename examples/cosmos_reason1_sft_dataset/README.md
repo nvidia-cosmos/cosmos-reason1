@@ -26,6 +26,7 @@ Install system dependencies:
 ```sh
 brew install pkgx || curl https://pkgx.sh | sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
+export PATH="$HOME/.local/bin:$PATH"
 pkgm install just
 pkgm install redis-server
 ```
@@ -104,28 +105,6 @@ upload_s3 = true # Whether to upload the checkpoint and safetensors to S3. Defau
 s3_bucket = 'your-s3-bucket' # The S3 bucket name to upload the checkpoint and safetensors weight.
 s3_prefix = 'outputs' # The S3 prefix to upload the checkpoint and safetensors weight.
 ```
-
-## Download data
-
-### 📥 Get Access for AgiBot
-
-- **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)  
-
-### ⚙️ Run Preprocessing Script
-
-Run the following script to download and preprocess video clips, take `holoassist` as example:
-
-```bash
-# Export HF_TOKEN to get access to Cosmos Reason dataset
-export HF_TOKEN=...
-
-python tools/eval/process_raw_data.py \
-  --dataset holoassist \
-  --data_dir data \
-  --task benchmark
-```
-
-> 💡 Replace `holoassist` with `agibot` or `bridgev2` as needed.
 
 ## 📘 Training Scripts
 
@@ -237,7 +216,25 @@ python tools/eval/download_hf_data.py \
 
 ### 🛠️ Step 2: (Optional) Download Remaining Video Clips
 
-Follow the instructions in [RawDataDownload.md](RawDataDownload.md) to manually download and preprocess the AgiBot, BridgeV2, and HoloAssist datasets for evaluation.
+#### 📥 Get Access for AgiBot
+
+- **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)  
+
+#### ⚙️ Run Preprocessing Script
+
+Run the following script to download and preprocess video clips, take `holoassist` as example:
+
+```bash
+# Export HF_TOKEN to get access to Cosmos Reason dataset
+export HF_TOKEN=...
+
+python tools/eval/process_raw_data.py \
+  --dataset holoassist \
+  --data_dir data \
+  --task benchmark
+```
+
+> 💡 Replace `holoassist` with `agibot` or `bridgev2` as needed.
 
 ### 🚀 Step 3: Run Evaluation on Benchmarks
 
