@@ -48,4 +48,4 @@ No human body parts are present in the video. Therefore, no analysis is required
 **Anomaly**: 🟢 No 🟢
 
 ## Final Assessment
-**Result**: 🔴 Yes 🔴 
+**Result**: 🔴 Yes 🔴

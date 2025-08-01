@@ -85,13 +85,13 @@ def define_model(
     Returns:
         A tuple containing the loaded model and its processor.
     """
-   
+
     hf_cache_dir = os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
     checkpoint_output_dir = os.path.join(hf_cache_dir, model_name)
 
     # Ensure the checkpoint directory exists
     os.makedirs(checkpoint_output_dir, exist_ok=True)
-    
+
     # Download checkpoint if not already present
     download_checkpoint(model_name, checkpoint_output_dir)
 
@@ -105,7 +105,7 @@ def define_model(
     llm = LLM(
         model=checkpoint_output_dir,
         tokenizer=checkpoint_output_dir,
-        trust_remote_code=True, 
+        trust_remote_code=True,
         dtype=dtype,
         # Specify multimedia limit per prompt (e.g., one video, zero images)
         limit_mm_per_prompt={"video": 1, "image": 0},
@@ -183,7 +183,7 @@ def make_all_tasks(
         - A list of all InputStructure objects to be evaluated.
         - A list of all corresponding OutputStructure objects.
     """
-    
+
     input_tasks: List[InputStructure] = []  # Stores all input tasks
     output_results: List[OutputStructure] = []  # Stores all output result objects
 
@@ -196,7 +196,7 @@ def make_all_tasks(
 
         # Construct the video path properly
         video_path = os.path.join(data_dir, datasource_name, "clips")
-        
+
         # Check if video_path exists
         if not os.path.exists(video_path):
             log.error(f"Video path does not exist: {video_path}")
@@ -214,7 +214,7 @@ def make_all_tasks(
             qa_pairs_path = os.path.join(data_dir, datasource_name, f"{datasource_name}_benchmark_qa_pairs.json")  # Assuming JSON file name
             with open(qa_pairs_path, 'r') as f:
                 qa_pairs = json.load(f)
-                
+
             # Convert qa_pairs list to a dictionary
             qa_pairs_dict = {}
             for item in qa_pairs:
@@ -226,7 +226,7 @@ def make_all_tasks(
                         qa_pairs_dict[video_id] = qa_data
                     elif isinstance(qa_data, dict):
                         qa_pairs_dict[video_id] = [qa_data]
-                    
+
         except (json.JSONDecodeError, FileNotFoundError) as e:
             log.error(f"Error loading QA pairs for {datasource_name}: {e}")
             continue
@@ -448,7 +448,7 @@ def main():
         required=True,
         help="Path to YAML configuration file with model and evaluation parameters."
     )
-    
+
     # These arguments will remain as direct command-line options
     parser.add_argument(
         "--results_dir",
@@ -479,9 +479,9 @@ def main():
         default=None,
         help="Name of the model to use for evaluation.",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Load configuration from YAML file
     try:
         with open(args.config_file, 'r') as f:
@@ -489,18 +489,18 @@ def main():
     except Exception as e:
         log.error(f"Error loading config file: {e}")
         return
-    
+
     # Extract configuration sections
     model_config = config.get('model', {})
     eval_config = config.get('evaluation', {})
     gen_config = config.get('generation', {})
-    
+
     # Retrieve datasets from config
     datasets = config.get('datasets')
     if not datasets:
         log.error("No datasets provided in config file")
         return
-    
+
     # Convert datasets list to a temporary datasource file or use in-memory list
     # depending on what make_all_tasks expects
     if isinstance(datasets, list):
@@ -508,20 +508,20 @@ def main():
     else:
         log.error("'datasets' must be a list in the config file")
         return
-    
+
     # --- Model Configuration ---
     model_name = args.model_name or model_config.get('model_name', None)
     tokenizer_model_name = model_config.get('tokenizer_model_name', "qwen2.5-vl-7b")
     dtype = model_config.get('dtype', "bfloat16")
     tp_size = model_config.get('tp_size', 1)
     max_length = model_config.get('max_length', 128000)
-    
+
     # --- Evaluation Parameters ---
     answer_type = eval_config.get('answer_type', "reasoning")
     num_processes = eval_config.get('num_processes', 80)
     fps = eval_config.get('fps', 4)
     seed = eval_config.get('seed', 1)
-    
+
     # --- Generation Parameters ---
     max_retries = gen_config.get('max_retries', 10)
     max_tokens = gen_config.get('max_tokens', 1024)
@@ -533,7 +533,7 @@ def main():
     # Append dtype and seed to results directory for better organization
     results_output_base = f"{args.results_dir}"
     log.info(f"Results base directory updated to: {results_output_base}")
-    
+
     args.data_dir = f"{args.data_dir}/benchmark"
 
     # Log all effective arguments for reproducibility

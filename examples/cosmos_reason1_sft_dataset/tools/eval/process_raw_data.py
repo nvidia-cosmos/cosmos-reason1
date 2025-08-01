@@ -52,11 +52,11 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
     """
     Download all data from the AgiBotWorld-Beta dataset on Hugging Face
     and extract any .tar files found.
-    
+
     Args:
         target_dir: The target directory where files will be saved
         hf_token: Hugging Face API token for private repositories (if needed)
-    
+
     Returns:
         List of paths to downloaded files
     """
@@ -64,44 +64,44 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
     repo_id = "agibot-world/AgiBotWorld-Beta"
     repo_type = "dataset"
     dataset = "agibot"
-    
+
     # Authenticate with Hugging Face
     if hf_token:
         login(token=hf_token)
         print(f"Successfully logged in to Hugging Face")
     else:
         print("No Hugging Face token provided. Attempting to use cached credentials...")
-    
+
     # Create target directory if it doesn't exist
     target_dir = os.path.join(data_dir, 'raw', dataset)
     os.makedirs(target_dir, exist_ok=True)
-    
+
     # Initialize the Hugging Face API
     api = HfApi(token=hf_token)
-    
+
     try:
         print(f"Accessing repository: {repo_id}")
-        
+
         # List repository contents
         files = api.list_repo_files(
             repo_id=repo_id,
             repo_type=repo_type
         )
-        
+
         # Count .tar files for information
         tar_files = [f for f in files if f.endswith('.tar')]
         other_files = [f for f in files if not f.endswith('.tar')]
-        
+
         print(f"\nFound {len(files)} total files in the repository:")
         print(f"- {len(tar_files)} .tar files that will be extracted")
         print(f"- {len(other_files)} other files")
-            
+
         if not files:
             print("\nNo files found in the repository.")
             return []
-            
+
         downloaded_files = []
-        
+
         # Download all files
         for i, file_path in enumerate(files):
             try:
@@ -112,16 +112,16 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
                     os.makedirs(subdir_path, exist_ok=True)
                 else:
                     subdir_path = target_dir
-                
+
                 # Construct local file path
                 file_name = os.path.basename(file_path)
                 local_file_path = os.path.join(subdir_path, file_name)
-                
+
                 # Simple check if file already exists
                 if os.path.exists(local_file_path):
                     print(f"\n({i+1}/{len(files)}) Skipping {file_path} as it already exists at {local_file_path}")
                     downloaded_files.append(local_file_path)
-                    
+
                     # Check if we should extract existing tar files that weren't extracted before
                     if file_path.endswith('.tar') and not os.path.exists(os.path.join(subdir_path, ".extraction_completed")):
                         print(f"Extracting existing file {file_name} to {subdir_path}...")
@@ -131,11 +131,11 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
                         with open(os.path.join(subdir_path, ".extraction_completed"), "w") as f:
                             f.write("Extraction completed")
                         print(f"Extraction of existing {file_name} complete.")
-                    
+
                     continue
-                
+
                 print(f"\n({i+1}/{len(files)}) Downloading {file_path}...")
-                
+
                 # Download file from Hugging Face
                 downloaded_file = hf_hub_download(
                     repo_id=repo_id,
@@ -145,9 +145,9 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
                     local_dir=target_dir,
                     local_dir_use_symlinks=False
                 )
-                
+
                 downloaded_files.append(downloaded_file)
-                
+
                 # Extract if it's a .tar file
                 if file_path.endswith('.tar'):
                     print(f"Extracting {file_name} to {subdir_path}...")
@@ -157,22 +157,22 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
                     with open(os.path.join(subdir_path, ".extraction_completed"), "w") as f:
                         f.write("Extraction completed")
                     print(f"Extraction of {file_name} complete.")
-                
+
                 print(f"Successfully processed {file_name}")
             except Exception as e:
                 print(f"Error processing {file_path}: {str(e)}")
-                
+
         # Summary
         tar_downloads = sum(1 for f in downloaded_files if f.endswith('.tar'))
         other_downloads = len(downloaded_files) - tar_downloads
-        
+
         print(f"\nDownload complete!")
         print(f"Downloaded {len(downloaded_files)} files to {target_dir}:")
         print(f"- {tar_downloads} .tar files (all extracted)")
         print(f"- {other_downloads} other files")
-        
+
         return downloaded_files
-                
+
     except Exception as e:
         print(f"Error accessing repository: {str(e)}")
         print("Please verify the repository exists and your token has access.")
@@ -260,7 +260,7 @@ def get_agibot_clip_info(clip_name: str, data_dir: str) -> Tuple[str, str, str, 
         clip_name = clip_name[6:]
     if clip_name.endswith(".mp4"):
         clip_name = clip_name[:-4]
-    
+
     # Split the clip name into components
     parts = clip_name.split("-")
     task_id = parts[0]
@@ -268,10 +268,10 @@ def get_agibot_clip_info(clip_name: str, data_dir: str) -> Tuple[str, str, str, 
     video_name = parts[2]
     start_frame = int(parts[3])
     end_frame = int(parts[4])
-    
+
     # Construct video path according to the new format
     video_path = f"{data_dir}/agibot/observations/{task_id}/{episode_id}/videos/{video_name}.mp4"
-    
+
     return video_path, video_name, episode_id, start_frame, end_frame
 
 def get_bridge_clip_info(clip_name: str) -> Tuple[str, str, int, int]:
@@ -288,16 +288,16 @@ def download_bridge_dataset(data_dir: str, split: str, dataset: str) -> None:
     # Define the reject pattern for the other split (train vs val)
     reject = "train" if split == "val" else "val"
     url = "https://rail.eecs.berkeley.edu/datasets/bridge_release/data/tfds/bridge_dataset/"
-    
+
     # Create destination directory to check for existing files
     bridge_dataset_dir = os.path.join(target_dir, "bridge_dataset", "1.0.0")
     os.makedirs(bridge_dataset_dir, exist_ok=True)
-    
+
     log.info(f"Downloading Bridge dataset (split: {split}) to {target_dir}...")
-    
+
     # Change to the target directory
     os.chdir(target_dir)
-    
+
     # Use wget with more precise control to avoid downloading parent directory files
     subprocess.run([
         "wget", "-r", "-nH", "--cut-dirs=4", "--no-clobber",
@@ -308,7 +308,7 @@ def download_bridge_dataset(data_dir: str, split: str, dataset: str) -> None:
 
     # Report on downloaded files
     log.info(f"Finished downloading Bridge dataset (split: {split}).")
-    
+
 
 
 def save_clip(images: List[np.ndarray], data_dir: str, dataset: str, clip_name: str, task: str = "benchmark") -> None:
@@ -413,16 +413,16 @@ def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str]
 
     elif dataset == "holoassist" or dataset == "agibot":
         log.info(f"Number of videos in {dataset}: {len(video_clip_map)}")
-        
+
         for video_id, clips in video_clip_map.items():
             for clip in clips:
                 input_video_path = clip['video_path']
-                
+
                 # Skip processing if video file doesn't exist
                 if not os.path.exists(input_video_path):
                     log.warning(f"Skipping clip {clip['clip_name']} - video file not found")
                     continue
-                
+
                 # Calculate start and end times in seconds
                 if dataset == "agibot":
                     # Get actual FPS using OpenCV
@@ -433,16 +433,16 @@ def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str]
                     # For holoassist, start_frame and end_frame are already in seconds
                     start_time = clip['start_frame']
                     end_time = clip['end_frame']
-                
+
                 # Create output path using clip name
                 output_video = os.path.join(data_dir, task, dataset, "clips", f"{clip['clip_name']}")
                 os.makedirs(os.path.dirname(output_video), exist_ok=True)
-                
+
                 try:
                     # Force software decoding for AV1 compatibility
-                    ffmpeg.input(input_video_path, ss=start_time, to=end_time, 
+                    ffmpeg.input(input_video_path, ss=start_time, to=end_time,
                                 hwaccel="none").output(
-                        output_video, vcodec="libx264", acodec="aac", 
+                        output_video, vcodec="libx264", acodec="aac",
                         **{"c:v": "libx264", "preset": "fast"}
                     ).run(quiet=True, overwrite_output=True)
                     log.info(f"Saved clip to: {output_video}")
@@ -456,7 +456,7 @@ def main():
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--token", type=str)
     parser.add_argument("--task", type=str, choices=["benchmark", "sft", "rl"], required=True)
-    
+
     args = parser.parse_args()
 
     hf_dataset_map = {
@@ -473,11 +473,11 @@ def main():
         log.warning("No Hugging Face token (HF_TOKEN) provided via args or environment.")
 
     ds = load_dataset(hf_dataset, args.dataset)
-    
+
     clip_names = []
     for dataset_name in ds.keys():
         clip_names.extend([item.split('clips/')[-1] for item in ds[dataset_name]["video"]])
-        
+
     preprocess_clip(clip_names=clip_names, dataset=args.dataset, data_dir=args.data_dir, split=split, hf_token=hf_token, task=args.task)
 
 

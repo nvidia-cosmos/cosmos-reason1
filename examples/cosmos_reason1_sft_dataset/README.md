@@ -46,7 +46,7 @@ We recommend that you to use wandb for training monitoring
 1. Login wandb, you can acquire your WANDB_API_KEY from [here](https://wandb.ai/authorize). Then you can login wandb by:
 
 ```bash
-wandb login # Then enter your WANDB_API_KEY 
+wandb login # Then enter your WANDB_API_KEY
 ```
 
 or you can add WANDB_API_KEY to your environment variables by adding the line to your shell config (e.g., `~/.bashrc`):
@@ -56,11 +56,11 @@ export WANDB_API_KEY=${WANDB_API_KEY}
 
 2. Launch training with the following Training Scripts, you will see the wandb link in the logging:
 ```bash
-wandb: Currently logged in as: ${WANDB_USER_NAME} to https://api.wandb.ai. Use `wandb login --relogin` to force relogin                                  
-wandb: Tracking run with wandb version 0.19.11                                                                                                                           
-wandb: Run data is saved locally in ./outputs/qwen2-5-3b-tp2-dpn-sft/20250515101157/wandb/run-20250515_101157-20250515101157                                             
-wandb: Run `wandb offline` to turn off syncing.                                                                                                                          
-wandb: Syncing run ./outputs/qwen2-5-3b-tp2-dpn-sft/20250515101157                                                                                                       
+wandb: Currently logged in as: ${WANDB_USER_NAME} to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.19.11
+wandb: Run data is saved locally in ./outputs/qwen2-5-3b-tp2-dpn-sft/20250515101157/wandb/run-20250515_101157-20250515101157
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run ./outputs/qwen2-5-3b-tp2-dpn-sft/20250515101157
 wandb: ⭐️ View project at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}
 wandb: 🚀 View run at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}/runs/20250515101157
 ```
@@ -196,18 +196,18 @@ Download annotations and sample video clips using the script below:
 ```bash
 python tools/eval/download_hf_data.py \
     --target data \
-    --task benchmark 
+    --task benchmark
 ```
 
-> **Note:**  
-> This script downloads:  
-> - ✅ Annotations for: 
+> **Note:**
+> This script downloads:
+> - ✅ Annotations for:
 >   - `AV` # For autonomous vehicles' general description, driving difficulty, and notice
 >   - [RoboVQA](https://robovqa.github.io/) # Videos, instructions, and question-answer pairs of agents (robots, humans, humans-with-grasping-tools) executing a task.
 >   - [AgiBot-World](https://github.com/OpenDriveLab/AgiBot-World) # A wide range of real-life tasks for robot manipulation
->   - [BridgeData V2](https://rail-berkeley.github.io/bridgedata/) # A wide array of robotic manipulation behaviors 
+>   - [BridgeData V2](https://rail-berkeley.github.io/bridgedata/) # A wide array of robotic manipulation behaviors
 >   - [HoloAssist Dataset](https://holoassist.github.io/) # Crucial first-person perspectives that provide natural and immersive understanding of human actions
-> - ✅ Video clips for:  
+> - ✅ Video clips for:
 >   - `AV`
 >   - `RoboVQA`
 >   -  ⚠️ Video clips for AgiBot-World, BridgeData V2, and HoloAssist must be downloaded manually in the next step (optional).
@@ -218,7 +218,7 @@ python tools/eval/download_hf_data.py \
 
 #### 📥 Get Access for AgiBot
 
-- **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)  
+- **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
 
 #### ⚙️ Run Preprocessing Script
 
@@ -284,7 +284,7 @@ export TP_SIZE=4
 PYTHONPATH=. python3 tools/eval/evaluate.py \
     --config tools/eval/configs/robovqa.yaml \
     --data_dir data \
-    --results_dir results 
+    --results_dir results
 ```
 
 *Tip:* You can also use `--model_name` to specify either a Hugging Face model name or a local safetensors folder path mentioned above.

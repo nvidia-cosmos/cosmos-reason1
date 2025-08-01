@@ -11,4 +11,4 @@ lint: setup
   pre-commit run --all-files || pre-commit run --all-files
 
 # Run tests
-test: setup
+test: lint

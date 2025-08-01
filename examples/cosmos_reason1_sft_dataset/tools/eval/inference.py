@@ -40,7 +40,7 @@ video_messages = [
                 )
             },
             {
-                "type": "video", 
+                "type": "video",
                 "video": "assets/sample.mp4",
                 "fps": 4,
             }
