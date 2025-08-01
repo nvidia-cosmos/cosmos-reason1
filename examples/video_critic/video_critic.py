@@ -12,6 +12,7 @@
 #   "transformers>=4.51.3",
 #   "vllm",
 # ]
+# [tool.uv]
 # exclude-newer = "2025-07-31T00:00:00Z"
 # ///
 
