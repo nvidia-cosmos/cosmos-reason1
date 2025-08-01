@@ -37,8 +37,6 @@ Install system dependencies:
 
 ```shell
 brew install pkgx || curl https://pkgx.sh | sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
 pkgm install just
 pkgm install redis-server
 ```
