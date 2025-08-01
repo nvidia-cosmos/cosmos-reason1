@@ -23,7 +23,19 @@ For the evaluation or inference, single GPU with at least 24GB memory is suffici
 
 Install system dependencies:
 
-```sh
+* [uv](https://docs.astral.sh/uv/getting-started/installation/)
+
+  ```shell
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.local/bin/env
+  ```
+
+* [just](https://github.com/casey/just?tab=readme-ov-file#installation)
+* [redis](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)
+
+[Optional] The easiest way to install the system dependencies is with `pkgx`:
+
+```shell
 brew install pkgx || curl https://pkgx.sh | sh
 curl -LsSf https://astral.sh/uv/install.sh | sh
 source $HOME/.local/bin/env

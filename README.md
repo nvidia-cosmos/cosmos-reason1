@@ -19,12 +19,14 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 Install system dependencies:
 
-```shell
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-```
+* [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-Login to huggingface:
+  ```shell
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.local/bin/env
+  ```
+
+Login to [huggingface](https://huggingface.co/docs/huggingface_hub/en/guides/cli):
 
 ```shell
 uv tool install -U "huggingface_hub[cli]"
