@@ -31,15 +31,20 @@ Install system dependencies:
   ```
 
 * [just](https://github.com/casey/just?tab=readme-ov-file#installation)
+
+  ```shell
+  pkgm install just
+  # or
+  conda install -c conda-forge just
+  ```
+
 * [redis](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)
 
-[Optional] The easiest way to install the system dependencies is with `pkgx`:
-
-```shell
-brew install pkgx || curl https://pkgx.sh | sh
-pkgm install just
-pkgm install redis-server
-```
+  ```shell
+  pkgm install redis-server
+  # or
+  conda install -c conda-forge redis-server
+  ```
 
 Install the package:
 
