@@ -23,13 +23,28 @@ For the evaluation or inference, single GPU with at least 24GB memory is suffici
 
 Install system dependencies:
 
-```sh
-brew install pkgx || curl https://pkgx.sh | sh
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-pkgm install just
-pkgm install redis-server
-```
+* [uv](https://docs.astral.sh/uv/getting-started/installation/)
+
+  ```shell
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.local/bin/env
+  ```
+
+* [just](https://github.com/casey/just?tab=readme-ov-file#installation)
+
+  ```shell
+  pkgm install just
+  # or
+  conda install -c conda-forge just
+  ```
+
+* [redis](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)
+
+  ```shell
+  pkgm install redis-server
+  # or
+  conda install -c conda-forge redis-server
+  ```
 
 Install the package:
 
