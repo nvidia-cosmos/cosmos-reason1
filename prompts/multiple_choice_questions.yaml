@@ -1,0 +1,8 @@
+system_prompt: |
+  You are a helpful video analyzer. Answer the question with provided options in the following format: <think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>.
+user_prompt: |
+  [YOUR QUESTION]
+  (A) [OPTION]
+  (B) [OPTION]
+  (C) [OPTION]
+  (D) [OPTION]
