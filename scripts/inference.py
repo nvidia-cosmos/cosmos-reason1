@@ -29,7 +29,7 @@ Example:
 
 import os
 
-# Suppress VLLM logging
+# Suppress verbose VLLM logging
 os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
 
 import argparse
@@ -142,15 +142,7 @@ def main():
     for image in images:
         user_content.append({"type": "image", "image": image} | vision_kwargs)
     for video in videos:
-        user_content.append(
-            {
-                "type": "video",
-                "video": video,
-                # HACK
-                "fps": 4,
-            }
-            | vision_kwargs
-        )
+        user_content.append({"type": "video", "video": video} | vision_kwargs)
     messages = []
     if prompt_config.system_prompt:
         messages.append({"role": "system", "content": prompt_config.system_prompt})
@@ -159,7 +151,8 @@ def main():
 
     llm = vllm.LLM(
         model=args.model,
-        limit_mm_per_prompt={"image": 10, "video": 10},
+        limit_mm_per_prompt={"image": len(images), "video": len(videos)},
+        enforce_eager=True,
     )
 
     # Process messages

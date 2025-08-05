@@ -27,6 +27,11 @@ Example:
 ```
 """
 
+import os
+
+# Suppress verbose VLLM logging
+os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+
 import argparse
 import os
 import base64
@@ -48,8 +53,6 @@ class Prompt(pydantic.BaseModel):
 
     system_prompt: str = pydantic.Field(default="", description="System prompt")
     user_prompt: str = pydantic.Field(default="", description="User prompt")
-
-MODEL_PATH = "nvidia/Cosmos-Reason1-7B"
 
 
 def parse_response(response):
@@ -198,15 +201,9 @@ def build_html_report(video_path, responses):
 
     return html
 
-def run_critic(args):
+def run_critic(llm, args):
     prompt_path = f"{ROOT}/prompts/video_critic.yaml"
     prompt_config = Prompt.model_validate(yaml.safe_load(open(prompt_path, "rb")))
-
-    llm = LLM(
-        model=MODEL_PATH,
-        limit_mm_per_prompt={"image": 0, "video": 1},
-        enforce_eager=True,
-    )
 
     sampling_params = SamplingParams(
         n=args.num_trials,
@@ -231,7 +228,7 @@ def run_critic(args):
             ]
         },
     ]
-    processor = AutoProcessor.from_pretrained(MODEL_PATH)
+    processor = AutoProcessor.from_pretrained(args.model)
     prompt = processor.apply_chat_template(
         messages,
         tokenize=False,
@@ -264,15 +261,25 @@ def parse_args():
         required=True,
         help="Path to input video for critic",
     )
-    # Rejection sampling settings
     parser.add_argument("--num_trials", type=int, default=4, help="Number of critic trials for each video")
+    parser.add_argument("--model", type=str, default="nvidia/Cosmos-Reason1-7B", help="Model path")
     return parser.parse_args()
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
-    generated_text = run_critic(args)
+
+    llm = LLM(
+        model=args.model,
+        limit_mm_per_prompt={"image": 0, "video": 1},
+        enforce_eager=True,
+    )
+
+    generated_text = run_critic(llm, args)
     html_content = build_html_report(args.video_path, generated_text)
     html_path = os.path.splitext(args.video_path)[0] + ".html"
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     print(f"Generated HTML report: {html_path}")
+
+if __name__ == "__main__":
+    main()

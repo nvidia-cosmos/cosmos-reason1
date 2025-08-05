@@ -44,6 +44,24 @@ Example script:
 ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
 ```
 
+## Prompts
+
+We provide a set of task-specific prompts that are known to work well with Cosmos Reason1:
+
+* Caption
+  * [Caption (reasoning)](prompts/caption_reason.yaml)
+  * [Caption (non-reasoning)](prompts/captions.yaml)
+* Temporal
+  * [Temporal Caption (json)](prompts/temporal_caption_json.yaml)
+  * [Temporal Caption (text)](prompts/temporal_caption_text.yaml)
+  * [Temporal Localization](prompts/temporal_localization.yaml)
+* [Multiple Choice Questions](prompts/multiple_choice_questions.yaml)
+* Analyzer
+  * [Video Critic](prompts/video_critic.yaml)
+  * [Video Analyzer](prompts/video_analyzer.yaml)
+  * [Driving Analyzer](prompts/driving_analyzer.yaml)
+* [Action Planning](prompts/action_planning.yaml)
+
 ## Tutorials
 
 * [Video Critic for Rejection Sampling](examples/video_critic/README.md)

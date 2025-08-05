@@ -48,7 +48,9 @@ Cosmos-Reason1 is tasked to analyze each video element-by-element, and organize 
 | <img src="assets/generation_2.gif" alt="Generation 2" width="300"> | Score: 0.25 <br><br> [Raw Output](assets/generation_2_raw_output.txt) <br><br> [Formatted Output](assets/generation_2_formatted.md) |
 | <img src="assets/generation_3.gif" alt="Generation 3" width="300"> | Score: 0.5 <br><br> [Raw Output](assets/generation_3_raw_output.txt) <br><br> [Formatted Output](assets/generation_3_formatted.md) |
 
-We also provide an [example script](video_critic.py) that demonstrates how to parse the Reason1 output and reformat it into an html report.
+## Example
+
+We provide an [example script](video_critic.py) that demonstrates how to parse the Reason1 output and reformat it into an html report:
 
 ```bash
 ./examples/video_critic/video_critic.py --video_path assets/sample.mp4
