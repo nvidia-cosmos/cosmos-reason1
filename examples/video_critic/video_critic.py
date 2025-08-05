@@ -5,6 +5,8 @@
 # dependencies = [
 #   "accelerate",
 #   "qwen-vl-utils",
+#   "pydantic",
+#   "pyyaml",
 #   "rich",
 #   "torch",
 #   "torchcodec",
@@ -21,50 +23,31 @@
 Example:
 
 ```shell
-./examples/video_critic/video_critic.py
+./examples/video_critic/video_critic.py --video_path assets/sample.mp4
 ```
 """
-
 
 import argparse
 import os
 import base64
+import pathlib
 import xml.etree.ElementTree as ET
 
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
 from qwen_vl_utils import process_vision_info
+import pydantic
+import yaml
 
-SYSTEM_PROMPT_CRITIC = """You are a helpful video analyzer. The goal is to identify artifacts and anomalies in the video.
-Analyze the video carefully and answer the question according to the following template:
+ROOT = pathlib.Path(__file__).parents[2].resolve()
 
-<think>
-<overview>
-[Brief description of the video.]
-</overview>
+class Prompt(pydantic.BaseModel):
+    """Config for prompt."""
 
-<component name="Component 1 Name">
-<analysis>
-[Analysis or reasoning about this component.]
-</analysis>
-<anomaly>Yes | No</anomaly>
-</component>
+    model_config = pydantic.ConfigDict(extra="forbid")
 
-<component name="Component 2 Name">
-<analysis>
-[Analysis or reasoning about this component.]
-</analysis>
-<anomaly>Yes | No</anomaly>
-</component>
-
-<!-- Add more components as needed -->
-</think>
-
-<answer>
-[Whether the video contains anomalies or artifacts. Answer "Yes" or "No".]
-</answer>"""
-
-USER_PROMPT_CRITIC = "Does the video contain any anomalies or artifacts?"
+    system_prompt: str = pydantic.Field(default="", description="System prompt")
+    user_prompt: str = pydantic.Field(default="", description="User prompt")
 
 MODEL_PATH = "nvidia/Cosmos-Reason1-7B"
 
@@ -216,6 +199,9 @@ def build_html_report(video_path, responses):
     return html
 
 def run_critic(args):
+    prompt_path = f"{ROOT}/prompts/video_critic.yaml"
+    prompt_config = Prompt.model_validate(yaml.safe_load(open(prompt_path, "rb")))
+
     llm = LLM(
         model=MODEL_PATH,
         limit_mm_per_prompt={"image": 0, "video": 1},
@@ -232,7 +218,7 @@ def run_critic(args):
     )
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_CRITIC},
+        {"role": "system", "content": prompt_config.system_prompt},
         {"role": "user", "content": [
                 {
                     "type": "video",
@@ -241,7 +227,7 @@ def run_critic(args):
                     "fps": 16,
                     "total_pixels": 8192 * 28 * 28,
                 },
-                {"type": "text", "text": USER_PROMPT_CRITIC},
+                {"type": "text", "text": prompt_config.user_prompt},
             ]
         },
     ]
@@ -275,7 +261,7 @@ def parse_args():
     parser.add_argument(
         "--video_path",
         type=str,
-        default="assets/sample.mp4",
+        required=True,
         help="Path to input video for critic",
     )
     # Rejection sampling settings
