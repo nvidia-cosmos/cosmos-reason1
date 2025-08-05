@@ -1,0 +1,6 @@
+default:
+    just --list
+
+# Install in an existing environment
+install:
+    uv sync --all-extras

@@ -1,0 +1,21 @@
+[project]
+name = "cosmos-reason1-benchmark"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.10, <3.13"
+dependencies = [
+    "attrs",
+    "datasets",
+    "ffmpeg-python",
+    "huggingface-hub",
+    "numpy",
+    "opencv-python",
+    "pillow",
+    "pyyaml",
+    "qwen_vl_utils",
+    "tensorflow_datasets",
+    "torch",
+    "tqdm",
+    "transformers",
+    "vllm",
+]
