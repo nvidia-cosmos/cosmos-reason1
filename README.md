@@ -7,6 +7,7 @@
 Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop with the goal of enabling multimodal LLMs to generate physically grounded responses. We release one multimodal LLMs: Cosmos-Reason1-7B post-trained with Physical AI SFT, and Physical AI reinforcement learning. We define ontologies for physical common sense and embodied reasoning, and also build benchmarks to evaluate Physical AI reasoning capabilities of multimodal LLMs.
 
 ## News
+
 * 2025-08-1: We added support for spatial-temporal reasoning for city and industrial operations. See latest checkpoint [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B).
 * 2025-06-11: We enhance the model’s capability on judging the physical plausibility of a video. See [this tutorial](examples/video_critic/README.md) for details.
 * 2025-05-17: We release model weights and training data under [Hugging Face](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7).
@@ -30,26 +31,18 @@ Install system dependencies:
   source $HOME/.local/bin/env
   ```
 
-Login to [huggingface](https://huggingface.co/docs/huggingface_hub/en/guides/cli):
+* [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
+
+  ```shell
+  uv tool install -U "huggingface_hub[cli]"
+  hf auth login
+  ```
+
+Example script:
 
 ```shell
-uv tool install -U "huggingface_hub[cli]"
-hf auth login
+./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
 ```
-
-Example scripts:
-
-* [🤗 Transformers](scripts/inference.py)
-
-  ```shell
-  ./scripts/inference.py --prompt 'Please describe the video.' --videos assets/sample.mp4
-  ```
-
-* [vLLM](scripts/inference_vllm.py)
-
-  ```shell
-  ./scripts/inference_vllm.py
-  ```
 
 Example output:
 
