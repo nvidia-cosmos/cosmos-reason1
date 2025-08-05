@@ -2,9 +2,9 @@
 datasets:
   - robovqa
   - av
-  - agibot
-  - bridgev2
-  - holoassist
+  # - agibot
+  # - bridgev2
+  # - holoassist
 
 # Model parameters
 model:

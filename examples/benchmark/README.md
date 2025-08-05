@@ -36,8 +36,6 @@ Install the package:
 
 ```shell
 cd cosmos-reason1/examples/benchmark
-just install
-source .venv/bin/activate
 ```
 
 ## Prepare Dataset
@@ -75,7 +73,7 @@ for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; d
 >   - `RoboVQA`
 >   - Video clips for AgiBot-World, BridgeData V2, and HoloAssist must be downloaded manually in the next step (optional).
 
-[Optional] To download the full dataset, run (this will take a very long time):
+[Optional] To download the full dataset, run (this will take a very long time and requires a large amount of disk space):
 
 ```bash
 ./tools/eval/process_raw_data.py \
@@ -90,8 +88,8 @@ Configure evaluation settings by editing [`configs/evaluate.yaml`](configs/evalu
 Run evaluation:
 
 ```bash
-python tools/eval/evaluate.py \
-    --config configs/robovqa.yaml \
+./tools/eval/evaluate.py \
+    --config configs/evaluate.yaml \
     --data_dir data \
     --results_dir results
 ```

@@ -28,6 +28,7 @@ from cosmos_rl.utils.logging import logger
 from cosmos_rl.policy.config import Config as CosmosConfig
 import argparse
 import toml
+import warnings
 
 FPS = 1
 MAX_PIXELS = 81920
@@ -248,6 +249,9 @@ class DemoDataPacker(DataPacker):
 
 
 if __name__ == "__main__":
+    # Suppress warnings
+    warnings.filterwarnings("ignore")
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_known_args()[0]
