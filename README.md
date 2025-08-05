@@ -95,8 +95,9 @@ The left robot arm approaches the orange bottle and makes contact with it. Howev
 
 ## Tutorials
 
-* [Using Cosmos-Reason1 as Video Critic for Rejection Sampling](examples/video_critic/README.md)
-* [Post-training Cosmos-Reason1 using Cosmos-Reason1-SFT-Dataset](examples/cosmos_reason1_sft_dataset/README.md)
+* [Video Critic for Rejection Sampling](examples/video_critic/README.md)
+* [Post-Training](examples/post_training/README.md)
+* [Benchmark](examples/benchmark/README.md)
 
 ## Post-Training
 

@@ -3,24 +3,14 @@ name = "cosmos-reason1-sft-dataset"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
-dependencies = ["qwen_vl_utils", "transformers", "vllm"]
-
-[project.optional-dependencies]
-train = [
-    "attrs",
+dependencies = [
     "cosmos-rl",
     "datasets",
-    "tensorflow_datasets",
     "toml",
-    "pillow",
-    "pyyaml",
-    "huggingface-hub",
-    "numpy",
-    "tqdm",
-    "opencv-python",
-    "ffmpeg-python",
     "torch",
-    "wandb"
+    "torchcodec",
+    "transformers",
+    "wandb",
 ]
 
 [dependency-groups]

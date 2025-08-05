@@ -51,12 +51,6 @@ if __name__ == "__main__":
         required=True,
         help="Directory containing JSON evaluation files to be processed"
     )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        required=True,
-        help="Dataset name to evaluate"
-    )
     args = parser.parse_args()
 
     # The directory path provided by the user through the --result_dir argument.
@@ -64,7 +58,7 @@ if __name__ == "__main__":
 
     # --- File Discovery ---
     # Search for all files ending with the .json extension within the specified directory.
-    json_files = glob.glob(os.path.join(result_dir, "**", f"{args.dataset}/*.json"), recursive=True)
+    json_files = glob.glob(os.path.join(result_dir, "**", "*.json"), recursive=True)
 
     # Check if any JSON files were found. Exit if the directory is empty or contains no JSONs.
     if not json_files:

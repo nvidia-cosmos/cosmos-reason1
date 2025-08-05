@@ -1,17 +1,41 @@
-# Cosmos Reason1 Benchmark
+# Cosmos Reason1 Benchmark Example
 
 This guide provides instructions for evaluating models on the [Cosmos Reason1 Benchmark](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-Benchmark)
 
-## Requirements
+## Minimum Requirements
 
-- 0.5TB disk space.
+- 1 GPU with 24GB memory
+- TODO: ?GB disk space.
 
 ## Setup
+
+Install system dependencies:
+
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
+
+  ```shell
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.local/bin/env
+  ```
+
+- [just](https://github.com/casey/just?tab=readme-ov-file#installation)
+
+  ```shell
+  pkgm install just
+  # or
+  conda install -c conda-forge just
+  ```
+
+- [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
+
+  ```shell
+  uv tool install -U "huggingface_hub[cli]"
+  ```
 
 Install the package:
 
 ```shell
-cd cosmos-reason1/examples/cosmos_reason1_benchmark
+cd cosmos-reason1/examples/benchmark
 just install
 source .venv/bin/activate
 ```
@@ -26,30 +50,32 @@ source .venv/bin/activate
 hf auth login
 ```
 
-### Download Dataset
+### Download Sample Dataset
 
-Download annotations and sample video clips using the script below:
+Download annotations and sample video clips:
 
 ```bash
+# Download
 hf download --repo-type dataset nvidia/Cosmos-Reason1-Benchmark --local-dir data/benchmark
+# Unpack
 for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; done
 ```
 
 > **Note:**
-> This script downloads:
+> This downloads:
 >
-> - ✅ Annotations for:
+> - Annotations for:
 >   - `AV` # For autonomous vehicles' general description, driving difficulty, and notice
 >   - [RoboVQA](https://robovqa.github.io/) # Videos, instructions, and question-answer pairs of agents (robots, humans, humans-with-grasping-tools) executing a task.
 >   - [AgiBot-World](https://github.com/OpenDriveLab/AgiBot-World) # A wide range of real-life tasks for robot manipulation
 >   - [BridgeData V2](https://rail-berkeley.github.io/bridgedata/) # A wide array of robotic manipulation behaviors
 >   - [HoloAssist Dataset](https://holoassist.github.io/) # Crucial first-person perspectives that provide natural and immersive understanding of human actions
-> - ✅ Video clips for:
+> - Video clips for:
 >   - `AV`
 >   - `RoboVQA`
->   - ⚠️ Video clips for AgiBot-World, BridgeData V2, and HoloAssist must be downloaded manually in the next step (optional).
+>   - Video clips for AgiBot-World, BridgeData V2, and HoloAssist must be downloaded manually in the next step (optional).
 
-Run the following script to download and preprocess video clips:
+[Optional] To download the full dataset, run (this will take a very long time):
 
 ```bash
 ./tools/eval/process_raw_data.py \
@@ -57,57 +83,18 @@ Run the following script to download and preprocess video clips:
   --task benchmark
 ```
 
-## Run Evaluation on Benchmarks
+## Run Evaluation
 
-This step walks you through running evaluations on your model using the provided script.
+Configure evaluation settings by editing [`configs/evaluate.yaml`](configs/evaluate.yaml).
 
-### Configure Evaluation
-
-You can configure evaluation settings by editing yaml file under `tools/eval/configs/`, take `robovqa.yaml` as example:
-
-```yaml
-datasets:
-  - robovqa
-
-model:
-  model_name: nvidia/Cosmos-Reason1-7B # You can also replace the model_name by a safetensors folder path mentioned above
-  tokenizer_model_name: qwen2.5-vl-7b
-  dtype: bfloat16
-  tp_size: 4
-  max_length: 128000
-
-evaluation:
-  answer_type: reasoning
-  num_processes: 80
-  skip_saved: false
-  fps: 4
-  seed: 1
-
-generation:
-  max_retries: 10
-  max_tokens: 1024
-  temperature: 0.6
-  repetition_penalty: 1.0
-  presence_penalty: 0.0
-  frequency_penalty: 0.0
-```
-
-### Run Evaluation
-
-Run the evaluation on the **RoboVQA** dataset:
+Run evaluation:
 
 ```bash
-# Set tensor parallelism size (adjust as needed)
-export TP_SIZE=4
-
-# Run the evaluation script
 python tools/eval/evaluate.py \
-    --config tools/eval/configs/robovqa.yaml \
+    --config configs/robovqa.yaml \
     --data_dir data \
     --results_dir results
 ```
-
-*Tip:* You can also use `--model_name` to specify either a Hugging Face model name or a local safetensors folder path mentioned above.
 
 ### Benchmark Scoring
 
@@ -128,8 +115,5 @@ For open-ended questions, a prediction is considered correct if it exactly match
 Run the following command to compute accuracy:
 
 ```bash
-./tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
+./tools/eval/calculate_accuracy.py --result_dir results
 ```
-
-- `--result_dir`: Path to the directory containing the model's prediction results. This should match the `--result_dir` used during evaluation in `evaluate.py`.
-- `--dataset`: Name of the dataset to evaluate (e.g., `robovqa`, `av`, `agibot`, `bridgev2`, `holoassist`).
