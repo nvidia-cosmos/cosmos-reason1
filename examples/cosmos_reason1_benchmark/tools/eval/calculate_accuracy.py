@@ -13,18 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+# ]
+# [tool.uv]
+# exclude-newer = "2025-08-05T00:00:00Z"
+# ///
+
 import argparse
 import glob
 import json
 import os
 import sys  # Used for printing errors to the standard error stream
 
-# This script calculates the mean accuracy from a directory containing multiple JSON evaluation files.
-# Each JSON file is expected to contain a list of evaluation results.
-# Each item within the list should be an object (dictionary) that includes an 'is_correct' boolean field.
+"""This script calculates the mean accuracy from a directory containing multiple JSON evaluation files.
 
-# To run the script:
-# python tools/eval_utils/calculate_accuracy.py --result_dir /path/to/your/json/files
+Each JSON file is expected to contain a list of evaluation results.
+Each item within the list should be an object (dictionary) that includes an 'is_correct' boolean field.
+
+Example:
+
+```shell
+./tools/eval/calculate_accuracy.py --result_dir /path/to/your/json/files
+```
+"""
 
 if __name__ == "__main__":
     # --- Argument Parsing ---

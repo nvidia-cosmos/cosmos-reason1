@@ -17,6 +17,10 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 ## Inference
 
+Minimum Requirements:
+
+* 1 GPU with 24GB memory
+
 Install system dependencies:
 
 * [uv](https://docs.astral.sh/uv/getting-started/installation/)

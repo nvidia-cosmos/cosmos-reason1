@@ -19,8 +19,6 @@ import logging as log
 from argparse import ArgumentParser
 from typing import List, Tuple, Optional, Dict, Any
 import json
-import torch
-from datasets import load_dataset
 from PIL import Image
 import yaml
 

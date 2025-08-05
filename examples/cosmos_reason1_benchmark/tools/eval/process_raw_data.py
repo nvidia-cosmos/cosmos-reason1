@@ -1,3 +1,4 @@
+#!/usr/bin/env -S uv run --script
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -12,6 +13,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# /// script
+# requires-python = ">=3.10"
+# dependencies = [
+#   "datasets",
+#   "ffmpeg-python",
+#   "huggingface-hub",
+#   "numpy",
+#   "opencv-python",
+#   "tensorflow_datasets",
+#   "tqdm",
+# ]
+# [tool.uv]
+# exclude-newer = "2025-08-05T00:00:00Z"
+# ///
 
 import argparse
 import glob
@@ -33,6 +49,8 @@ import ffmpeg
 from huggingface_hub import login, HfApi, hf_hub_download
 
 log.basicConfig(level=log.INFO)
+
+ALL_DATASETS = ["holoassist", "bridgev2", "agibot"]
 
 
 def tqdm_hook(t):
@@ -449,10 +467,9 @@ def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str]
                 except Exception as e:
                     log.warning(f"Failed to extract clip {clip['clip_name']}: {e}")
 
-
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset", type=str, required=True, choices=["holoassist", "bridgev2", "agibot"])
+    parser.add_argument("--datasets", type=str, nargs="*", choices=ALL_DATASETS)
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--token", type=str)
     parser.add_argument("--task", type=str, choices=["benchmark", "sft", "rl"], required=True)
@@ -472,13 +489,15 @@ def main():
     if not hf_token:
         log.warning("No Hugging Face token (HF_TOKEN) provided via args or environment.")
 
-    ds = load_dataset(hf_dataset, args.dataset)
+    datasets = args.datasets or ALL_DATASETS
+    for dataset in datasets:
+        ds = load_dataset(hf_dataset, dataset)
 
-    clip_names = []
-    for dataset_name in ds.keys():
-        clip_names.extend([item.split('clips/')[-1] for item in ds[dataset_name]["video"]])
+        clip_names = []
+        for dataset_name in ds.keys():
+            clip_names.extend([item.split('clips/')[-1] for item in ds[dataset_name]["video"]])
 
-    preprocess_clip(clip_names=clip_names, dataset=args.dataset, data_dir=args.data_dir, split=split, hf_token=hf_token, task=args.task)
+        preprocess_clip(clip_names=clip_names, dataset=dataset, data_dir=args.data_dir, split=split, hf_token=hf_token, task=args.task)
 
 
 if __name__ == "__main__":

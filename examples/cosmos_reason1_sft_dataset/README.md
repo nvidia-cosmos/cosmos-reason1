@@ -1,6 +1,6 @@
-# Cosmos Reason1 SFT Dataset
+# Cosmos Reason1 Post-Training
 
-This guide provides instructions for post-training on the (Cosmos Reason1 SFT Dataset)[https://huggingface.co/datasets/nvidia/Cosmos-Reason1-SFT-Dataset]
+This guide provides instructions for post-training on the Cosmos Reason1 [SFT](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-SFT-Dataset) and [RL](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-RL-Dataset) datasets.
 
 ## Job recipes
 
@@ -49,7 +49,7 @@ Install system dependencies:
 Install the package:
 
 ```shell
-cd cosmos-reason1
+cd cosmos-reason1/examples/cosmos_reason1_sft_dataset
 just install
 source .venv/bin/activate
 ```
@@ -65,11 +65,13 @@ wandb login # Then enter your WANDB_API_KEY
 ```
 
 or you can add WANDB_API_KEY to your environment variables by adding the line to your shell config (e.g., `~/.bashrc`):
+
 ```bash
 export WANDB_API_KEY=${WANDB_API_KEY}
 ```
 
 2. Launch training with the following Training Scripts, you will see the wandb link in the logging:
+
 ```bash
 wandb: Currently logged in as: ${WANDB_USER_NAME} to https://api.wandb.ai. Use `wandb login --relogin` to force relogin
 wandb: Tracking run with wandb version 0.19.11
@@ -79,21 +81,25 @@ wandb: Syncing run ./outputs/qwen2-5-3b-tp2-dpn-sft/20250515101157
 wandb: ⭐️ View project at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}
 wandb: 🚀 View run at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}/runs/20250515101157
 ```
+
 Then you can view online visual training metrics, or check these data in the local wandb folder.
 
 ### 🔩 Huggingface Access
 
 To get access to Cosmos-SFT/RL datasets, you can add your HF_TOKEN to the environment variables by adding the line to your shell config (e.g., `~/.bashrc`):
+
 ```bash
 export HF_TOKEN=${HF_TOKEN}
 ```
 
 ### 📝 Checkpoints Management
+
 We support various types of checkpoints, e.g. basic checkpoints for training resume, huggingface safetensors for convient usage. We also support upload our checkpoints to huggingface and s3.
 
 If you want to upload to huggingface, make sure your HF_TOKEN mentioned above have the **write access**.
 
 If you want to upload to s3, you need to add the following variables to your environment:
+
 ```bash
 export AWS_ENDPOINT_URL='your-endpoint-url' # Optional
 export AWS_ACCESS_KEY_ID='your-access-key'
@@ -102,6 +108,7 @@ export AWS_DEFAULT_REGION='your-s3-region'
 ```
 
 Then you can configure the checkpoint settings in the toml file as follows:
+
 ```toml
 [train.ckpt]
 ## Basic checkpoint
@@ -125,11 +132,9 @@ s3_prefix = 'outputs' # The S3 prefix to upload the checkpoint and safetensors w
 
 > **_NOTE:_**  Following the below training steps will trigger downloading around 200GB of model and dataset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
 
-
 ### 🧠 Supervised Fine-Tuning (SFT)
 
 The SFT training can improve the model's capability on certain tasks with a similar distribution of the training dataset. E.g., training with `robovqa` dataset can improve the model's performance on the robotics-focused visual question answering scenarios.
-
 
 > **_NOTE:_**  We set the `nvidia/Cosmos-Reason1-7B` as the default base model of SFT, which is already SFT trained on the `nvidia/Cosmos-Reason1-SFT-Dataset`. We recommend you use your own dataset for SFT exploration.
 
@@ -157,6 +162,7 @@ After training finishes, the DCP checkpoint will be saved to `$output_dir`, and 
 ```
 
 In this case, you will find the sft model checkpoint at `outputs/cosmos-reason1-7b-tp2-sft/20250516061336/safetensors/final`
+
 ```shell
 root@node:~/ws# ls ./outputs/cosmos-reason1-7b-tp2-sft/20250516061336/safetensors/final -la
 total 16211328
@@ -189,4 +195,5 @@ In this example, we demonstrate how to launch GRPO training for `nvidia/Cosmos-R
 ```shell
 cosmos-rl --config configs/cosmos-reason1-7b-p-fsdp2-r-tp2-grpo.toml tools/dataset/cosmos_grpo.py
 ```
+
 After training is done, the huggingface checkpoint gets saved to the directory `$output_dir`, which is similar to the SFT case. To evaluate the improved reasoning performance of this RL-trained model, please refer to the Evaluation section.

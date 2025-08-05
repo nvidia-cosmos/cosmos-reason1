@@ -2,14 +2,37 @@
 
 This guide provides instructions for evaluating models on the [Cosmos Reason1 Benchmark](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-Benchmark)
 
-## Download Dataset
+## Requirements
+
+- 0.5TB disk space.
+
+## Setup
+
+Install the package:
+
+```shell
+cd cosmos-reason1/examples/cosmos_reason1_benchmark
+just install
+source .venv/bin/activate
+```
+
+## Prepare Dataset
+
+### Get Access
+
+- [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
+
+```shell
+hf auth login
+```
+
+### Download Dataset
 
 Download annotations and sample video clips using the script below:
 
 ```bash
-python tools/eval/download_hf_data.py \
-    --target data \
-    --task benchmark
+hf download --repo-type dataset nvidia/Cosmos-Reason1-Benchmark --local-dir data/benchmark
+for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; done
 ```
 
 > **Note:**
@@ -26,33 +49,19 @@ python tools/eval/download_hf_data.py \
 >   - `RoboVQA`
 >   - ⚠️ Video clips for AgiBot-World, BridgeData V2, and HoloAssist must be downloaded manually in the next step (optional).
 
-### 🛠️ Step 2: (Optional) Download Remaining Video Clips
-
-#### 📥 Get Access for AgiBot
-
-- **Dataset**: [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
-
-#### ⚙️ Run Preprocessing Script
-
-Run the following script to download and preprocess video clips, take `holoassist` as example:
+Run the following script to download and preprocess video clips:
 
 ```bash
-# Export HF_TOKEN to get access to Cosmos Reason dataset
-export HF_TOKEN=...
-
-python tools/eval/process_raw_data.py \
-  --dataset holoassist \
+./tools/eval/process_raw_data.py \
   --data_dir data \
   --task benchmark
 ```
 
-> 💡 Replace `holoassist` with `agibot` or `bridgev2` as needed.
-
-### 🚀 Step 3: Run Evaluation on Benchmarks
+## Run Evaluation on Benchmarks
 
 This step walks you through running evaluations on your model using the provided script.
 
-#### 📖 Configure Evaluation
+### Configure Evaluation
 
 You can configure evaluation settings by editing yaml file under `tools/eval/configs/`, take `robovqa.yaml` as example:
 
@@ -83,7 +92,7 @@ generation:
   frequency_penalty: 0.0
 ```
 
-#### 🔍 Run Evaluation
+### Run Evaluation
 
 Run the evaluation on the **RoboVQA** dataset:
 
@@ -92,7 +101,7 @@ Run the evaluation on the **RoboVQA** dataset:
 export TP_SIZE=4
 
 # Run the evaluation script
-PYTHONPATH=. python3 tools/eval/evaluate.py \
+python tools/eval/evaluate.py \
     --config tools/eval/configs/robovqa.yaml \
     --data_dir data \
     --results_dir results
@@ -100,11 +109,11 @@ PYTHONPATH=. python3 tools/eval/evaluate.py \
 
 *Tip:* You can also use `--model_name` to specify either a Hugging Face model name or a local safetensors folder path mentioned above.
 
-### 📊 Step 4: Benchmark Scoring
+### Benchmark Scoring
 
 This step computes benchmark accuracy metrics from prediction results stored in a specified directory. It is used to evaluate model performance on datasets such as **RoboVQA**.
 
-#### 📋 About the Evaluation
+#### About the Evaluation
 
 The evaluation uses **accuracy** as the primary metric, comparing model predictions against ground-truth answers. Accuracy is computed as:
 
@@ -112,14 +121,14 @@ The evaluation uses **accuracy** as the primary metric, comparing model predicti
 
 For open-ended questions, a prediction is considered correct if it exactly matches the ground truth (case-insensitive string match). For multiple-choice questions, the selected option is compared against the correct choice.
 
-> ⚠️ **Note:** These scoring rules follow common practices in VLM QA literature, but users are encouraged to adapt or extend them for specific use cases (e.g., partial credit, VQA-style soft accuracy).
+> **Note:** These scoring rules follow common practices in VLM QA literature, but users are encouraged to adapt or extend them for specific use cases (e.g., partial credit, VQA-style soft accuracy).
 
-#### 🔧 Usage
+#### Usage
 
 Run the following command to compute accuracy:
 
 ```bash
-python tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
+./tools/eval/calculate_accuracy.py --result_dir results --dataset robovqa
 ```
 
 - `--result_dir`: Path to the directory containing the model's prediction results. This should match the `--result_dir` used during evaluation in `evaluate.py`.
