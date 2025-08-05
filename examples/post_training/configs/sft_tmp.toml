@@ -3,7 +3,7 @@ redis = "12800"
 [train]
 resume = false
 epoch = 1
-output_dir = "./outputs/sft"
+output_dir = "./outputs/cosmos-reason1-7b-fsdp4-sft"
 epsilon = 1e-6
 optm_name = "AdamW"
 optm_lr = 2e-6
@@ -49,7 +49,6 @@ mini_batch = 4
 [train.ckpt]
 enable_checkpoint = true
 save_freq = 30
-max_keep = 2
 save_mode = "async"
 
 [policy.parallelism]

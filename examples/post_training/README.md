@@ -84,8 +84,8 @@ The SFT training can improve the model's capability on certain tasks with a simi
 
 ### Minimum Requirements
 
+- 4 GPUs with 80GB of memory
 - 200GB of disk space
-- 2 GPUs with 80GB of memory
 
 ### Config
 
@@ -93,11 +93,11 @@ Base config: [configs/sft.toml]
 
 Variants:
 
-- 4 GPU
+- 8 GPU
 
   ```toml
   [policy.parallelism]
-  dp_shard_size = 4
+  dp_shard_size = 6
   ```
 
 - 8 GPU
