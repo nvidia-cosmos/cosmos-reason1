@@ -26,13 +26,17 @@ import qwen_vl_utils
 import msgspec
 import vllm
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+SCRIPT = pathlib.Path(__file__).resolve()
 
 
 def main():
     args = argparse.ArgumentParser(description=__doc__)
     args.add_argument(
-        "-o", "--output", type=str, default=f"{ROOT}/schemas", help="Output directory"
+        "-o",
+        "--output",
+        type=str,
+        default=f"{SCRIPT.parent}/schemas",
+        help="Output directory",
     )
     args = args.parse_args()
 
@@ -44,7 +48,7 @@ def main():
 
     generation_schema = msgspec.json.schema(vllm.SamplingParams)
     (output_dir / "generation_config.json").write_bytes(
-        msgspec.json.encode(generation_schema)
+        msgspec.json.format(msgspec.json.encode(generation_schema), indent=2)
     )
 
 

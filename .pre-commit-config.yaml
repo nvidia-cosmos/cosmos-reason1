@@ -21,6 +21,13 @@ repos:
       - id: end-of-file-fixer
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
+  - repo: local
+    hooks:
+      - id: uv-lock-script
+        name: Generate uv lock files
+        entry: ./bin/_uv_lock_script.sh
+        language: script
+        types: [python]
   - repo: https://github.com/tcort/markdown-link-check
     rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
     hooks:

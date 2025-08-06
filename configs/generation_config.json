@@ -1,5 +1,5 @@
 {
-    "$schema": "../schemas/generation_config.json",
+    "$schema": "schemas/generation_config.json",
     "max_tokens": 4096,
     "n": 1,
     "repetition_penalty": 1.05,

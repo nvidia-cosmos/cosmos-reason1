@@ -1,0 +1,409 @@
+{
+  "$ref": "#/$defs/SamplingParams",
+  "$defs": {
+    "SamplingParams": {
+      "title": "SamplingParams",
+      "description": "Sampling parameters for text generation.\n\n    Overall, we follow the sampling parameters from the OpenAI text completion\n    API (https://platform.openai.com/docs/api-reference/completions/create).\n    In addition, we support beam search, which is not supported by OpenAI.\n\n    Args:\n        n: Number of output sequences to return for the given prompt.\n        best_of: Number of output sequences that are generated from the prompt.\n            From these `best_of` sequences, the top `n` sequences are returned.\n            `best_of` must be greater than or equal to `n`. By default,\n            `best_of` is set to `n`. Warning, this is only supported in V0.\n        presence_penalty: Float that penalizes new tokens based on whether they\n            appear in the generated text so far. Values > 0 encourage the model\n            to use new tokens, while values < 0 encourage the model to repeat\n            tokens.\n        frequency_penalty: Float that penalizes new tokens based on their\n            frequency in the generated text so far. Values > 0 encourage the\n            model to use new tokens, while values < 0 encourage the model to\n            repeat tokens.\n        repetition_penalty: Float that penalizes new tokens based on whether\n            they appear in the prompt and the generated text so far. Values > 1\n            encourage the model to use new tokens, while values < 1 encourage\n            the model to repeat tokens.\n        temperature: Float that controls the randomness of the sampling. Lower\n            values make the model more deterministic, while higher values make\n            the model more random. Zero means greedy sampling.\n        top_p: Float that controls the cumulative probability of the top tokens\n            to consider. Must be in (0, 1]. Set to 1 to consider all tokens.\n        top_k: Integer that controls the number of top tokens to consider. Set\n            to 0 (or -1) to consider all tokens.\n        min_p: Float that represents the minimum probability for a token to be\n            considered, relative to the probability of the most likely token.\n            Must be in [0, 1]. Set to 0 to disable this.\n        seed: Random seed to use for the generation.\n        stop: list of strings that stop the generation when they are generated.\n            The returned output will not contain the stop strings.\n        stop_token_ids: list of tokens that stop the generation when they are\n            generated. The returned output will contain the stop tokens unless\n            the stop tokens are special tokens.\n        bad_words: list of words that are not allowed to be generated.\n            More precisely, only the last token of a corresponding\n            token sequence is not allowed when the next generated token\n            can complete the sequence.\n        include_stop_str_in_output: Whether to include the stop strings in\n            output text. Defaults to False.\n        ignore_eos: Whether to ignore the EOS token and continue generating\n            tokens after the EOS token is generated.\n        max_tokens: Maximum number of tokens to generate per output sequence.\n        min_tokens: Minimum number of tokens to generate per output sequence\n            before EOS or stop_token_ids can be generated\n        logprobs: Number of log probabilities to return per output token.\n            When set to None, no probability is returned. If set to a non-None\n            value, the result includes the log probabilities of the specified\n            number of most likely tokens, as well as the chosen tokens.\n            Note that the implementation follows the OpenAI API: The API will\n            always return the log probability of the sampled token, so there\n            may be up to `logprobs+1` elements in the response.\n        prompt_logprobs: Number of log probabilities to return per prompt token.\n        detokenize: Whether to detokenize the output. Defaults to True.\n        skip_special_tokens: Whether to skip special tokens in the output.\n        spaces_between_special_tokens: Whether to add spaces between special\n            tokens in the output.  Defaults to True.\n        logits_processors: list of functions that modify logits based on\n            previously generated tokens, and optionally prompt tokens as\n            a first argument.\n        truncate_prompt_tokens: If set to -1, will use the truncation size\n            supported by the model. If set to an integer k, will use only\n            the last k tokens from the prompt (i.e., left truncation).\n            Defaults to None (i.e., no truncation).\n        guided_decoding: If provided, the engine will construct a guided\n            decoding logits processor from these parameters. Defaults to None.\n        logit_bias: If provided, the engine will construct a logits processor\n            that applies these logit biases. Defaults to None.\n        allowed_token_ids: If provided, the engine will construct a logits\n            processor which only retains scores for the given token ids.\n            Defaults to None.\n        extra_args: Arbitrary additional args, that can be used by custom\n            sampling implementations, plugins, etc. Not used by any in-tree\n            sampling implementations.",
+      "type": "object",
+      "properties": {
+        "n": {
+          "type": "integer",
+          "default": 1
+        },
+        "best_of": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "_real_n": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "presence_penalty": {
+          "type": "number",
+          "default": 0.0
+        },
+        "frequency_penalty": {
+          "type": "number",
+          "default": 0.0
+        },
+        "repetition_penalty": {
+          "type": "number",
+          "default": 1.0
+        },
+        "temperature": {
+          "type": "number",
+          "default": 1.0
+        },
+        "top_p": {
+          "type": "number",
+          "default": 1.0
+        },
+        "top_k": {
+          "type": "integer",
+          "default": 0
+        },
+        "min_p": {
+          "type": "number",
+          "default": 0.0
+        },
+        "seed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stop": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "stop_token_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "ignore_eos": {
+          "type": "boolean",
+          "default": false
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 16
+        },
+        "min_tokens": {
+          "type": "integer",
+          "default": 0
+        },
+        "logprobs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prompt_logprobs": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "detokenize": {
+          "type": "boolean",
+          "default": true
+        },
+        "skip_special_tokens": {
+          "type": "boolean",
+          "default": true
+        },
+        "spaces_between_special_tokens": {
+          "type": "boolean",
+          "default": true
+        },
+        "logits_processors": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "include_stop_str_in_output": {
+          "type": "boolean",
+          "default": false
+        },
+        "truncate_prompt_tokens": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "output_kind": {
+          "$ref": "#/$defs/RequestOutputKind",
+          "default": 0
+        },
+        "output_text_buffer_length": {
+          "type": "integer",
+          "default": 0
+        },
+        "_all_stop_token_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "default": []
+        },
+        "guided_decoding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/GuidedDecodingParams"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "logit_bias": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "number"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "allowed_token_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "extra_args": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "bad_words": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "_bad_words_token_ids": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": []
+    },
+    "RequestOutputKind": {
+      "title": "RequestOutputKind",
+      "enum": [
+        0,
+        1,
+        2
+      ]
+    },
+    "GuidedDecodingParams": {
+      "title": "GuidedDecodingParams",
+      "description": "One of these fields will be used to build a logit processor.",
+      "type": "object",
+      "properties": {
+        "json": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "regex": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "choice": {
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "grammar": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "json_object": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "backend": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "backend_was_auto": {
+          "type": "boolean",
+          "default": false
+        },
+        "disable_fallback": {
+          "type": "boolean",
+          "default": false
+        },
+        "disable_any_whitespace": {
+          "type": "boolean",
+          "default": false
+        },
+        "disable_additional_properties": {
+          "type": "boolean",
+          "default": false
+        },
+        "whitespace_pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "structural_tag": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": []
+    }
+  }
+}
