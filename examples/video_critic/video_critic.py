@@ -216,6 +216,7 @@ def run_critic(llm, args):
         top_p=0.95,
         repetition_penalty=1.05,
         max_tokens=4096,
+        seed=1, # for reproducibility
     )
 
     messages = [

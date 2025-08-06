@@ -182,10 +182,11 @@ def main():
         "mm_processor_kwargs": video_kwargs,
     }
     outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
-    output_text = outputs[0].outputs[0].text
     print("-" * 20)
-    print(f"{output_text}")
-    print("-" * 20)
+    for output in outputs[0].outputs:
+        output_text = output.text
+        print(f"{output_text}")
+        print("-" * 20)
 
 
 if __name__ == "__main__":
