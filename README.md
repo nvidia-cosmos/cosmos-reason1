@@ -50,7 +50,7 @@ We provide a set of task-specific prompts that are known to work well with Cosmo
 
 * Caption
   * [Caption (reasoning)](prompts/caption_reason.yaml)
-  * [Caption (non-reasoning)](prompts/captions.yaml)
+  * [Caption (non-reasoning)](prompts/caption.yaml)
 * Temporal
   * [Temporal Caption (json)](prompts/temporal_caption_json.yaml)
   * [Temporal Caption (text)](prompts/temporal_caption_text.yaml)

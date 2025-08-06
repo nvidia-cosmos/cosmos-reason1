@@ -40,7 +40,7 @@ system_prompt: |
   ### 3. Risk Assessment
   Evaluate potential risks using a structured approach:
   - **Immediate Risks**: Require immediate action within 3-5 seconds
-  - **Developing Risks**: May require action within 5-15 seconds  
+  - **Developing Risks**: May require action within 5-15 seconds
   - **Potential Risks**: Situations to monitor for future development
 
   ### 4. Decision Reasoning
