@@ -21,6 +21,16 @@ repos:
       - id: end-of-file-fixer
       - id: check-executables-have-shebangs
       - id: check-shebang-scripts-are-executable
+  - repo: https://github.com/google/addlicense
+    rev: v1.2.0-rc0
+    hooks:
+      - id: addlicense
+        args: ["-f", "scripts/_license.txt"]
+  - repo: https://github.com/tcort/markdown-link-check
+    rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
+    hooks:
+      - id: markdown-link-check
+        args: [-q]
   - repo: local
     hooks:
       - id: uv-lock-script
@@ -28,8 +38,3 @@ repos:
         entry: ./bin/_uv_lock_script.sh
         language: script
         types: [python]
-  - repo: https://github.com/tcort/markdown-link-check
-    rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
-    hooks:
-      - id: markdown-link-check
-        args: [-q]
