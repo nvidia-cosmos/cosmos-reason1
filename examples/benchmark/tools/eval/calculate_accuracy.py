@@ -36,7 +36,7 @@ Each item within the list should be an object (dictionary) that includes an 'is_
 Example:
 
 ```shell
-./tools/eval/calculate_accuracy.py --result_dir /path/to/your/json/files
+./tools/eval/calculate_accuracy.py --result_dir results
 ```
 """
 

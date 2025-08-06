@@ -1,6 +1,6 @@
-# Cosmos Reason1 Benchmark Example
+# Cosmos-Reason1 Benchmark Example
 
-This guide provides instructions for evaluating models on the [Cosmos Reason1 Benchmark](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-Benchmark)
+This guide provides instructions for evaluating models on the [Cosmos-Reason1 Benchmark](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-Benchmark)
 
 ## Minimum Requirements
 
@@ -8,29 +8,9 @@ This guide provides instructions for evaluating models on the [Cosmos Reason1 Be
 
 ## Setup
 
-Install system dependencies:
+Prerequisites:
 
-- [uv](https://docs.astral.sh/uv/getting-started/installation/)
-
-  ```shell
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  source $HOME/.local/bin/env
-  ```
-
-- [just](https://github.com/casey/just?tab=readme-ov-file#installation)
-
-  ```shell
-  pkgm install just
-  # or
-  conda install -c conda-forge just
-  ```
-
-- [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
-
-  ```shell
-  uv tool install -U "huggingface_hub[cli]"
-  hf auth login
-  ```
+- [Inference Setup](../../README.md#inference)
 
 Install the package:
 
@@ -42,7 +22,7 @@ cd cosmos-reason1/examples/benchmark
 
 ### Get Access
 
-- [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
+- [AgiBotWorld-Beta](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
 
 ### Download Sample Dataset
 
@@ -52,7 +32,7 @@ Download annotations and sample video clips:
 # Download
 hf download --repo-type dataset nvidia/Cosmos-Reason1-Benchmark --local-dir data/benchmark
 # Unpack
-for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; done
+for file in data/eval/benchmark/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; done
 ```
 
 > **Note:**
@@ -68,12 +48,10 @@ for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; d
 >   - `AV`
 >   - `RoboVQA`
 
-[Optional] Downloading the full dataset will take a very long time and requires multiple terabytes of disk space. To download, run:
+[Optional] Downloading the full dataset will take a very long time and requires multiple terabytes of disk space:
 
 ```bash
-./tools/eval/process_raw_data.py \
-  --data_dir data \
-  --task benchmark
+./tools/eval/process_raw_data.py --data_dir data --task benchmark
 ```
 
 > **Note:**
@@ -91,21 +69,18 @@ Configure evaluation settings by editing [`configs/evaluate.yaml`](configs/evalu
 Evaluate the model on the dataset:
 
 ```bash
-./tools/eval/evaluate.py \
-    --config configs/evaluate.yaml \
-    --data_dir data \
-    --results_dir results
+./tools/eval/evaluate.py --config configs/evaluate.yaml --data_dir data --results_dir results
 ```
 
-### Compute Accuracy
+### Calculate Accuracy
 
-Compute accuracy of the results:
+Calculate accuracy of the results:
 
 ```bash
 ./tools/eval/calculate_accuracy.py --result_dir results
 ```
 
-The script compares model predictions against ground-truth answers. Accuracy is computed as:
+The script compares model predictions against ground-truth answers:
 
 > **Accuracy = (# correct predictions) / (total questions)**
 

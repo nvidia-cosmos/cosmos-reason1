@@ -48,7 +48,14 @@ from tqdm import tqdm
 import ffmpeg
 from huggingface_hub import login, HfApi, hf_hub_download
 
-"""Download and unpack datasets."""
+"""Download and unpack datasets.
+
+Example:
+
+```bash
+./tools/eval/process_raw_data.py --data_dir data --task benchmark [--datasets agibot]
+```
+"""
 
 log.basicConfig(level=log.INFO)
 

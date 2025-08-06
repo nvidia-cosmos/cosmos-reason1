@@ -28,9 +28,12 @@ Example:
 """
 
 import os
+import resource
 
-# Suppress verbose VLLM logging
+# Suppress warnings and core dumps
 os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 import argparse
 import pathlib
@@ -147,7 +150,6 @@ def main():
     if prompt_config.system_prompt:
         messages.append({"role": "system", "content": prompt_config.system_prompt})
     messages.append({"role": "user", "content": user_content})
-    print("Messages:", messages)
 
     llm = vllm.LLM(
         model=args.model,
@@ -179,7 +181,9 @@ def main():
     }
     outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
     output_text = outputs[0].outputs[0].text
-    print(f"\n\n{output_text}")
+    print("-" * 20)
+    print(f"{output_text}")
+    print("-" * 20)
 
 
 if __name__ == "__main__":

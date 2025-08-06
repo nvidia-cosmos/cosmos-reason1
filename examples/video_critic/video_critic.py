@@ -18,7 +18,7 @@
 # exclude-newer = "2025-07-31T00:00:00Z"
 # ///
 
-"""Example script for using Cosmos Reason1 as a video critic.
+"""Example script for using Cosmos-Reason1 as a video critic.
 
 Example:
 
@@ -28,12 +28,14 @@ Example:
 """
 
 import os
+import resource
 
-# Suppress verbose VLLM logging
+# Suppress warnings and core dumps
 os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 import argparse
-import os
 import base64
 import pathlib
 import xml.etree.ElementTree as ET
