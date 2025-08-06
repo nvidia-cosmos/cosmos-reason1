@@ -32,12 +32,6 @@ import sys  # Used for printing errors to the standard error stream
 
 Each JSON file is expected to contain a list of evaluation results.
 Each item within the list should be an object (dictionary) that includes an 'is_correct' boolean field.
-
-Example:
-
-```shell
-./tools/eval/calculate_accuracy.py --result_dir results
-```
 """
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@ Run inference:
 
 ## Prompts
 
-We provide a set of task-specific prompts that are known to work well with Cosmos-Reason1:
+We provide a set of task-specific prompt templates that are known to work well with Cosmos-Reason1:
 
 * Caption
   * [Caption (reasoning)](prompts/caption_reason.yaml)
