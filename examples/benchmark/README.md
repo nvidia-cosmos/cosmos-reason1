@@ -5,7 +5,6 @@ This guide provides instructions for evaluating models on the [Cosmos Reason1 Be
 ## Minimum Requirements
 
 - 1 GPU with 24GB memory
-- TODO: ?GB disk space.
 
 ## Setup
 
@@ -30,6 +29,7 @@ Install system dependencies:
 
   ```shell
   uv tool install -U "huggingface_hub[cli]"
+  hf auth login
   ```
 
 Install the package:
@@ -43,10 +43,6 @@ cd cosmos-reason1/examples/benchmark
 ### Get Access
 
 - [AgiBotWorld-Beta on Hugging Face](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
-
-```shell
-hf auth login
-```
 
 ### Download Sample Dataset
 
@@ -71,9 +67,8 @@ for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; d
 > - Video clips for:
 >   - `AV`
 >   - `RoboVQA`
->   - Video clips for AgiBot-World, BridgeData V2, and HoloAssist must be downloaded manually in the next step (optional).
 
-[Optional] To download the full dataset, run (this will take a very long time and requires a large amount of disk space):
+[Optional] Downloading the full dataset will take a very long time and requires multiple terabytes of disk space. To download, run:
 
 ```bash
 ./tools/eval/process_raw_data.py \
@@ -81,11 +76,19 @@ for file in data/tmp/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; d
   --task benchmark
 ```
 
+> **Note:**
+> This downloads:
+>
+> - Video clips for:
+>   - AgiBot-World
+>   - BridgeData V2
+>   - HoloAssist
+
 ## Run Evaluation
 
 Configure evaluation settings by editing [`configs/evaluate.yaml`](configs/evaluate.yaml).
 
-Run evaluation:
+Evaluate the model on the dataset:
 
 ```bash
 ./tools/eval/evaluate.py \
@@ -94,24 +97,18 @@ Run evaluation:
     --results_dir results
 ```
 
-### Benchmark Scoring
+### Compute Accuracy
 
-This step computes benchmark accuracy metrics from prediction results stored in a specified directory. It is used to evaluate model performance on datasets such as **RoboVQA**.
+Compute accuracy of the results:
 
-#### About the Evaluation
+```bash
+./tools/eval/calculate_accuracy.py --result_dir results
+```
 
-The evaluation uses **accuracy** as the primary metric, comparing model predictions against ground-truth answers. Accuracy is computed as:
+The script compares model predictions against ground-truth answers. Accuracy is computed as:
 
 > **Accuracy = (# correct predictions) / (total questions)**
 
 For open-ended questions, a prediction is considered correct if it exactly matches the ground truth (case-insensitive string match). For multiple-choice questions, the selected option is compared against the correct choice.
 
 > **Note:** These scoring rules follow common practices in VLM QA literature, but users are encouraged to adapt or extend them for specific use cases (e.g., partial credit, VQA-style soft accuracy).
-
-#### Usage
-
-Run the following command to compute accuracy:
-
-```bash
-./tools/eval/calculate_accuracy.py --result_dir results
-```

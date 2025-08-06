@@ -52,7 +52,11 @@ from huggingface_hub import login, HfApi, hf_hub_download
 
 log.basicConfig(level=log.INFO)
 
-ALL_DATASETS = ["holoassist", "bridgev2", "agibot"]
+ALL_DATASETS = [
+    "agibot",
+    "bridgev2",
+    "holoassist",
+]
 
 
 def tqdm_hook(t):
