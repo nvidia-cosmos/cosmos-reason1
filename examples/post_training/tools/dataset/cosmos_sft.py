@@ -13,6 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Supervised Fine-Tuning (SFT) dataset."""
+
+import os
+import warnings
+
+# Suppress warnings
+warnings.filterwarnings("ignore")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
 import os
 import copy
 from torch.utils.data import Dataset, ConcatDataset
@@ -25,7 +34,6 @@ from cosmos_rl.policy.config import Config as CosmosConfig
 from transformers import AutoTokenizer
 import argparse
 import toml
-import warnings
 
 FPS = 1
 MAX_PIXELS = 81920
@@ -106,9 +114,6 @@ class CosmosSFTDataset(Dataset):
 
 
 if __name__ == "__main__":
-    # Suppress warnings
-    warnings.filterwarnings("ignore")
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_known_args()[0]

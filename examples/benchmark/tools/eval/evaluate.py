@@ -35,6 +35,15 @@ Example:
 """
 
 import os
+import resource
+import warnings
+
+# Suppress warnings and core dumps
+warnings.filterwarnings("ignore")
+os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
 import time
 import logging as log
 from argparse import ArgumentParser

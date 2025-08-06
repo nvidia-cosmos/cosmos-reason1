@@ -48,7 +48,7 @@ mini_batch = 4
 
 [train.ckpt]
 enable_checkpoint = true
-save_freq = 30
+save_freq = 100
 max_keep = 2
 save_mode = "async"
 

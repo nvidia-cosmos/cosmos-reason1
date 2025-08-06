@@ -32,7 +32,7 @@ Download annotations and sample video clips:
 # Download
 hf download --repo-type dataset nvidia/Cosmos-Reason1-Benchmark --local-dir data/benchmark
 # Unpack
-for file in data/eval/benchmark/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; done
+for file in data/benchmark/**/*.tar.gz; do tar -xzf "$file" -C "$(dirname "$file")"; done
 ```
 
 > **Note:**

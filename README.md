@@ -18,6 +18,8 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 ## Inference
 
+Cosmos-Reason1 is supported by [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html).
+
 Minimum Requirements:
 
 * 1 GPU with 24GB memory
@@ -44,7 +46,7 @@ Install system dependencies:
   hf auth login
   ```
 
-Example script:
+Run inference:
 
 ```shell
 ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
