@@ -25,14 +25,7 @@
 # cosmos-reason1-benchmark = { path = "../../", editable = true }
 # ///
 
-"""Evaluate a model on a dataset.
-
-Example:
-
-```bash
-./tools/eval/evaluate.py --config configs/evaluate.yaml --data_dir data --results_dir results
-```
-"""
+"""Evaluate a model on a dataset."""
 
 import os
 import resource
