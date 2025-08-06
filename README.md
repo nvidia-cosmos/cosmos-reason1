@@ -16,13 +16,7 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 * [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B)
 
-## Inference
-
-Cosmos-Reason1 is supported by [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html).
-
-Minimum Requirements:
-
-* 1 GPU with 24GB memory
+## Setup
 
 Install system dependencies:
 
@@ -46,7 +40,20 @@ Install system dependencies:
   hf auth login
   ```
 
-Run inference:
+Clone the repository:
+
+```shell
+git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
+cd cosmos-reason1
+```
+
+## Inference
+
+Minimum Requirements:
+
+* 1 GPU with 24GB memory
+
+Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html):
 
 ```shell
 ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
@@ -72,7 +79,7 @@ We provide a set of task-specific prompt templates that are known to work well w
 
 ## Tutorials
 
-* [Video Critic for Rejection Sampling](examples/video_critic/README.md)
+* [Video Critic](examples/video_critic/README.md)
 * [Post-Training](examples/post_training/README.md)
 * [Benchmark](examples/benchmark/README.md)
 

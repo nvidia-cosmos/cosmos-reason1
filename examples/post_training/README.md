@@ -10,7 +10,7 @@ This guide provides instructions for post-training Cosmos-Reason1 on the [SFT](h
 
 Prerequisites:
 
-- [Inference Setup](../../README.md#inference)
+- [Setup](../../README.md#setup)
 
 Install system dependencies:
 
@@ -25,7 +25,7 @@ Install system dependencies:
 Install the package:
 
 ```shell
-cd cosmos-reason1/examples/post_training
+cd examples/post_training
 just install
 source .venv/bin/activate
 ```
@@ -38,7 +38,6 @@ source .venv/bin/activate
 1. Login:
 
   ```bash
-  uv tool install -U wandb
   wandb login
   ```
 
@@ -60,7 +59,7 @@ Minimum Requirements:
 
 - 4 GPUs with 80GB of memory
 
-Configure settings by editing [configs/sft.toml](configs/sft.toml). Example variants:
+Configure settings by editing [configs/sft.toml](configs/sft.toml). Variants:
 
 - 8 GPU
 
@@ -78,10 +77,8 @@ cosmos-rl --config configs/sft.toml ./tools/dataset/cosmos_sft.py
 After training finishes, the final output checkpoint can be found in the log:
 
 ```log
-[rank0]:Exported safetensors to ./outputs/cosmos-reason1-7b-tp2-sft/20250516061336/safetensors/final
+[rank0]:Exported safetensors to ./outputs/sft/20250516061336/safetensors/final
 ```
-
-In this case, you will find the sft model checkpoint at `outputs/cosmos-reason1-7b-tp2-sft/20250516061336/safetensors/final`
 
 ### Reinforcement Learning (RL)
 
@@ -91,7 +88,7 @@ Minimum Requirements:
 
 - 4 GPUs with 80GB of memory
 
-Configure settings by editing [configs/rl.toml](configs/rl.toml). Example variants:
+Configure settings by editing [configs/rl.toml](configs/rl.toml). Variants:
 
 - 8 GPU
 

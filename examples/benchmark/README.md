@@ -10,15 +10,13 @@ This guide provides instructions for evaluating models on the [Cosmos-Reason1 Be
 
 Prerequisites:
 
-- [Inference Setup](../../README.md#inference)
+- [Setup](../../README.md#setup)
 
 ## Prepare Dataset
 
-### Get Access
+Request access:
 
 - [AgiBotWorld-Beta](https://huggingface.co/datasets/agibot-world/AgiBotWorld-Beta/tree/main)
-
-### Download Sample Dataset
 
 Download annotations and sample video clips:
 
