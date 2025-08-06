@@ -15,7 +15,9 @@
 #   "vllm",
 # ]
 # [tool.uv]
-# exclude-newer = "2025-07-31T00:00:00Z"
+# exclude-newer = "2025-08-05T00:00:00Z"
+# [tool.uv.sources]
+# qwen-vl-utils = {git = "https://github.com/spectralflight/Qwen2.5-VL.git", branch = "cosmos", subdirectory = "qwen-vl-utils"}
 # ///
 
 """Run inference on a model with a given prompt.
@@ -60,45 +62,6 @@ class Prompt(pydantic.BaseModel):
     user_prompt: str = pydantic.Field(default="", description="User prompt")
 
 
-class VisionConfig(pydantic.BaseModel):
-    """Config for vision processing.
-
-    Source: https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
-    """
-
-    model_config = pydantic.ConfigDict(extra="forbid")
-
-    nframes: int | None = pydantic.Field(
-        None, description="Number of frames of the video"
-    )
-
-    fps: float | None = pydantic.Field(None, description="FPS of the video")
-    min_frames: int | None = pydantic.Field(None, description="Min frames of the video")
-    max_frames: int | None = pydantic.Field(None, description="Max frames of the video")
-
-    min_pixels: int | None = pydantic.Field(
-        None, description="Min pixels of the image/video"
-    )
-    max_pixels: int | None = pydantic.Field(
-        None, description="Max pixels of the image/video"
-    )
-    total_pixels: int | None = pydantic.Field(
-        None, description="Total pixels of the video"
-    )
-
-    resized_height: int | None = pydantic.Field(
-        None, description="Resized height of the video"
-    )
-    resized_width: int | None = pydantic.Field(
-        None, description="Resized width of the video"
-    )
-
-    video_start: float | None = pydantic.Field(
-        None, description="Start time of the video"
-    )
-    video_end: float | None = pydantic.Field(None, description="End time of the video")
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--images", type=str, nargs="*", help="Image paths")
@@ -132,10 +95,9 @@ def main():
     images: list[str] = args.images or []
     videos: list[str] = args.videos or []
     prompt_config = Prompt.model_validate(yaml.safe_load(open(args.prompt, "rb")))
-    vision_config = VisionConfig.model_validate_json(
+    vision_kwargs = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).validate_json(
         open(args.vision_config, "rb").read()
     )
-    vision_kwargs = vision_config.model_dump(exclude_none=True)
     sampling_params = msgspec.json.decode(
         open(args.generation_config, "rb").read(), type=vllm.SamplingParams
     )

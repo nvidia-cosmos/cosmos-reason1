@@ -1,4 +1,5 @@
 {
+    "$schema": "../schemas/vision_config.json",
     "fps": 4,
     "max_pixels": 81920
 }
