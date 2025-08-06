@@ -20,6 +20,7 @@ import warnings
 
 # Suppress warnings
 warnings.filterwarnings("ignore")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 from typing import Optional, Any, List, Dict

@@ -48,9 +48,9 @@ import warnings
 
 # Suppress warnings and core dumps
 warnings.filterwarnings("ignore")
-os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
 resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 import argparse
