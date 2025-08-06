@@ -19,6 +19,11 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+  - repo: https://github.com/google/addlicense
+    rev: v1.2.0-rc0
+    hooks:
+      - id: addlicense
+        args: ["-f", "scripts/_license.txt"]
   - repo: https://github.com/tcort/markdown-link-check
     rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
     hooks:
