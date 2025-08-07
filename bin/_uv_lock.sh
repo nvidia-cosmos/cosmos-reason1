@@ -9,14 +9,15 @@
 # http://www.apache.org/licenses/LICENSE-2.0
 #
 
-# Generate uv lock files for scripts.
+# Generate uv lock files for projects.
 
 set -euo pipefail
 
-# Lock scripts that are out of date
-grep -l '#!/usr/bin/env -S uv run --script' "$@" | while read -r file; do
-  if ! uv lock --check --script "$file" &>/dev/null; then
-    echo "Updating lock file for '$file'" >&2
-    uv lock --script "$file"
+# Lock projects that are out of date
+for file in "$@"; do
+  project_dir="$(dirname "$file")"
+  if ! uv lock --check --project "$project_dir" &>/dev/null; then
+    echo "Updating lock file for '$project_dir'" >&2
+    uv lock --project "$project_dir"
   fi
 done

@@ -33,8 +33,13 @@ repos:
         args: [-q]
   - repo: local
     hooks:
+      - id: uv-lock
+        name: Generate uv lock files for projects
+        entry: ./bin/_uv_lock.sh
+        language: script
+        files: pyproject\.toml$
       - id: uv-lock-script
-        name: Generate uv lock files
+        name: Generate uv lock files for scripts
         entry: ./bin/_uv_lock_script.sh
         language: script
         types: [python]
