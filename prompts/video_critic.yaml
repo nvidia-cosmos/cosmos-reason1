@@ -42,4 +42,5 @@ system_prompt: |
   <answer>
   [Whether the video contains anomalies or artifacts. Answer "Yes" or "No".]
   </answer>
-user_prompt: Does the video contain any anomalies or artifacts?
+user_prompt: |
+  Does the video contain any anomalies or artifacts?

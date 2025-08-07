@@ -27,3 +27,5 @@ system_prompt: |
       "caption": <caption of event 2>,
     },
   ]
+user_prompt: |
+  Describe the notable events in the provided video.

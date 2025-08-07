@@ -23,4 +23,5 @@ system_prompt: |
   4. You should reference the detailed information in the video, such as character actions, clothing, backgrounds, and emphasize the details in the video.
   5. Control the output prompt to around 80-100 words.
   6. Always output in English.
-user_prompt: Caption this video.
+user_prompt: |
+  Caption this video.

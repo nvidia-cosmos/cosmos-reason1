@@ -48,4 +48,5 @@ system_prompt: |
   [Continue for N total steps as requested]
 
   </answer>
-user_prompt: What is the next most plausible task?
+user_prompt: |
+  What is the next most plausible task?

@@ -26,3 +26,16 @@ We provide a set of task-specific prompt templates that are known to work well w
 These are appended to the prompt to provide additional instructions:
 
 * [Reasoning](non_reasoning.yaml)
+
+## Questions
+
+Example questions:
+
+* What are the potential safety hazards?
+* Describe what is happening in this video/image.
+* What objects do you see?
+* What actions are being performed?
+* Are there any people in this media?
+* What is the robot doing?
+* Is this demonstration successful?
+* What could be improved in this process?
