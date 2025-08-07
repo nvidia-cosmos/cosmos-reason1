@@ -25,6 +25,4 @@ We provide a set of task-specific prompt templates that are known to work well w
 
 These are appended to the prompt to provide additional instructions:
 
-* Reasoning (appended to the prompt)
-  * [Reasoning](non_reasoning.yaml)
-  * [Non-reasoning](reasoning.yaml)
+* [Reasoning](non_reasoning.yaml)

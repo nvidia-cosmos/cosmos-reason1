@@ -44,9 +44,11 @@ Example:
 ```
 """
 
+import collections
 import os
 import resource
 import warnings
+import textwrap
 
 # Suppress warnings and core dumps
 warnings.filterwarnings("ignore")
@@ -62,10 +64,17 @@ import vllm
 import pydantic
 import qwen_vl_utils
 import transformers
+from rich import print
 from rich.pretty import pprint
 import yaml
 
 ROOT = pathlib.Path(__file__).parents[1].resolve()
+SEPARATOR = "-" * 20
+
+
+def _pprint_dict(d: dict, name: str):
+    """Pretty print a dictionary."""
+    pprint(collections.namedtuple(name, d.keys())(**d), expand_all=True)
 
 
 class Prompt(pydantic.BaseModel):
@@ -126,7 +135,9 @@ def main():
     images: list[str] = args.images or []
     videos: list[str] = args.videos or []
     prompt_config = Prompt.model_validate(yaml.safe_load(open(args.prompt, "rb")))
-    reasoning_config = Prompt.model_validate(yaml.safe_load(open(f"{ROOT}/prompts/reasoning.yaml", "rb")))
+    reasoning_config = Prompt.model_validate(
+        yaml.safe_load(open(f"{ROOT}/prompts/reasoning.yaml", "rb"))
+    )
     vision_kwargs = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).validate_python(
         yaml.safe_load(open(args.vision_config, "rb"))
     )
@@ -134,10 +145,13 @@ def main():
         **yaml.safe_load(open(args.sampling_params, "rb"))
     )
     if args.verbose:
-        pprint(vision_kwargs, expand_all=True)
+        _pprint_dict(vision_kwargs, "VisionConfig")
         pprint(sampling_params, expand_all=True)
 
     # Create messages
+    system_prompt = prompt_config.system_prompt
+    if args.reasoning:
+        system_prompt = f"{system_prompt}\n{reasoning_config.system_prompt}"
     user_content = []
     for image in images:
         user_content.append({"type": "image", "image": image} | vision_kwargs)
@@ -146,14 +160,13 @@ def main():
     if prompt_config.user_prompt:
         user_content.append({"type": "text", "text": prompt_config.user_prompt})
     conversation = []
-    system_prompt = prompt_config.system_prompt
-    if args.reasoning:
-        system_prompt = system_prompt + reasoning_config.system_prompt
-    if prompt_config.system_prompt:
+    if system_prompt:
         conversation.append({"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": user_content})
-    if args.verbose:
-        pprint(conversation, expand_all=True)
+    print(SEPARATOR)
+    print("System:", textwrap.indent(system_prompt, "  "), sep="\n")
+    print("User:", textwrap.indent(prompt_config.user_prompt, "  "), sep="\n")
+    print(SEPARATOR)
 
     llm = vllm.LLM(
         model=args.model,
@@ -173,8 +186,6 @@ def main():
         conversation, return_video_kwargs=True
     )
 
-    # TODO: Add timestamps to video inputs
-
     # Run inference
     mm_data = {}
     if image_inputs is not None:
@@ -187,11 +198,11 @@ def main():
         "mm_processor_kwargs": video_kwargs,
     }
     outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
-    print("-" * 20)
+    print(SEPARATOR)
     for output in outputs[0].outputs:
         output_text = output.text
-        print(f"{output_text}")
-        print("-" * 20)
+        print("Assistant:", textwrap.indent(output_text, "  "), sep="\n")
+    print(SEPARATOR)
 
 
 if __name__ == "__main__":

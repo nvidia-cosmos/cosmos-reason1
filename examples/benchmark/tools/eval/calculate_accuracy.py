@@ -57,8 +57,7 @@ if __name__ == "__main__":
 
     # Check if any JSON files were found. Exit if the directory is empty or contains no JSONs.
     if not json_files:
-        print(f"No JSON files found in directory: {result_dir}", file=sys.stderr)
-        sys.exit(1)  # Exit with a non-zero status to indicate an issue
+        raise RuntimeError(f"No JSON files found in directory: {result_dir}")
 
     # --- Data Aggregation ---
     # Initialize counters to accumulate the total number of correct samples and all processed samples

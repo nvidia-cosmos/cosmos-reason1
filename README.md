@@ -56,7 +56,7 @@ Minimum Requirements:
 Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html):
 
 ```shell
-./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
+./scripts/inference.py --prompt prompts/caption.yaml --reasoning --videos assets/sample.mp4 --model nvidia/Cosmos-Reason1-7B -v
 ```
 
 Configure inference by editing:
