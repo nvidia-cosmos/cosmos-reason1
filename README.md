@@ -61,28 +61,9 @@ Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co
 
 Configure inference by editing:
 
-* [Generation Config](configs/generation_config.json)
-  * [Documentation](https://huggingface.co/docs/transformers/v4.53.3/en/main_classes/text_generation#transformers.GenerationConfig)
-* [Vision Processor Config](configs/vision_config.json)
-  * [Source](https://github.com/spectralflight/Qwen2.5-VL/blob/cosmos/qwen-vl-utils/src/qwen_vl_utils/vision_process.py)
-
-## Prompts
-
-We provide a set of task-specific prompt templates that are known to work well with Cosmos-Reason1:
-
-* Caption
-  * [Caption (reasoning)](prompts/caption_reason.yaml)
-  * [Caption (non-reasoning)](prompts/caption.yaml)
-* Temporal
-  * [Temporal Caption (json)](prompts/temporal_caption_json.yaml)
-  * [Temporal Caption (text)](prompts/temporal_caption_text.yaml)
-  * [Temporal Localization](prompts/temporal_localization.yaml)
-* [Multiple Choice Questions](prompts/multiple_choice_questions.yaml)
-* Analyzer
-  * [Video Critic](prompts/video_critic.yaml)
-  * [Video Analyzer](prompts/video_analyzer.yaml)
-  * [Driving Analyzer](prompts/driving_analyzer.yaml)
-* [Action Planning](prompts/action_planning.yaml)
+* [Prompts](prompts/README.md)
+* [Sampling Parameters](configs/sampling_params.yaml)
+* [Vision Processor Config](configs/vision_config.yaml)
 
 ## Tutorials
 

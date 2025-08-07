@@ -1,0 +1,11 @@
+# Vision processor config for image/video downsampling.
+# Increasing these numbers will improve quality and increase the number of tokens.
+# Source: https://github.com/spectralflight/Qwen2.5-VL/blob/cosmos/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
+
+# To enable syntax highlighting: https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml
+# yaml-language-server: $schema=schemas/vision_config.json
+
+# Frame rate
+fps: 4
+# Maximum number of pixels per frame
+max_pixels: 81920

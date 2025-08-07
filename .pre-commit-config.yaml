@@ -26,11 +26,6 @@ repos:
     hooks:
       - id: addlicense
         args: ["-f", "bin/_license.txt"]
-  - repo: https://github.com/tcort/markdown-link-check
-    rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
-    hooks:
-      - id: markdown-link-check
-        args: [-q]
   - repo: local
     hooks:
       - id: uv-lock
@@ -43,3 +38,9 @@ repos:
         entry: ./bin/_uv_lock_script.sh
         language: script
         types: [python]
+  - repo: https://github.com/tcort/markdown-link-check
+    rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
+    hooks:
+      - id: markdown-link-check
+        args: [--config, ".link-check.json", --quiet]
+        stages: [manual]

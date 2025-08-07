@@ -61,9 +61,9 @@ def main():
     vision_schema = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).json_schema()
     (output_dir / "vision_config.json").write_text(json.dumps(vision_schema, indent=2))
 
-    generation_schema = msgspec.json.schema(vllm.SamplingParams)
-    (output_dir / "generation_config.json").write_bytes(
-        msgspec.json.format(msgspec.json.encode(generation_schema), indent=2)
+    sampling_params = msgspec.json.schema(vllm.SamplingParams)
+    (output_dir / "sampling_params.json").write_bytes(
+        msgspec.json.format(msgspec.json.encode(sampling_params), indent=2)
     )
 
 

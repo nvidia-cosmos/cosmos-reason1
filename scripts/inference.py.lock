@@ -13,8 +13,8 @@ exclude-newer = "2025-08-05T00:00:00Z"
 [manifest]
 requirements = [
     { name = "accelerate" },
-    { name = "msgspec" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "qwen-vl-utils", git = "https://github.com/spectralflight/Qwen2.5-VL.git?subdirectory=qwen-vl-utils&branch=cosmos" },
     { name = "rich" },
     { name = "torch" },

@@ -20,8 +20,8 @@
 # dependencies = [
 #   "accelerate",
 #   "pydantic",
+#   "pyyaml",
 #   "qwen-vl-utils",
-#   "msgspec",
 #   "rich",
 #   "torch",
 #   "torchcodec",
@@ -58,7 +58,6 @@ resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 import argparse
 import pathlib
 
-import msgspec
 import vllm
 import pydantic
 import qwen_vl_utils
@@ -91,14 +90,14 @@ def main():
     parser.add_argument(
         "--vision-config",
         type=str,
-        default=f"{ROOT}/configs/vision_config.json",
+        default=f"{ROOT}/configs/vision_config.yaml",
         help="Path to vision config json file",
     )
     parser.add_argument(
-        "--generation-config",
+        "--sampling-params",
         type=str,
-        default=f"{ROOT}/configs/generation_config.json",
-        help="Path to generation config json file",
+        default=f"{ROOT}/configs/sampling_params.yaml",
+        help="Path to generation config yaml file",
     )
     parser.add_argument(
         "--model",
@@ -117,11 +116,11 @@ def main():
     images: list[str] = args.images or []
     videos: list[str] = args.videos or []
     prompt_config = Prompt.model_validate(yaml.safe_load(open(args.prompt, "rb")))
-    vision_kwargs = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).validate_json(
-        open(args.vision_config, "rb").read()
+    vision_kwargs = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).validate_python(
+        yaml.safe_load(open(args.vision_config, "rb"))
     )
-    sampling_params = msgspec.json.decode(
-        open(args.generation_config, "rb").read(), type=vllm.SamplingParams
+    sampling_params = vllm.SamplingParams(
+        **yaml.safe_load(open(args.sampling_params, "rb"))
     )
 
     # Create messages
@@ -155,6 +154,8 @@ def main():
     image_inputs, video_inputs, video_kwargs = qwen_vl_utils.process_vision_info(
         conversation, return_video_kwargs=True
     )
+
+    # TODO: Add timestamps to video inputs
 
     # Run inference
     mm_data = {}

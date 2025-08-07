@@ -1,9 +1,0 @@
-{
-    "$schema": "schemas/generation_config.json",
-    "max_tokens": 4096,
-    "n": 1,
-    "repetition_penalty": 1.05,
-    "seed": 1,
-    "temperature": 0.6,
-    "top_p": 0.95
-}
