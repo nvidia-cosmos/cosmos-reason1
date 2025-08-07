@@ -133,6 +133,9 @@ def main():
     sampling_params = vllm.SamplingParams(
         **yaml.safe_load(open(args.sampling_params, "rb"))
     )
+    if args.verbose:
+        pprint(vision_kwargs, expand_all=True)
+        pprint(sampling_params, expand_all=True)
 
     # Create messages
     user_content = []
@@ -145,7 +148,7 @@ def main():
     conversation = []
     system_prompt = prompt_config.system_prompt
     if args.reasoning:
-        system_prompt + reasoning_config.system_prompt
+        system_prompt = system_prompt + reasoning_config.system_prompt
     if prompt_config.system_prompt:
         conversation.append({"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": user_content})
