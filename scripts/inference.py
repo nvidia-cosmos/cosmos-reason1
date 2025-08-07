@@ -88,6 +88,11 @@ def main():
         help="Path to prompt yaml file",
     )
     parser.add_argument(
+        "--reasoning",
+        action="store_true",
+        help="Enable reasoning trace",
+    )
+    parser.add_argument(
         "--vision-config",
         type=str,
         default=f"{ROOT}/configs/vision_config.yaml",
@@ -97,13 +102,18 @@ def main():
         "--sampling-params",
         type=str,
         default=f"{ROOT}/configs/sampling_params.yaml",
-        help="Path to generation config yaml file",
+        help="Path to sampling parameters yaml file",
     )
     parser.add_argument(
         "--model",
         type=str,
         default="nvidia/Cosmos-Reason1-7B",
-        help="Model name (https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)",
+        help="Model name or path (Cosmos-Reason1: https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)",
+    )
+    parser.add_argument(
+        "--revision",
+        type=str,
+        help="Model revision (branch name, tag name, or commit id)",
     )
     parser.add_argument(
         "-v",
@@ -116,6 +126,7 @@ def main():
     images: list[str] = args.images or []
     videos: list[str] = args.videos or []
     prompt_config = Prompt.model_validate(yaml.safe_load(open(args.prompt, "rb")))
+    reasoning_config = Prompt.model_validate(yaml.safe_load(open(f"{ROOT}/prompts/reasoning.yaml", "rb")))
     vision_kwargs = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).validate_python(
         yaml.safe_load(open(args.vision_config, "rb"))
     )
@@ -125,21 +136,25 @@ def main():
 
     # Create messages
     user_content = []
-    if prompt_config.user_prompt:
-        user_content.append({"type": "text", "text": prompt_config.user_prompt})
     for image in images:
         user_content.append({"type": "image", "image": image} | vision_kwargs)
     for video in videos:
         user_content.append({"type": "video", "video": video} | vision_kwargs)
+    if prompt_config.user_prompt:
+        user_content.append({"type": "text", "text": prompt_config.user_prompt})
     conversation = []
+    system_prompt = prompt_config.system_prompt
+    if args.reasoning:
+        system_prompt + reasoning_config.system_prompt
     if prompt_config.system_prompt:
-        conversation.append({"role": "system", "content": prompt_config.system_prompt})
+        conversation.append({"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": user_content})
     if args.verbose:
         pprint(conversation, expand_all=True)
 
     llm = vllm.LLM(
         model=args.model,
+        revision=args.revision,
         limit_mm_per_prompt={"image": len(images), "video": len(videos)},
         enforce_eager=True,
     )

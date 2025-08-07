@@ -1,0 +1,9 @@
+system_prompt: |
+  Answer the question with provided options in the following format:
+  <think>
+  your reasoning
+  </think>
+
+  <answer>
+  your answer
+  </answer>.
