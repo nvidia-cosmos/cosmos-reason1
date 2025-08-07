@@ -12,34 +12,12 @@ exclude-newer = "2025-07-31T00:00:00Z"
 
 [manifest]
 requirements = [
-    { name = "accelerate" },
+    { name = "msgspec" },
     { name = "pydantic" },
-    { name = "pyyaml" },
-    { name = "qwen-vl-utils" },
-    { name = "rich" },
+    { name = "qwen-vl-utils", git = "https://github.com/spectralflight/Qwen2.5-VL.git?subdirectory=qwen-vl-utils&branch=cosmos" },
     { name = "torch" },
-    { name = "torchcodec" },
     { name = "torchvision" },
-    { name = "transformers", specifier = ">=4.51.3" },
     { name = "vllm" },
-]
-
-[[package]]
-name = "accelerate"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "huggingface-hub" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "psutil" },
-    { name = "pyyaml" },
-    { name = "safetensors" },
-    { name = "torch" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/25/969456a95a90ed38f73f68d0f0915bdf1d76145d05054c59ad587b171150/accelerate-1.9.0.tar.gz", hash = "sha256:0e8c61f81af7bf37195b6175a545ed292617dd90563c88f49020aea5b6a0b47f", size = 383234, upload-time = "2025-07-16T16:24:54.526Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/9f/1c/a17fb513aeb684fb83bef5f395910f53103ab30308bbdd77fd66d6698c46/accelerate-1.9.0-py3-none-any.whl", hash = "sha256:c24739a97ade1d54af4549a65f8b6b046adc87e2b3e4d6c66516e32c53d5a8f1", size = 367073, upload-time = "2025-07-16T16:24:52.957Z" },
 ]
 
 [[package]]
@@ -2587,16 +2565,12 @@ wheels = [
 [[package]]
 name = "qwen-vl-utils"
 version = "0.0.11"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/spectralflight/Qwen2.5-VL.git?subdirectory=qwen-vl-utils&branch=cosmos#eadb502c11596ac4a56872ba858a99aa49e07188" }
 dependencies = [
     { name = "av" },
     { name = "packaging" },
     { name = "pillow" },
     { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/42/9f/1229a40ebd49f689a0252144126f3865f31bb4151e942cf781a2936f0c4d/qwen_vl_utils-0.0.11.tar.gz", hash = "sha256:083ba1e5cfa5002165b1e3bddd4d6d26d1d6d34473884033ef12ae3fe8496cd5", size = 7924, upload-time = "2025-04-21T10:38:47.461Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/c2/ad7f93e1eea4ea0aefd1cc6fbe7a7095fd2f03a4d8fe2c3707e612b0866e/qwen_vl_utils-0.0.11-py3-none-any.whl", hash = "sha256:7fd5287ac04d6c1f01b93bf053b0be236a35149e414c9e864e3cc5bf2fe8cb7b", size = 7584, upload-time = "2025-04-21T10:38:45.595Z" },
 ]
 
 [[package]]
@@ -3437,21 +3411,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/16/9d03dc62613f276f9666eb0609164287df23986b67d20b53e78d21a3d8d8/torchaudio-2.7.1-cp313-cp313t-manylinux_2_28_aarch64.whl", hash = "sha256:1850475ef9101ea0b3593fe93ff6ee4e7a20598f6da6510761220b9fe56eb7fa", size = 1700436, upload-time = "2025-06-04T17:43:55.589Z" },
     { url = "https://files.pythonhosted.org/packages/83/45/57a437fe41b302fc79b4eb78fdb3e480ff42c66270e7505eedf0b000969c/torchaudio-2.7.1-cp313-cp313t-manylinux_2_28_x86_64.whl", hash = "sha256:98257fc14dd493ba5a3258fb6d61d27cd64a48ee79537c3964c4da26b9bf295f", size = 3521631, upload-time = "2025-06-04T17:43:50.628Z" },
     { url = "https://files.pythonhosted.org/packages/91/5e/9262a7e41e47bc87eb245c4fc485eb26ff41a05886b241c003440c9e0107/torchaudio-2.7.1-cp313-cp313t-win_amd64.whl", hash = "sha256:c802e0dcbf38669007327bb52f065573cc5cac106eaca987f6e1a32e6282263a", size = 2534956, upload-time = "2025-06-04T17:43:42.324Z" },
-]
-
-[[package]]
-name = "torchcodec"
-version = "0.5"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/b5/004a300528a1c7904a0bd41609fa16d7b3a1a9043061922911e9c553c628/torchcodec-0.5-cp310-cp310-macosx_11_0_arm64.whl", hash = "sha256:f71cb7918a56196dd04fb456e259c1db83516d52320387fed8b16df5e95bc36d", size = 2810828, upload-time = "2025-07-23T17:43:51.435Z" },
-    { url = "https://files.pythonhosted.org/packages/52/6e/d12c327338d9561f2ef0896218f163e6635d4ae1d688f1f28664d729b1ab/torchcodec-0.5-cp310-cp310-manylinux_2_28_x86_64.whl", hash = "sha256:f760e49803d7767e10577d3d20d1a9dd0ad5adebd1ecbf7ce941176e8c388f54", size = 1366065, upload-time = "2025-07-23T17:42:41.88Z" },
-    { url = "https://files.pythonhosted.org/packages/84/9f/8e0ae96b2560050eb1a8780dabbe3d192cf99e62a5ce2a128684bfd6f5d6/torchcodec-0.5-cp311-cp311-macosx_11_0_arm64.whl", hash = "sha256:d582981f251979d4432a1606d2bfbc8d56b98a701957afbaf4cafe7569b19c68", size = 3307718, upload-time = "2025-07-23T17:43:52.805Z" },
-    { url = "https://files.pythonhosted.org/packages/d3/a1/cc2b7f72104cbb5f60f5f277f470e9d0172bffb354f74b0e13a02a241165/torchcodec-0.5-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:00252c2a138c655851cc7aa6e7ad6455c6513c9b2f93cec74563cba83196be8a", size = 1374385, upload-time = "2025-07-23T17:42:43.219Z" },
-    { url = "https://files.pythonhosted.org/packages/02/52/23145c2a6580f0753104f257067db0cf68e1ba105408777ec54ce686c1f0/torchcodec-0.5-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:221c1123eefe31d57a41fe85b020306f685b6823dc70c3f4648215038fbae52c", size = 3493067, upload-time = "2025-07-23T17:43:54.519Z" },
-    { url = "https://files.pythonhosted.org/packages/65/38/dfe8aa3a71c4eb0fd930d0c6db661cc65d1f220b2225433207ceb15733c4/torchcodec-0.5-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:310dfbfd7c56e283e0a9bd7cb4b5815cf1251a7bdeb93991b14311a1d144137d", size = 1370294, upload-time = "2025-07-23T17:42:44.455Z" },
-    { url = "https://files.pythonhosted.org/packages/33/c0/a7ea6135890aa93c7491aa8d5622a77c6de587ddef237f75e3490e98c3c2/torchcodec-0.5-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:7f75fb5eb9a59fb3ce690ec7f4eed12e9c639827ec46ffdd16d0aabaece82ab8", size = 3456530, upload-time = "2025-07-23T17:43:55.788Z" },
-    { url = "https://files.pythonhosted.org/packages/71/e8/11be3eca1b545af1773277540eeafc5fd5a2b76433063756d6e61ea8bf8d/torchcodec-0.5-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:b9f41237de1b5960e85d3326a345deed86aa1b43d9cf17eac054255758dd41aa", size = 1375368, upload-time = "2025-07-23T17:42:45.619Z" },
 ]
 
 [[package]]

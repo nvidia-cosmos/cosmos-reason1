@@ -1,0 +1,7 @@
+default:
+    just --list
+
+# Install in an existing environment
+install:
+    uv sync --only-group build --inexact
+    uv sync --all-extras

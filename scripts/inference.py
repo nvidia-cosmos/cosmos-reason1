@@ -19,15 +19,20 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "accelerate",
+#   "pydantic",
+#   "pyyaml",
 #   "qwen-vl-utils",
 #   "rich",
 #   "torch",
 #   "torchcodec",
 #   "torchvision",
 #   "transformers>=4.51.3",
+#   "vllm",
 # ]
 # [tool.uv]
-# exclude-newer = "2025-07-31T00:00:00Z"
+# exclude-newer = "2025-08-05T00:00:00Z"
+# [tool.uv.sources]
+# qwen-vl-utils = {git = "https://github.com/spectralflight/Qwen2.5-VL.git", branch = "cosmos", subdirectory = "qwen-vl-utils"}
 # ///
 
 """Run inference on a model with a given prompt.
@@ -35,28 +40,65 @@
 Example:
 
 ```shell
-./inference.py --prompt 'Please describe the video.' --videos video.mp4
+./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
 ```
 """
 
-import argparse
+import os
+import resource
+import warnings
 
+# Suppress warnings and core dumps
+warnings.filterwarnings("ignore")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+import argparse
+import pathlib
+
+import vllm
+import pydantic
 import qwen_vl_utils
 import transformers
-from rich import print
+from rich.pretty import pprint
+import yaml
+
+ROOT = pathlib.Path(__file__).parents[1].resolve()
+
+
+class Prompt(pydantic.BaseModel):
+    """Config for prompt."""
+
+    model_config = pydantic.ConfigDict(extra="forbid")
+
+    system_prompt: str = pydantic.Field(default="", description="System prompt")
+    user_prompt: str = pydantic.Field(default="", description="User prompt")
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt", type=str, help="User prompt message")
-    parser.add_argument(
-        "--system_prompt",
-        type=str,
-        default="You are a helpful assistant. Answer the question in the following format: <think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>.",
-        help="System prompt message",
-    )
     parser.add_argument("--images", type=str, nargs="*", help="Image paths")
     parser.add_argument("--videos", type=str, nargs="*", help="Video paths")
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        required=True,
+        help="Path to prompt yaml file",
+    )
+    parser.add_argument(
+        "--vision-config",
+        type=str,
+        default=f"{ROOT}/configs/vision_config.yaml",
+        help="Path to vision config json file",
+    )
+    parser.add_argument(
+        "--sampling-params",
+        type=str,
+        default=f"{ROOT}/configs/sampling_params.yaml",
+        help="Path to generation config yaml file",
+    )
     parser.add_argument(
         "--model",
         type=str,
@@ -64,76 +106,74 @@ def main():
         help="Model name (https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)",
     )
     parser.add_argument(
-        "--fps", type=int, default=1, help="Downsample video frame rate"
-    )
-    parser.add_argument(
-        "--max-pixels", type=int, default=81920, help="Downsample media max pixels"
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Verbose output",
     )
     args = parser.parse_args()
 
+    images: list[str] = args.images or []
+    videos: list[str] = args.videos or []
+    prompt_config = Prompt.model_validate(yaml.safe_load(open(args.prompt, "rb")))
+    vision_kwargs = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).validate_python(
+        yaml.safe_load(open(args.vision_config, "rb"))
+    )
+    sampling_params = vllm.SamplingParams(
+        **yaml.safe_load(open(args.sampling_params, "rb"))
+    )
+
+    # Create messages
     user_content = []
-    for image in args.images or []:
-        user_content.append(
-            {"type": "image", "image": image, "max_pixels": args.max_pixels}
-        )
-    for video in args.videos or []:
-        user_content.append(
-            {
-                "type": "video",
-                "video": video,
-                "fps": args.fps,
-                "max_pixels": args.max_pixels,
-            }
-        )
-    user_content.append({"type": "text", "text": args.prompt})
-    messages = []
-    if args.system_prompt:
-        messages.append({"role": "system", "content": args.system_prompt})
-    messages.append({"role": "user", "content": user_content})
-    print("Messages:", messages)
+    if prompt_config.user_prompt:
+        user_content.append({"type": "text", "text": prompt_config.user_prompt})
+    for image in images:
+        user_content.append({"type": "image", "image": image} | vision_kwargs)
+    for video in videos:
+        user_content.append({"type": "video", "video": video} | vision_kwargs)
+    conversation = []
+    if prompt_config.system_prompt:
+        conversation.append({"role": "system", "content": prompt_config.system_prompt})
+    conversation.append({"role": "user", "content": user_content})
+    if args.verbose:
+        pprint(conversation, expand_all=True)
 
-    # Load the model
-    model = transformers.Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        args.model, torch_dtype="auto", device_map="auto"
+    llm = vllm.LLM(
+        model=args.model,
+        limit_mm_per_prompt={"image": len(images), "video": len(videos)},
+        enforce_eager=True,
     )
+
+    # Process messages
     processor: transformers.Qwen2_5_VLProcessor = (
-        transformers.AutoProcessor.from_pretrained(args.model, use_fast=True)
+        transformers.AutoProcessor.from_pretrained(args.model)
+    )
+    prompt = processor.apply_chat_template(
+        conversation, tokenize=False, add_generation_prompt=True
+    )
+    image_inputs, video_inputs, video_kwargs = qwen_vl_utils.process_vision_info(
+        conversation, return_video_kwargs=True
     )
 
-    generation_config = transformers.GenerationConfig(
-        do_sample=True,
-        max_new_tokens=4096,
-        repetition_penalty=1.05,
-        temperature=0.6,
-        top_p=0.95,
-    )
-
-    # Process the messages
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    image_inputs, video_inputs = qwen_vl_utils.process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-    inputs = inputs.to(model.device)
+    # TODO: Add timestamps to video inputs
 
     # Run inference
-    generated_ids = model.generate(**inputs, generation_config=generation_config)
-    generated_ids_trimmed = [
-        out_ids[len(in_ids) :]
-        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-    ]
-    output_text = processor.batch_decode(
-        generated_ids_trimmed,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
-    )
-    print(f"\n\n{output_text[0]}")
+    mm_data = {}
+    if image_inputs is not None:
+        mm_data["image"] = image_inputs
+    if video_inputs is not None:
+        mm_data["video"] = video_inputs
+    llm_inputs = {
+        "prompt": prompt,
+        "multi_modal_data": mm_data,
+        "mm_processor_kwargs": video_kwargs,
+    }
+    outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
+    print("-" * 20)
+    for output in outputs[0].outputs:
+        output_text = output.text
+        print(f"{output_text}")
+        print("-" * 20)
 
 
 if __name__ == "__main__":

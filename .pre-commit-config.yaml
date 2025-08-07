@@ -19,13 +19,27 @@ repos:
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
   - repo: https://github.com/google/addlicense
     rev: v1.2.0-rc0
     hooks:
       - id: addlicense
-        args: ["-f", "scripts/_license.txt"]
+        args: ["-f", "bin/_license.txt"]
+  - repo: local
+    hooks:
+      - id: uv-lock
+        name: Generate uv lock files for projects
+        entry: ./bin/_uv_lock.sh
+        language: script
+        files: pyproject\.toml$
+      - id: uv-lock-script
+        name: Generate uv lock files for scripts
+        entry: ./bin/_uv_lock_script.sh
+        language: script
+        types: [python]
   - repo: https://github.com/tcort/markdown-link-check
     rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
     hooks:
       - id: markdown-link-check
-        args: [-q]
+        args: [--config, ".link-check.json", --quiet]

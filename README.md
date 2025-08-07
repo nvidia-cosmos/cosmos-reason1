@@ -7,6 +7,7 @@
 Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop with the goal of enabling multimodal LLMs to generate physically grounded responses. We release one multimodal LLMs: Cosmos-Reason1-7B post-trained with Physical AI SFT, and Physical AI reinforcement learning. We define ontologies for physical common sense and embodied reasoning, and also build benchmarks to evaluate Physical AI reasoning capabilities of multimodal LLMs.
 
 ## News
+
 * 2025-08-1: We added support for spatial-temporal reasoning for city and industrial operations. See latest checkpoint [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B).
 * 2025-06-11: We enhance the model’s capability on judging the physical plausibility of a video. See [this tutorial](examples/video_critic/README.md) for details.
 * 2025-05-17: We release model weights and training data under [Hugging Face](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7).
@@ -15,82 +16,60 @@ Cosmos-Reason1 is a suite of models, ontologies, and benchmarks that we develop 
 
 * [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B)
 
-## Inference
+## Setup
 
 Install system dependencies:
 
-```shell
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-```
-
-Login to huggingface:
-
-```shell
-uv tool install -U "huggingface_hub[cli]"
-hf auth login
-```
-
-Example scripts:
-
-* [🤗 Transformers](scripts/inference.py)
+* [pkgx](https://github.com/pkgxdev/pkgx?tab=readme-ov-file#quickstart)
 
   ```shell
-  ./scripts/inference.py --prompt 'Please describe the video.' --videos assets/sample.mp4
+  brew install pkgx || curl https://pkgx.sh | sh
   ```
 
-* [vLLM](scripts/inference_vllm.py)
+* [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
   ```shell
-  ./scripts/inference_vllm.py
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  source $HOME/.local/bin/env
   ```
 
-Example output:
+* [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
 
-<table>
-  <tr>
-    <td>
-      <p>User prompt: Is it safe to turn right?</p>
-      <img src="assets/sample.gif" alt="Demo GIF" width="400" /><br/>
-    </td>
-    <td style="vertical-align: top; padding-left: 20px;">
-      <!-- Text on the right -->
-      <p>Assistant response: </p>
-      <p>
-&lt;think&gt;
-Okay, let's see. The user is asking if it's safe to turn right based on the video provided. First, I need to ...
-The key points here are the parked vehicles. There are cars parked on both sides of the road, ...
-&lt;/think&gt;
+  ```shell
+  uv tool install -U "huggingface_hub[cli]"
+  hf auth login
+  ```
 
-&lt;answer&gt;
-Based on the video, turning right may not be entirely safe due to the following factors: ...
-&lt;/answer&gt;
-      </p>
-    </td>
-  </tr>
-  <tr>
-    <td>
-      <p>User prompt: Analyze the video for any artifacts or anomalies.</p>
-      <img src="examples/video_critic/assets/generation_3.gif" alt="Demo GIF" width="400" /><br/>
-    </td>
-    <td style="vertical-align: top; padding-left: 20px;">
-      <!-- Text on the right -->
-      <p>Assistant response:</p>
-      <p>
-&lt;component name="Orange Bottle Interaction"&gt;<br>
-&lt;analysis&gt;
-The left robot arm approaches the orange bottle and makes contact with it. However, instead of grasping the bottle firmly, the gripper wraps around it in an awkward manner, failing to secure a proper hold ... suggesting a glitch in the interaction physics. &lt;/analysis&gt;<br>
-&lt;/component&gt;<br>
-...
-      </p>
-    </td>
-  </tr>
-</table>
+Clone the repository:
+
+```shell
+git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
+cd cosmos-reason1
+```
+
+## Inference
+
+Minimum Requirements:
+
+* 1 GPU with 24GB memory
+
+Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html):
+
+```shell
+./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
+```
+
+Configure inference by editing:
+
+* [Prompts](prompts/README.md)
+* [Sampling Parameters](configs/sampling_params.yaml)
+* [Vision Processor Config](configs/vision_config.yaml)
 
 ## Tutorials
 
-* [Using Cosmos-Reason1 as Video Critic for Rejection Sampling](examples/video_critic/README.md)
-* [Post-training Cosmos-Reason1 using Cosmos-Reason1-SFT-Dataset](examples/cosmos_reason1_sft_dataset/README.md)
+* [Video Critic](examples/video_critic/README.md)
+* [Post-Training](examples/post_training/README.md)
+* [Benchmark](examples/benchmark/README.md)
 
 ## Post-Training
 

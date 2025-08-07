@@ -1,0 +1,128 @@
+{
+  "description": "Config for video processing.\n\nAttributes:\n    video_start: Start time of the video\n    video_end: End time of the video\n    nframes: Number of frames of the video\n    fps: FPS of the video\n    min_frames: Min frames of the video\n    max_frames: Max frames of the video",
+  "properties": {
+    "min_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Min Pixels"
+    },
+    "max_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Max Pixels"
+    },
+    "resized_height": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resized Height"
+    },
+    "resized_width": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Resized Width"
+    },
+    "video_start": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Video Start"
+    },
+    "video_end": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Video End"
+    },
+    "nframes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Nframes"
+    },
+    "fps": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fps"
+    },
+    "min_frames": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Min Frames"
+    },
+    "max_frames": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Max Frames"
+    },
+    "total_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Total Pixels"
+    }
+  },
+  "title": "VideoConfig",
+  "type": "object"
+}

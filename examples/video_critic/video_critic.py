@@ -20,6 +20,8 @@
 # dependencies = [
 #   "accelerate",
 #   "qwen-vl-utils",
+#   "pydantic",
+#   "pyyaml",
 #   "rich",
 #   "torch",
 #   "torchcodec",
@@ -31,57 +33,46 @@
 # exclude-newer = "2025-07-31T00:00:00Z"
 # ///
 
-"""Example script for using Cosmos Reason1 as a video critic.
+"""Example script for using Cosmos-Reason1 as a video critic.
 
 Example:
 
 ```shell
-./examples/video_critic/video_critic.py
+./examples/video_critic/video_critic.py --video_path assets/sample.mp4
 ```
 """
 
+import os
+import resource
+import warnings
+
+# Suppress warnings and core dumps
+warnings.filterwarnings("ignore")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
+resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 import argparse
-import os
 import base64
+import pathlib
 import xml.etree.ElementTree as ET
 
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
 from qwen_vl_utils import process_vision_info
+import pydantic
+import yaml
 
-SYSTEM_PROMPT_CRITIC = """You are a helpful video analyzer. The goal is to identify artifacts and anomalies in the video.
-Analyze the video carefully and answer the question according to the following template:
+ROOT = pathlib.Path(__file__).parents[2].resolve()
 
-<think>
-<overview>
-[Brief description of the video.]
-</overview>
+class Prompt(pydantic.BaseModel):
+    """Config for prompt."""
 
-<component name="Component 1 Name">
-<analysis>
-[Analysis or reasoning about this component.]
-</analysis>
-<anomaly>Yes | No</anomaly>
-</component>
+    model_config = pydantic.ConfigDict(extra="forbid")
 
-<component name="Component 2 Name">
-<analysis>
-[Analysis or reasoning about this component.]
-</analysis>
-<anomaly>Yes | No</anomaly>
-</component>
-
-<!-- Add more components as needed -->
-</think>
-
-<answer>
-[Whether the video contains anomalies or artifacts. Answer "Yes" or "No".]
-</answer>"""
-
-USER_PROMPT_CRITIC = "Does the video contain any anomalies or artifacts?"
-
-MODEL_PATH = "nvidia/Cosmos-Reason1-7B"
+    system_prompt: str = pydantic.Field(default="", description="System prompt")
+    user_prompt: str = pydantic.Field(default="", description="User prompt")
 
 
 def parse_response(response):
@@ -230,12 +221,9 @@ def build_html_report(video_path, responses):
 
     return html
 
-def run_critic(args):
-    llm = LLM(
-        model=MODEL_PATH,
-        limit_mm_per_prompt={"image": 0, "video": 1},
-        enforce_eager=True,
-    )
+def run_critic(llm, args):
+    prompt_path = f"{ROOT}/prompts/video_critic.yaml"
+    prompt_config = Prompt.model_validate(yaml.safe_load(open(prompt_path, "rb")))
 
     sampling_params = SamplingParams(
         n=args.num_trials,
@@ -244,10 +232,11 @@ def run_critic(args):
         top_p=0.95,
         repetition_penalty=1.05,
         max_tokens=4096,
+        seed=1, # for reproducibility
     )
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_CRITIC},
+        {"role": "system", "content": prompt_config.system_prompt},
         {"role": "user", "content": [
                 {
                     "type": "video",
@@ -256,11 +245,11 @@ def run_critic(args):
                     "fps": 16,
                     "total_pixels": 8192 * 28 * 28,
                 },
-                {"type": "text", "text": USER_PROMPT_CRITIC},
+                {"type": "text", "text": prompt_config.user_prompt},
             ]
         },
     ]
-    processor = AutoProcessor.from_pretrained(MODEL_PATH)
+    processor = AutoProcessor.from_pretrained(args.model)
     prompt = processor.apply_chat_template(
         messages,
         tokenize=False,
@@ -290,18 +279,28 @@ def parse_args():
     parser.add_argument(
         "--video_path",
         type=str,
-        default="assets/sample.mp4",
+        required=True,
         help="Path to input video for critic",
     )
-    # Rejection sampling settings
     parser.add_argument("--num_trials", type=int, default=4, help="Number of critic trials for each video")
+    parser.add_argument("--model", type=str, default="nvidia/Cosmos-Reason1-7B", help="Model path")
     return parser.parse_args()
 
-if __name__ == "__main__":
+def main():
     args = parse_args()
-    generated_text = run_critic(args)
+
+    llm = LLM(
+        model=args.model,
+        limit_mm_per_prompt={"image": 0, "video": 1},
+        enforce_eager=True,
+    )
+
+    generated_text = run_critic(llm, args)
     html_content = build_html_report(args.video_path, generated_text)
     html_path = os.path.splitext(args.video_path)[0] + ".html"
     with open(html_path, 'w', encoding='utf-8') as f:
         f.write(html_content)
     print(f"Generated HTML report: {html_path}")
+
+if __name__ == "__main__":
+    main()
