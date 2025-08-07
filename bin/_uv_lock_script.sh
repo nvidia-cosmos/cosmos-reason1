@@ -13,10 +13,11 @@
 
 set -euo pipefail
 
-# Lock scripts that are out of date
-grep -l '#!/usr/bin/env -S uv run --script' "$@" | while read -r file; do
-  if ! uv lock --check --script "$file" &>/dev/null; then
-    echo "Updating lock file for '$file'" >&2
-    uv lock --script "$file"
+for file in "$@"; do
+  if head -n1 "$file" | grep -q '^#!/usr/bin/env -S uv run --script'; then
+    if ! uv lock --check --script "$file" &>/dev/null; then
+      echo "Updating lock file for '$file'" >&2
+      uv lock --script "$file"
+    fi
   fi
 done

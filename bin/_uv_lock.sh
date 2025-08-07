@@ -13,7 +13,6 @@
 
 set -euo pipefail
 
-# Lock projects that are out of date
 for file in "$@"; do
   project_dir="$(dirname "$file")"
   if ! uv lock --check --project "$project_dir" &>/dev/null; then
