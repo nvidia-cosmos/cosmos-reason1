@@ -43,4 +43,3 @@ repos:
     hooks:
       - id: markdown-link-check
         args: [--config, ".link-check.json", --quiet]
-        stages: [manual]

@@ -1,1 +1,7 @@
-{}
+{
+    "ignorePatterns": [
+        {
+            "pattern": "^https://huggingface.co/docs/transformers"
+        }
+    ]
+}
