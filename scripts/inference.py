@@ -63,7 +63,7 @@ import vllm
 import pydantic
 import qwen_vl_utils
 import transformers
-from rich import print
+from rich.pretty import pprint
 import yaml
 
 ROOT = pathlib.Path(__file__).parents[1].resolve()
@@ -85,7 +85,7 @@ def main():
     parser.add_argument(
         "--prompt",
         type=str,
-        default=f"{ROOT}/prompts/caption.yaml",
+        required=True,
         help="Path to prompt yaml file",
     )
     parser.add_argument(
@@ -105,6 +105,12 @@ def main():
         type=str,
         default="nvidia/Cosmos-Reason1-7B",
         help="Model name (https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)",
+    )
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Verbose output",
     )
     args = parser.parse_args()
 
@@ -126,10 +132,12 @@ def main():
         user_content.append({"type": "image", "image": image} | vision_kwargs)
     for video in videos:
         user_content.append({"type": "video", "video": video} | vision_kwargs)
-    messages = []
+    conversation = []
     if prompt_config.system_prompt:
-        messages.append({"role": "system", "content": prompt_config.system_prompt})
-    messages.append({"role": "user", "content": user_content})
+        conversation.append({"role": "system", "content": prompt_config.system_prompt})
+    conversation.append({"role": "user", "content": user_content})
+    if args.verbose:
+        pprint(conversation, expand_all=True)
 
     llm = vllm.LLM(
         model=args.model,
@@ -142,10 +150,10 @@ def main():
         transformers.AutoProcessor.from_pretrained(args.model)
     )
     prompt = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+        conversation, tokenize=False, add_generation_prompt=True
     )
     image_inputs, video_inputs, video_kwargs = qwen_vl_utils.process_vision_info(
-        messages, return_video_kwargs=True
+        conversation, return_video_kwargs=True
     )
 
     # Run inference

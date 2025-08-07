@@ -56,8 +56,15 @@ Minimum Requirements:
 Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html):
 
 ```shell
-./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
+./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
 ```
+
+Configure inference by editing:
+
+* [Generation Config](configs/generation_config.json)
+  * [Documentation](https://huggingface.co/docs/transformers/v4.53.3/en/main_classes/text_generation#transformers.GenerationConfig)
+* [Vision Processor Config](configs/vision_config.json)
+  * [Source](https://github.com/spectralflight/Qwen2.5-VL/blob/cosmos/qwen-vl-utils/src/qwen_vl_utils/vision_process.py)
 
 ## Prompts
 
