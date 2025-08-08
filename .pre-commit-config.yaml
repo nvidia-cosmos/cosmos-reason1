@@ -38,6 +38,12 @@ repos:
         entry: ./bin/_uv_lock_script.sh
         language: script
         types: [python]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.8
+    hooks:
+      - id: ruff-check
+        args: [ --fix ]
+      # - id: ruff-format
   - repo: https://github.com/tcort/markdown-link-check
     rev: v3.12.2 # DO NOT UPDATE UNTIL https://github.com/tcort/markdown-link-check/pull/452 IS MERGED
     hooks:

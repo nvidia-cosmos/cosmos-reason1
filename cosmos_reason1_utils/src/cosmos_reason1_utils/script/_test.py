@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-system_prompt: |
-  Please provide captions of all the events in the video with timestamps using the following format:
-  <start time> <end time> caption of event 1.
-  <start time> <end time> caption of event 2.
+from cosmos_reason1_utils.script import init_script
+import pytest
 
-  At each frame, the timestamp is embedded at the bottom of the video. You need to extract the timestamp and answer the user question.
-user_prompt: |
-  Describe the notable events in the provided video.
+
+@pytest.mark.parametrize("verbose", [True, False])
+def test_init_script(verbose: bool):
+    init_script(verbose=verbose)

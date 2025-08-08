@@ -23,16 +23,9 @@
 max_tokens: 4096
 # Number of output sequences to return for the given prompt.
 n: 1
-# Float that penalizes new tokens based on whether they appear in the prompt and
-# the generated text so far. Values > 1 encourage the model to use new tokens,
-# while values < 1 encourage the model to repeat tokens.
-repetition_penalty: 1.05
-# Random seed to use for the generation.
-seed: 1
 # Float that controls the randomness of the sampling. Lower values make the
 # model more deterministic, while higher values make the model more random. Zero
 # means greedy sampling.
-temperature: 0.6
-# Float that controls the cumulative probability of the top tokens to consider.
-# Must be in (0, 1]. Set to 1 to consider all tokens.
-top_p: 0.95
+temperature: 0.01
+# Random seed to use for the generation to ensure reproducibility.
+seed: 42

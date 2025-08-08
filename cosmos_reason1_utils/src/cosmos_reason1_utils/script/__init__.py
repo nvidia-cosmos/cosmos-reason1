@@ -13,11 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-system_prompt: |
-  Please provide captions of all the events in the video with timestamps using the following format:
-  <start time> <end time> caption of event 1.
-  <start time> <end time> caption of event 2.
+import os
+import resource
+import warnings
 
-  At each frame, the timestamp is embedded at the bottom of the video. You need to extract the timestamp and answer the user question.
-user_prompt: |
-  Describe the notable events in the provided video.
+def init_script(verbose: bool = False):
+    """Initialize inference script."""
+    # Suppress core dumps
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    # Tokenizers parallelism doesn't work with vllm
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+    if not verbose:
+        warnings.filterwarnings("ignore")
+        os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+        os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")

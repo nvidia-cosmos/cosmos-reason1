@@ -14,30 +14,29 @@
 # limitations under the License.
 
 """Reinforcement Learning (RL) dataset."""
+# ruff: noqa: E402
 
+from cosmos_reason1_utils.script import init_script
+
+init_script()
+
+import argparse
 import os
 import warnings
+from typing import Any, Dict, List, Optional
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-
-from typing import Optional, Any, List, Dict
-from torch.utils.data import Dataset, ConcatDataset
-from datasets import load_dataset
-from cosmos_rl.launcher.worker_entry import main as launch_worker
 import cosmos_rl.utils.util as util
-from cosmos_rl.policy.config import Config
-from cosmos_rl.dispatcher.algo.reward import single_choice_reward_fn, format_reward_fn
-from transformers import AutoTokenizer
-from cosmos_rl.utils.util import basename_from_modelpath
-from cosmos_rl.dispatcher.data.packer import DataPacker, Qwen2_5_VLM_DataPacker
-from cosmos_rl.utils.logging import logger
-from cosmos_rl.policy.config import Config as CosmosConfig
-import argparse
 import toml
-import warnings
+from cosmos_rl.dispatcher.algo.reward import format_reward_fn, single_choice_reward_fn
+from cosmos_rl.dispatcher.data.packer import DataPacker, Qwen2_5_VLM_DataPacker
+from cosmos_rl.launcher.worker_entry import main as launch_worker
+from cosmos_rl.policy.config import Config
+from cosmos_rl.policy.config import Config as CosmosConfig
+from cosmos_rl.utils.logging import logger
+from cosmos_rl.utils.util import basename_from_modelpath
+from datasets import load_dataset
+from torch.utils.data import ConcatDataset, Dataset
+from transformers import AutoTokenizer
 
 FPS = 1
 MAX_PIXELS = 81920

@@ -14,10 +14,4 @@
 # limitations under the License.
 
 system_prompt: |
-  You are a helpful video analyzer. Answer the question with provided options in the following format: <think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>.
-user_prompt: |
-  [YOUR QUESTION]
-  (A) [OPTION]
-  (B) [OPTION]
-  (C) [OPTION]
-  (D) [OPTION]
+  You are observing a video showing embodied agents (robots or humans) demonstration. Please answer the question.

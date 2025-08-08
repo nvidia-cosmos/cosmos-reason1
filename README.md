@@ -53,17 +53,41 @@ Minimum Requirements:
 
 * 1 GPU with 24GB memory
 
-Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co/docs/transformers/en/index). We provide an example inference [script](scripts/inference.py) using [vLLM](https://docs.vllm.ai/en/v0.5.0/index.html):
+Cosmos-Reason1 is included in [`transformers>=4.51.3`](https://huggingface.co/docs/transformers/en/index).
 
-```shell
-./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
-```
+We provide example inference scripts:
 
-Configure inference by editing:
+* [Minimal example](scripts/inference_sample.py)
 
-* [Prompts](prompts/README.md)
-* [Sampling Parameters](configs/sampling_params.yaml)
-* [Vision Processor Config](configs/vision_config.yaml)
+  ```shell
+  ./scripts/inference_sample.py
+  ```
+
+* [Full example](scripts/inference.py)
+
+  Caption the video:
+
+  ```shell
+  ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
+  ```
+
+  Ask a question about the video with reasoning:
+
+  ```shell
+  ./scripts/inference.py --prompt prompts/question.yaml --question 'What are the potential safety hazards?' --reasoning --videos assets/sample.mp4 -v
+  ```
+
+  Temporally caption the video and save the input frames to `outputs/temporal_caption_text` for debugging:
+
+  ```shell
+  ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v -o outputs/temporal_caption_text
+  ```
+
+  Configure inference by editing:
+
+  * [Prompts](prompts/README.md)
+  * [Sampling Parameters](configs/sampling_params.yaml)
+  * [Vision Processor Config](configs/vision_config.yaml)
 
 ## Tutorials
 

@@ -12,12 +12,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-system_prompt: |
-  Please provide captions of all the events in the video with timestamps using the following format:
-  <start time> <end time> caption of event 1.
-  <start time> <end time> caption of event 2.
-
-  At each frame, the timestamp is embedded at the bottom of the video. You need to extract the timestamp and answer the user question.
-user_prompt: |
-  Describe the notable events in the provided video.

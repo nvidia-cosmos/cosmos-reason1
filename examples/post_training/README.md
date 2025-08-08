@@ -38,6 +38,7 @@ source .venv/bin/activate
 1. Login:
 
   ```bash
+  uv tool install -U wandb
   wandb login
   ```
 

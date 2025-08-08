@@ -92,7 +92,7 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
     # Authenticate with Hugging Face
     if hf_token:
         login(token=hf_token)
-        print(f"Successfully logged in to Hugging Face")
+        print("Successfully logged in to Hugging Face")
     else:
         print("No Hugging Face token provided. Attempting to use cached credentials...")
 
@@ -190,7 +190,7 @@ def download_agibot_data(data_dir: str, hf_token: Optional[str] = None):
         tar_downloads = sum(1 for f in downloaded_files if f.endswith('.tar'))
         other_downloads = len(downloaded_files) - tar_downloads
 
-        print(f"\nDownload complete!")
+        print("\nDownload complete!")
         print(f"Downloaded {len(downloaded_files)} files to {target_dir}:")
         print(f"- {tar_downloads} .tar files (all extracted)")
         print(f"- {other_downloads} other files")
@@ -366,7 +366,7 @@ def get_video_fps(video_path: str) -> float:
             else:
                 fps = float(fps_str)
             return fps if fps > 0 else 30.0
-    except:
+    except Exception:
         pass
     return 30.0
 
@@ -430,7 +430,7 @@ def preprocess_clip(clip_names: List[str], dataset: str, data_dir: Optional[str]
                     if episode_id_tfds == clip_info['episode_id']:
                         images = [step["observation"]["image_0"].numpy() for step in episode["steps"]]
                         save_clip(images, data_dir, dataset, clip_info['clip_name'])
-        except:
+        except Exception:
             log.warning("Clip processing error!")
 
         log.info(f"Number of episodes without instructions: {n_no_instruction}")

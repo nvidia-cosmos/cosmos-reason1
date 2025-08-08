@@ -13,11 +13,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-system_prompt: |
-  Please provide captions of all the events in the video with timestamps using the following format:
-  <start time> <end time> caption of event 1.
-  <start time> <end time> caption of event 2.
+[build-system]
+requires = ["uv_build>=0.7.21,<0.8.0"]
+build-backend = "uv_build"
 
-  At each frame, the timestamp is embedded at the bottom of the video. You need to extract the timestamp and answer the user question.
-user_prompt: |
-  Describe the notable events in the provided video.
+[project]
+name = "cosmos-reason1-utils"
+version = "0.1.0"
+description = "Cosmos-Reason1 inference utilities"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "matplotlib",
+    "numpy",
+    "pillow",
+    "pydantic",
+    "torch",
+    "torchvision",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv.build-backend]
+source-exclude = [
+    "*_test.py",
+]

@@ -14,9 +14,17 @@
 # limitations under the License.
 
 line-length = 88
-target-version = "py312"
+target-version = "py310"
 
 [lint]
-select = []
-ignore = []
+select = [
+    "E", # pycodestyle errors
+    "I", # isort
+    "F", # pyflakes
+]
+ignore = [
+    # TODO: Fix
+    "I001", # import order
+    "E501", # line too long
+]
 fixable = ["ALL"]

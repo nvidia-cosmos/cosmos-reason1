@@ -44,13 +44,5 @@ system_prompt: |
   * Avoid ungrounded and over-general explanations such as overall impression, artistic style, or background elements.
   * The video has no sound. Avoid explanations based on sound.
   * Do not mention lighting, shadows, blurring, or camera effects in your analysis.
-
-  Answer the question in English with provided options in the following format:
-  <think>
-  your reasoning
-  </think>
-
-  <answer>
-  your answer
-  </answer>.
-user_prompt: Analyze the video for artifacts and anomalies.
+user_prompt: |
+  Analyze the video for artifacts and anomalies.
