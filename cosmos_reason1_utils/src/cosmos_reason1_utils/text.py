@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
 import pydantic
 from pydantic import Field
 import re
@@ -27,6 +28,42 @@ class PromptConfig(pydantic.BaseModel):
 
     system_prompt: str = Field(default="", description="System prompt")
     user_prompt: str = Field(default="", description="User prompt")
+
+
+def create_conversation(
+    *,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    images: list[Any] | None = None,
+    videos: list[Any] | None = None,
+    vision_kwargs: dict,
+) -> list[dict]:
+    """Create chat conversation.
+
+    Args:
+        system_prompt: System prompt
+        user_prompt: User prompt
+        images: List of images
+        videos: List of videos
+        vision_kwargs: Keyword arguments for vision processor (see `cosmos_reason1_utils.vision.VisionConfig`)
+
+    Returns:
+        Chat conversation
+    """
+    user_content = []
+    if images is not None:
+        for image in images:
+            user_content.append({"type": "image", "image": image} | vision_kwargs)
+    if videos is not None:
+        for video in videos:
+            user_content.append({"type": "video", "video": video} | vision_kwargs)
+    if user_prompt:
+        user_content.append({"type": "text", "text": user_prompt})
+    conversation = []
+    if system_prompt:
+        conversation.append({"role": "system", "content": system_prompt})
+    conversation.append({"role": "user", "content": user_content})
+    return conversation
 
 
 def extract_text(text: str, key: str) -> list[str]:

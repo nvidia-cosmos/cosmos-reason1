@@ -14,27 +14,25 @@
 # limitations under the License.
 
 """Supervised Fine-Tuning (SFT) dataset."""
+# ruff: noqa: E402
 
-import os
-import warnings
+from cosmos_reason1_utils.script import init_script
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+init_script()
 
-import os
-import copy
-from torch.utils.data import Dataset, ConcatDataset
-from datasets import load_dataset
-from cosmos_rl.launcher.worker_entry import main as launch_worker
-import cosmos_rl.utils.util as util
-from cosmos_rl.policy.config import Config
-from cosmos_rl.utils.util import basename_from_modelpath
-from cosmos_rl.policy.config import Config as CosmosConfig
-from transformers import AutoTokenizer
 import argparse
+import copy
+import os
+
+import cosmos_rl.utils.util as util
 import toml
+from cosmos_rl.launcher.worker_entry import main as launch_worker
+from cosmos_rl.policy.config import Config
+from cosmos_rl.policy.config import Config as CosmosConfig
+from cosmos_rl.utils.util import basename_from_modelpath
+from datasets import load_dataset
+from torch.utils.data import ConcatDataset, Dataset
+from transformers import AutoTokenizer
 
 FPS = 1
 MAX_PIXELS = 81920

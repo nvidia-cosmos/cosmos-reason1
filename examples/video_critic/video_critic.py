@@ -19,9 +19,10 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "accelerate",
-#   "qwen-vl-utils",
+#   "cosmos-reason1-utils",
 #   "pydantic",
 #   "pyyaml",
+#   "qwen-vl-utils",
 #   "rich",
 #   "torch",
 #   "torchcodec",
@@ -31,6 +32,8 @@
 # ]
 # [tool.uv]
 # exclude-newer = "2025-07-31T00:00:00Z"
+# [tool.uv.sources]
+# cosmos-reason1-utils = { path = "../../cosmos_reason1_utils", editable = true }
 # ///
 
 """Example script for using Cosmos-Reason1 as a video critic.
@@ -41,28 +44,23 @@ Example:
 ./examples/video_critic/video_critic.py --video_path assets/sample.mp4
 ```
 """
+# ruff: noqa: E402
 
-import os
-import resource
-import warnings
+from cosmos_reason1_utils.script import init_script
 
-# Suppress warnings and core dumps
-warnings.filterwarnings("ignore")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+init_script()
 
 import argparse
 import base64
+import os
 import pathlib
 import xml.etree.ElementTree as ET
 
-from transformers import AutoProcessor
-from vllm import LLM, SamplingParams
-from qwen_vl_utils import process_vision_info
 import pydantic
 import yaml
+from qwen_vl_utils import process_vision_info
+from transformers import AutoProcessor
+from vllm import LLM, SamplingParams
 
 ROOT = pathlib.Path(__file__).parents[2].resolve()
 

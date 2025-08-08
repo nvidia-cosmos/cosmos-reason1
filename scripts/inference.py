@@ -43,16 +43,9 @@ Example:
 """
 # ruff: noqa: E402
 
-import os
-import resource
-import warnings
+from cosmos_reason1_utils.script import init_script
 
-# Suppress warnings and core dumps
-warnings.filterwarnings("ignore")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+init_script()
 
 import argparse
 import collections
@@ -66,7 +59,7 @@ import yaml
 from rich import print
 from rich.pretty import pprint
 
-from cosmos_reason1_utils.text import PromptConfig
+from cosmos_reason1_utils.text import PromptConfig, create_conversation
 from cosmos_reason1_utils.vision import (
     VisionConfig,
     overlay_text_on_tensor,
@@ -80,32 +73,6 @@ SEPARATOR = "-" * 20
 def pprint_dict(d: dict, name: str):
     """Pretty print a dictionary."""
     pprint(collections.namedtuple(name, d.keys())(**d), expand_all=True)
-
-
-def create_conversation(
-    *,
-    system_prompt: str = "",
-    user_prompt: str = "",
-    images: list[str] | None = None,
-    videos: list[str] | None = None,
-    vision_config: VisionConfig,
-) -> list[dict]:
-    vision_kwargs = vision_config.model_dump(exclude_unset=True)
-
-    user_content = []
-    if images is not None:
-        for image in images:
-            user_content.append({"type": "image", "image": image} | vision_kwargs)
-    if videos is not None:
-        for video in videos:
-            user_content.append({"type": "video", "video": video} | vision_kwargs)
-    if user_prompt:
-        user_content.append({"type": "text", "text": user_prompt})
-    conversation = []
-    if system_prompt:
-        conversation.append({"role": "system", "content": system_prompt})
-    conversation.append({"role": "user", "content": user_content})
-    return conversation
 
 
 def main():
@@ -174,9 +141,10 @@ def main():
     videos: list[str] = args.videos or []
 
     # Load configs
-    prompt_config = PromptConfig.model_validate(yaml.safe_load(open(args.prompt, "rb")))
+    prompt_kwargs = yaml.safe_load(open(args.prompt, "rb"))
+    prompt_config = PromptConfig.model_validate(prompt_kwargs)
     vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
-    vision_config = VisionConfig.model_validate(vision_kwargs)
+    VisionConfig.model_validate(vision_kwargs)
     sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
     sampling_params = vllm.SamplingParams(**sampling_kwargs)
     if args.verbose:
@@ -201,7 +169,7 @@ def main():
         user_prompt=user_prompt,
         images=images,
         videos=videos,
-        vision_config=vision_config,
+        vision_kwargs=vision_kwargs,
     )
     if args.verbose:
         pprint(conversation, expand_all=True)

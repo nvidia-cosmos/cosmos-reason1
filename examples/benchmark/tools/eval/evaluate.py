@@ -18,26 +18,23 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "cosmos-reason1-benchmark",
+#   "cosmos-reason1-utils",
 # ]
 # [tool.uv]
 # exclude-newer = "2025-08-05T00:00:00Z"
 # [tool.uv.sources]
 # cosmos-reason1-benchmark = { path = "../../", editable = true }
+# cosmos-reason1-utils = { path = "../../../../cosmos_reason1_utils", editable = true }
 # ///
 
 """Evaluate a model on a dataset."""
+# ruff: noqa: E402
+
+from cosmos_reason1_utils.script import init_script
+
+init_script()
 
 import os
-import resource
-import warnings
-
-# Suppress warnings and core dumps
-warnings.filterwarnings("ignore")
-os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
-os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")
-resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-
 import time
 import logging as log
 from argparse import ArgumentParser
@@ -67,16 +64,11 @@ if DEBUG_MODEL:
 else:
     from vllm import LLM, SamplingParams
     from transformers import AutoProcessor
-    from transformers import (
-        Qwen2_5_VLForConditionalGeneration,
-        Qwen2VLForConditionalGeneration,
-    )
     # Define type alias for clarity when using the real processor
     Processor = AutoProcessor
 
 # Import custom evaluation utilities
 from tools.eval.utils.input import (InputStructure,
-                                    load_datasource_list,
                                     load_videos_and_prompts_parallel,
                                     prepare_model_inputs_parallel,
                                     skip_saved_results)

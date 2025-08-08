@@ -13,7 +13,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cosmos_reason1_utils.text import extract_text
+from cosmos_reason1_utils.text import extract_text, create_conversation
+
+
+def test_create_conversation():
+    system_prompt = "You are a helpful assistant."
+    user_prompt = "What is the capital of France?"
+    images = ["image1.png", "image2.png"]
+    videos = ["video1.mp4", "video2.mp4"]
+    vision_kwargs = {"max_pixels": 10}
+    conversation = create_conversation(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        images=images,
+        videos=videos,
+        vision_kwargs=vision_kwargs,
+    )
+    assert conversation == [
+        {"role": "system", "content": system_prompt},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image", "image": images[0]} | vision_kwargs,
+                {"type": "image", "image": images[1]} | vision_kwargs,
+                {"type": "video", "video": videos[0]} | vision_kwargs,
+                {"type": "video", "video": videos[1]} | vision_kwargs,
+                {"type": "text", "text": user_prompt},
+            ],
+        },
+    ]
 
 
 def test_extract_text():

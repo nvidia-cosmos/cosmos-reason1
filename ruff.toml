@@ -22,5 +22,9 @@ select = [
     "I", # isort
     "F", # pyflakes
 ]
-ignore = []
+ignore = [
+    # TODO: Fix
+    "I001", # import order
+    "E501", # line too long
+]
 fixable = ["ALL"]
