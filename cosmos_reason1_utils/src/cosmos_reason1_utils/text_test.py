@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cosmos_reason1_utils.text import extract_text, create_conversation
+from cosmos_reason1_utils.text import create_conversation, extract_structured_text
 
 
 def test_create_conversation():
@@ -44,26 +44,20 @@ def test_create_conversation():
     ]
 
 
-def test_extract_text():
-    s1 = "This is a test"
-    s2 = "This is an answer"
-    # Empty match
-    assert extract_text("<think></think>", "think") == [""]
-    # Empty text
-    assert extract_text("", "think") == []
-    # Empty key
-    assert extract_text(f"<>{s1}</>", "") == [s1]
-    # Basic
-    assert extract_text(f"<think>{s1}</think>", "think") == [s1]
-    # Wrong key
-    assert extract_text(f"<think>{s1}</think>", "answer") == []
-    # No closing tag
-    assert extract_text(f"</think>{s1}<think>", "think") == []
-    # Other text
-    assert extract_text(f"<think>{s1}</think>{s1}", "think") == [s1]
-    # Other keys
-    assert extract_text(f"<think>{s1}</think><answer>{s2}</answer>", "answer") == [s2]
-    assert extract_text(f"<think>{s1}</think><answer>{s2}</answer>", "think") == [s1]
-    # Multiple matches
-    assert extract_text(f"<think>{s1}</think><think>{s1}</think>", "think") == [s1, s1]
-    assert extract_text(f"<think>{s1}</think><think>{s2}</think>", "think") == [s1, s2]
+def test_extract_structured_text():
+    text = """Intro text
+<question>
+What is the capital of France?
+</question>
+Middle text
+<answer>
+Paris
+</answer>
+End text
+"""
+    result, remaining = extract_structured_text(text)
+    assert result == {
+        "question": ["\nWhat is the capital of France?\n"],
+        "answer": ["\nParis\n"],
+    }
+    assert remaining == ["Intro text\n", "\nMiddle text\n", "\nEnd text\n"]

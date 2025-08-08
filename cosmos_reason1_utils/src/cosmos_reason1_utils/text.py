@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import collections
 from typing import Any
 import pydantic
 from pydantic import Field
@@ -41,14 +42,14 @@ def create_conversation(
     """Create chat conversation.
 
     Args:
-        system_prompt: System prompt
-        user_prompt: User prompt
-        images: List of images
-        videos: List of videos
-        vision_kwargs: Keyword arguments for vision processor (see `cosmos_reason1_utils.vision.VisionConfig`)
+        system_prompt: System prompt.
+        user_prompt: User prompt.
+        images: List of images.
+        videos: List of videos.
+        vision_kwargs: Keyword arguments for vision processor (see `cosmos_reason1_utils.vision.VisionConfig`).
 
     Returns:
-        Chat conversation
+        conversation: Chat conversation.
     """
     user_content = []
     if images is not None:
@@ -66,15 +67,60 @@ def create_conversation(
     return conversation
 
 
-def extract_text(text: str, key: str) -> list[str]:
-    """Extract text between <key> and </key> tags.
+def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]:
+    """Extract structured text between <key> and </key> tags.
+
+    Ignores unclosed tags and tries to extract as much text as possible.
+
+    Example:
+
+    ```python
+    text = '''Intro text
+    <question>
+    What is the capital of France?
+    </question>
+    Middle text
+    <answer>
+    Paris
+    </answer>
+    End text
+    '''
+    result, remaining = extract_structured_text(text)
+    assert result == {
+        "question": ["\nWhat is the capital of France?\n"],
+        "answer": ["\nParis\n"]
+    }
+    assert remaining == ["Intro text\n", "\nMiddle text\n", "\nEnd text\n"]
+    ```
 
     Args:
-        text: Text to extract from
-        key: Key to extract
+        text: Text to extract from.
 
     Returns:
-        List of extracted texts.
+        result: Mapping from key to list of extracted texts.
+        remaining: Remaining texts.
     """
-    pattern = f"<{key}>" + r"(.*?)" + f"</{key}>"
-    return re.findall(pattern, text)
+    open_tag_pattern = re.compile(r"<([a-zA-Z]*?)>")
+
+    result: dict[str, list[str]] = collections.defaultdict(list)
+    remaining: list[str] = []
+    start = 0
+    while start < len(text):
+        # Find next open tag
+        match = open_tag_pattern.search(text, start)
+        if match is None:
+            remaining.append(text[start:])
+            break
+        remaining.append(text[start:match.start()])
+        start = match.end()
+        key = match.group(1)
+
+        # Find corresponding close tag
+        close_tag = f"</{key}>"
+        end = text.find(f"</{key}>", start)
+        if end == -1:
+            # Ignore unclosed tags
+            continue
+        result[key].append(text[start:end])
+        start = end + len(close_tag)
+    return dict(result), remaining

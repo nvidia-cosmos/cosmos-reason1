@@ -20,7 +20,8 @@ build-backend = "uv_build"
 [project]
 name = "cosmos-reason1-utils"
 version = "0.1.0"
-description = "Cosmos Reason1 Utilities"
+description = "Cosmos-Reason1 inference utilities"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "matplotlib",
@@ -31,7 +32,7 @@ dependencies = [
     "torchvision",
 ]
 
-[depdendency-groups]
+[dependency-groups]
 dev = [
     "pytest",
 ]

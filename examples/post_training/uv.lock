@@ -625,6 +625,9 @@ requires-dist = [
     { name = "torchvision" },
 ]
 
+[package.metadata.requires-dev]
+dev = [{ name = "pytest" }]
+
 [[package]]
 name = "cosmos-rl"
 version = "0.2.6.post1.dev2+g0bb46d1"

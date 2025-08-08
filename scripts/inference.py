@@ -59,7 +59,7 @@ import yaml
 from rich import print
 from rich.pretty import pprint
 
-from cosmos_reason1_utils.text import PromptConfig, create_conversation
+from cosmos_reason1_utils.text import PromptConfig, create_conversation, extract_structured_text
 from cosmos_reason1_utils.vision import (
     VisionConfig,
     overlay_text_on_tensor,
@@ -156,14 +156,17 @@ def main():
     if prompt_config.system_prompt:
         system_prompts.append(prompt_config.system_prompt)
     if args.reasoning and "<think>" not in prompt_config.system_prompt:
+        if extract_structured_text(prompt_config.system_prompt)[0]:
+            raise ValueError("Prompt already contains output format. Cannot add reasoning.")
         system_prompts.append(open(f"{ROOT}/prompts/addons/reasoning.txt", "r").read())
-    system_prompt = "\n\n".join(system_prompts)
+    system_prompt = "\n\n".join(map(str.rstrip, system_prompts))
     if args.question:
         user_prompt = args.question
     else:
         user_prompt = prompt_config.user_prompt
     if not user_prompt:
-        raise ValueError("No question provided.")
+        raise ValueError("No user prompt provided.")
+    user_prompt = user_prompt.rstrip()
     conversation = create_conversation(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
@@ -227,6 +230,10 @@ def main():
         print("Assistant:")
         print(textwrap.indent(output_text.rstrip(), "  "))
     print(SEPARATOR)
+
+    result, _ = extract_structured_text(output_text)
+    if args.verbose:
+        pprint_dict(result, "Result")
 
 
 if __name__ == "__main__":

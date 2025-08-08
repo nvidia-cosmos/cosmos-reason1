@@ -69,10 +69,10 @@ Examples:
   ./scripts/inference.py --prompt prompts/question.yaml --question 'What are the potential safety hazards?' --reasoning --videos assets/sample.mp4 -v
   ```
 
-* Temporally caption the video and save the input frames to `outputs/inference` for debugging:
+* Temporally caption the video and save the input frames to `outputs/temporal_caption_text` for debugging:
 
   ```shell
-  ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v -o outputs/inference
+  ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v -o outputs/temporal_caption_text
   ```
 
 Configure inference by editing:
