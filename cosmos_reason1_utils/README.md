@@ -1,6 +1,8 @@
 # Cosmos-Reason1 Utilities
 
-Package of inference utilities for Cosmos-Reason1.
+Inference utilities for Cosmos-Reason1.
+
+* [Example](../scripts/inference.py)
 
 ## Install
 

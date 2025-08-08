@@ -32,8 +32,19 @@ from pydantic import Field
 class VisionConfig(pydantic.BaseModel):
     """Config for vision processing.
 
-    Source: https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
+    Source:
+    https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
+
+    Attributes are sorted by priority. Higher priority attributes override lower
+    priority attributes.
     """
+
+    resized_height: int | None = Field(
+        default=None, description="Max height of the image/video"
+    )
+    resized_width: int | None = Field(
+        default=None, description="Max width of the image/video"
+    )
 
     min_pixels: int | None = Field(
         default=None, description="Min frame pixels of the image/video"
@@ -43,13 +54,6 @@ class VisionConfig(pydantic.BaseModel):
     )
     total_pixels: int | None = Field(
         default=None, description="Max total pixels of the image/video"
-    )
-
-    resized_height: int | None = Field(
-        default=None, description="Max height of the image/video"
-    )
-    resized_width: int | None = Field(
-        default=None, description="Max width of the image/video"
     )
 
     video_start: float | None = Field(
@@ -127,22 +131,38 @@ def save_tensor(tensor: torch.Tensor, path: str | Path) -> None:
         image.save(f"{path}/{i}.png")
 
 
-@functools.cache
-def _get_overlay_font_path() -> str:
-    """Return the path to the font for overlaying text on images."""
+class OverlayConfig(pydantic.BaseModel):
+    """Config for overlaying text on images."""
+
+    border_height: int = Field(
+        default=28, description="Height of the black border in pixels."
+    )
+    temporal_path_size: int = Field(
+        default=2, description="Number of positions to cycle through."
+    )
+
     # Use 'DejaVu Sans Mono' font for better readability
-    return fm.findfont(fm.FontProperties(family="DejaVu Sans Mono", style="normal"))
+    font_family: str = Field(
+        default="DejaVu Sans Mono", description="Font family for the text."
+    )
+    font_size: int = Field(
+        default=20, description="Font size for the text (in pixels)."
+    )
+    font_color: str = Field(default="white", description="Color of the text.")
+
+
+@functools.cache
+def _get_overlay_font_path(family: str) -> str:
+    """Return the path to the font for overlaying text on images."""
+    return fm.findfont(fm.FontProperties(family=family))
 
 
 def overlay_text(
     images: list[Image.Image],
     *,
     fps: float | None = None,
-    border_height: int = 28,  # this is due to patch size of 28
-    temporal_path_size: int = 2,  # Number of positions to cycle through
-    font_size: int = 20,
-    font_color: str = "white",
-) -> tuple[list[Image.Image], list[float]]:
+    config: OverlayConfig = OverlayConfig(),
+) -> list[Image.Image]:
     """Overlay text on a list of PIL images with black border.
 
     The timestamp position cycles through available positions.
@@ -150,21 +170,14 @@ def overlay_text(
     Args:
         images: List of PIL images to process
         fps: Frames per second
-        border_height: Height of the black border in pixels (default: 28)
-        temporal_path_size: Number of positions to cycle through (default: 2)
-        font_size: Font size for the text (default: 20)
-        font_color: Color of the text (default: "white")
+        config: Config for overlaying text
 
     Returns:
         List of PIL images with text overlay
-        List of timestamps
     """
-    if len(images) == 0:
-        fps = 1
-    elif fps is None:
-        raise ValueError("FPS is required")
-
-    font = ImageFont.truetype(_get_overlay_font_path(), font_size)
+    font = ImageFont.truetype(
+        _get_overlay_font_path(config.font_family), config.font_size
+    )
 
     # Process each image
     processed_images = []
@@ -174,7 +187,7 @@ def overlay_text(
         width, height = image.size
 
         # Create new image with black border at the bottom
-        new_height = height + border_height
+        new_height = height + config.border_height
         new_image = Image.new("RGB", (width, new_height), color="black")
 
         # Paste original image at the top
@@ -198,8 +211,8 @@ def overlay_text(
             text_width, text_height = draw.textsize(text, font=font)
 
         # Define available positions (cycling through horizontal positions)
-        position_idx = i % temporal_path_size
-        section_width = width // temporal_path_size
+        position_idx = i % config.temporal_path_size
+        section_width = width // config.temporal_path_size
 
         # Calculate x position based on cycling position
         section_center_x = position_idx * section_width + section_width // 2
@@ -209,25 +222,28 @@ def overlay_text(
         text_x = max(0, min(text_x, width - text_width))
 
         # Center vertically in the border
-        text_y = height + (border_height - text_height) // 2
+        text_y = height + (config.border_height - text_height) // 2
 
         # Draw the single timestamp
-        draw.text((text_x, text_y), text, fill=font_color, font=font)
+        draw.text((text_x, text_y), text, fill=config.font_color, font=font)
 
         processed_images.append(new_image)
 
-    return processed_images, [i / fps for i in range(len(images))]
+    return processed_images
 
 
-def overlay_text_on_tensor(tensor: torch.Tensor, **kwargs) -> torch.Tensor:
+def overlay_text_on_tensor(
+    tensor: torch.Tensor, fps: float, config: OverlayConfig = OverlayConfig()
+) -> torch.Tensor:
     """Overlay text on a tensor.
 
     Args:
         tensor: Tensor with shape (C, H, W) or (T, C, H, W)
-
+        fps: Frames per second
+        config: Config for overlaying text
     Returns:
         Tensor with shape (C, H, W) or (T, C, H, W)
     """
     return _pil_images_to_tensor(
-        overlay_text(_tensor_to_pil_images(tensor), **kwargs)[0]
+        overlay_text(_tensor_to_pil_images(tensor), fps=fps, config=config)
     )
