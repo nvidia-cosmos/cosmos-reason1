@@ -67,7 +67,7 @@ from rich import print
 from rich.pretty import pprint
 
 from cosmos_reason1_utils.text import PromptConfig
-from cosmos_reason1_utils.vision import VisionConfig, overlay_text_on_video
+from cosmos_reason1_utils.vision import VisionConfig, overlay_text_on_tensor, save_tensor
 
 ROOT = pathlib.Path(__file__).parents[1].resolve()
 SEPARATOR = "-" * 20
@@ -132,6 +132,12 @@ def main():
         action="store_true",
         help="Verbose output",
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Output directory for debugging",
+    )
     args = parser.parse_args()
 
     images: list[str] = args.images or []
@@ -194,10 +200,15 @@ def main():
         conversation, return_video_kwargs=True
     )
     if args.timestamp:
-        video_inputs = [
-            overlay_text_on_video(video, fps=fps)
-            for video, fps in zip(video_inputs, video_kwargs["fps"])
-        ]
+        for i, video in enumerate(video_inputs):
+            video_inputs[i] = overlay_text_on_tensor(
+                video, fps=video_kwargs["fps"][i]
+            )
+    if args.output:
+        for i, image in enumerate(image_inputs):
+            save_tensor(image, f"{args.output}/image_{i}.png")
+        for i, video in enumerate(video_inputs):
+            save_tensor(video, f"{args.output}/video_{i}")
 
     # Run inference
     mm_data = {}

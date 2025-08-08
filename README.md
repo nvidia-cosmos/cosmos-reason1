@@ -66,13 +66,13 @@ Examples:
 * Question with reasoning:
 
   ```shell
-  ./scripts/inference.py --prompt prompts/question.yaml --question "What are the potential safety hazards?" --reasoning --videos assets/sample.mp4 -v
+  ./scripts/inference.py --prompt prompts/question.yaml --question 'What are the potential safety hazards?' --reasoning --videos assets/sample.mp4 -v
   ```
 
 * Temporal caption:
 
   ```shell
-  ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v
+  ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v -o outputs/inference
   ```
 
 Configure inference by editing:

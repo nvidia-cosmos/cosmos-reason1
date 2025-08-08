@@ -14,6 +14,8 @@
 # limitations under the License.
 
 import functools
+import os
+import pathlib
 
 import matplotlib.font_manager as fm
 import numpy as np
@@ -27,22 +29,21 @@ from pydantic import Field
 """Vision processing utilities."""
 
 
-class ImageConfig(pydantic.BaseModel):
-    """Config for image processing."""
+class VisionConfig(pydantic.BaseModel):
+    """Config for vision processing."""
 
-    min_pixels: int | None = Field(default=None, description="Min pixels of the image")
-    max_pixels: int | None = Field(default=None, description="Max pixels of the image")
+    min_pixels: int | None = Field(default=None, description="Min frame pixels of the image/video")
+    max_pixels: int | None = Field(default=None, description="Max frame pixels of the image/video")
+    total_pixels: int | None = Field(
+        default=None, description="Max total pixels of the image/video"
+    )
 
     resized_height: int | None = Field(
-        default=None, description="Max height of the image"
+        default=None, description="Max height of the image/video"
     )
     resized_width: int | None = Field(
-        default=None, description="Max width of the image"
+        default=None, description="Max width of the image/video"
     )
-
-
-class VisionConfig(ImageConfig):
-    """Config for image/video processing."""
 
     video_start: float | None = Field(
         None, description="Start time of the video (seconds)"
@@ -57,43 +58,41 @@ class VisionConfig(ImageConfig):
     min_frames: int | None = Field(default=None, description="Min frames of the video")
     max_frames: int | None = Field(default=None, description="Max frames of the video")
 
-    total_pixels: int | None = Field(
-        default=None, description="Max pixels of the video"
-    )
+    
 
 
-def _tensor_to_pil_images(video_tensor: torch.Tensor) -> list[Image.Image]:
-    """Convert a video tensor to a list of PIL images.
+def _tensor_to_pil_images(tensor: torch.Tensor) -> list[Image.Image]:
+    """Convert a tensor to a list of PIL images.
 
     Args:
-        video_tensor: Tensor with shape (C, T, H, W) or (T, C, H, W)
+        tensor: Tensor with shape (C, T, H, W) or (T, C, H, W)
 
     Returns:
         List of PIL images
     """
     # Check tensor shape and convert if needed
-    if video_tensor.shape[0] == 3 and video_tensor.shape[1] > 3:  # (C, T, H, W)
+    if tensor.shape[0] == 3 and tensor.shape[1] > 3:  # (C, T, H, W)
         # Convert to (T, C, H, W)
-        video_tensor = video_tensor.permute(1, 0, 2, 3)
+        tensor = tensor.permute(1, 0, 2, 3)
 
     # Convert to numpy array with shape (T, H, W, C)
-    video_np = video_tensor.permute(0, 2, 3, 1).cpu().numpy()
+    frames = tensor.permute(0, 2, 3, 1).cpu().numpy()
 
     # Ensure values are in the right range for PIL (0-255, uint8)
-    if video_np.dtype == np.float32 or video_np.dtype == np.float64:
-        if video_np.max() <= 1.0:
-            video_np = (video_np * 255).astype(np.uint8)
+    if frames.dtype == np.float32 or frames.dtype == np.float64:
+        if frames.max() <= 1.0:
+            frames = (frames * 255).astype(np.uint8)
         else:
-            video_np = video_np.astype(np.uint8)
+            frames = frames.astype(np.uint8)
 
     # Convert each frame to a PIL image
-    pil_images = [Image.fromarray(frame) for frame in video_np]
+    pil_images = [Image.fromarray(frame) for frame in frames]
 
     return pil_images
 
 
 def _pil_images_to_tensor(images: list[Image.Image]) -> torch.Tensor:
-    """Convert a list of PIL images to a video tensor.
+    """Convert a list of PIL images to a tensor.
 
     Args:
         pil_images: List of PIL images
@@ -105,6 +104,19 @@ def _pil_images_to_tensor(images: list[Image.Image]) -> torch.Tensor:
         [torchvision.transforms.functional.pil_to_tensor(image) for image in images],
         dim=0,
     )
+    
+
+def save_tensor(tensor: torch.Tensor, path: str) -> None:
+    """Save a tensor to a directory.
+
+    Args:
+        tensor: Tensor with shape (T, C, H, W)
+        path: Directory to save the images
+    """
+    os.makedirs(path, exist_ok=True)
+    images = _tensor_to_pil_images(tensor)
+    for i, image in enumerate(images):
+        image.save(f"{path}/{i}.png")
 
 
 @functools.cache
@@ -195,18 +207,17 @@ def overlay_text(
     return processed_images, [i / fps for i in range(len(images))]
 
 
-def overlay_text_on_video(
-    video_tensor: torch.Tensor, *, fps: float, **kwargs
+def overlay_text_on_tensor(
+    tensor: torch.Tensor, **kwargs
 ) -> torch.Tensor:
-    """Overlay text on a video tensor.
+    """Overlay text on a tensor.
 
     Args:
-        video_tensor: Tensor with shape (C, T, H, W) or (T, C, H, W)
-        fps: Frames per second
+        tensor: Tensor with shape (C, T, H, W) or (T, C, H, W)
 
     Returns:
         Tensor with shape (T, C, H, W)
     """
     return _pil_images_to_tensor(
-        overlay_text(_tensor_to_pil_images(video_tensor), fps=fps, **kwargs)[0]
+        overlay_text(_tensor_to_pil_images(tensor), **kwargs)[0]
     )
