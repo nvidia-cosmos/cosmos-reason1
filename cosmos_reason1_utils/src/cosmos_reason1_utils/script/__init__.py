@@ -17,6 +17,7 @@ import os
 import resource
 import warnings
 
+
 def init_script(verbose: bool = False):
     """Initialize inference script."""
     # Suppress core dumps

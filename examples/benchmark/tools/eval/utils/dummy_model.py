@@ -25,7 +25,7 @@ class DummyOutput:
 
 @attrs.define(slots=False)
 class DummyRequestOutput:
-    outputs = [DummyOutput()]
+    outputs = [DummyOutput()]  # noqa: RUF012
 
 
 class DummyModel:

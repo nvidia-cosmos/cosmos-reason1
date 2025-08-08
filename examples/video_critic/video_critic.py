@@ -64,6 +64,7 @@ from vllm import LLM, SamplingParams
 
 ROOT = pathlib.Path(__file__).parents[2].resolve()
 
+
 class Prompt(pydantic.BaseModel):
     """Config for prompt."""
 
@@ -85,7 +86,9 @@ def parse_response(response):
         if think_element is not None:
             # Parse overview
             overview = think_element.find("overview")
-            result["think"]["overview"] = overview.text.strip() if overview is not None and overview.text else ""
+            result["think"]["overview"] = (
+                overview.text.strip() if overview is not None and overview.text else ""
+            )
 
             # Parse components
             result["think"]["components"] = []
@@ -93,16 +96,26 @@ def parse_response(response):
                 component_data = {"name": comp.get("name", "")}
 
                 analysis = comp.find("analysis")
-                component_data["analysis"] = analysis.text.strip() if analysis is not None and analysis.text else ""
+                component_data["analysis"] = (
+                    analysis.text.strip()
+                    if analysis is not None and analysis.text
+                    else ""
+                )
 
                 anomaly = comp.find("anomaly")
-                component_data["anomaly"] = anomaly.text.strip() if anomaly is not None and anomaly.text else ""
+                component_data["anomaly"] = (
+                    anomaly.text.strip() if anomaly is not None and anomaly.text else ""
+                )
 
                 result["think"]["components"].append(component_data)
 
         # Parse <answer> section
         answer_element = root.find("answer")
-        result["answer"] = answer_element.text.strip() if answer_element is not None and answer_element.text else ""
+        result["answer"] = (
+            answer_element.text.strip()
+            if answer_element is not None and answer_element.text
+            else ""
+        )
 
         return result
     except Exception:
@@ -170,7 +183,9 @@ def build_html_report(video_path, responses):
     <h2>Detailed Analysis ({len(responses)} trials)</h2>
 """
 
-    for i, (response, parsed) in enumerate(zip(responses, parsed_responses), 1):
+    for i, (response, parsed) in enumerate(
+        zip(responses, parsed_responses, strict=False), 1
+    ):
         if parsed is None:
             html += f"""
     <div class="trial">
@@ -200,8 +215,8 @@ def build_html_report(video_path, responses):
                     comp_class = "red" if anomaly == "yes" else "green"
                     html += f"""
         <div class="{comp_class}">
-            <strong>{comp.get('name', 'Unknown Component')} - {comp.get('anomaly', '')}</strong>
-            <p>{comp.get('analysis', 'No analysis provided')}</p>
+            <strong>{comp.get("name", "Unknown Component")} - {comp.get("anomaly", "")}</strong>
+            <p>{comp.get("analysis", "No analysis provided")}</p>
         </div>
 """
 
@@ -219,6 +234,7 @@ def build_html_report(video_path, responses):
 
     return html
 
+
 def run_critic(llm, args):
     prompt_path = f"{ROOT}/prompts/video_critic.yaml"
     prompt_config = Prompt.model_validate(yaml.safe_load(open(prompt_path, "rb")))
@@ -230,12 +246,14 @@ def run_critic(llm, args):
         top_p=0.95,
         repetition_penalty=1.05,
         max_tokens=4096,
-        seed=1, # for reproducibility
+        seed=1,  # for reproducibility
     )
 
     messages = [
         {"role": "system", "content": prompt_config.system_prompt},
-        {"role": "user", "content": [
+        {
+            "role": "user",
+            "content": [
                 {
                     "type": "video",
                     "video": args.video_path,
@@ -244,7 +262,7 @@ def run_critic(llm, args):
                     "total_pixels": 8192 * 28 * 28,
                 },
                 {"type": "text", "text": prompt_config.user_prompt},
-            ]
+            ],
         },
     ]
     processor = AutoProcessor.from_pretrained(args.model)
@@ -253,7 +271,9 @@ def run_critic(llm, args):
         tokenize=False,
         add_generation_prompt=True,
     )
-    image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    image_inputs, video_inputs, video_kwargs = process_vision_info(
+        messages, return_video_kwargs=True
+    )
 
     mm_data = {}
     if image_inputs is not None:
@@ -272,17 +292,28 @@ def run_critic(llm, args):
 
     return generated_text
 
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run video critic inference and save html reports")
+    parser = argparse.ArgumentParser(
+        description="Run video critic inference and save html reports"
+    )
     parser.add_argument(
         "--video_path",
         type=str,
         required=True,
         help="Path to input video for critic",
     )
-    parser.add_argument("--num_trials", type=int, default=4, help="Number of critic trials for each video")
-    parser.add_argument("--model", type=str, default="nvidia/Cosmos-Reason1-7B", help="Model path")
+    parser.add_argument(
+        "--num_trials",
+        type=int,
+        default=4,
+        help="Number of critic trials for each video",
+    )
+    parser.add_argument(
+        "--model", type=str, default="nvidia/Cosmos-Reason1-7B", help="Model path"
+    )
     return parser.parse_args()
+
 
 def main():
     args = parse_args()
@@ -296,9 +327,10 @@ def main():
     generated_text = run_critic(llm, args)
     html_content = build_html_report(args.video_path, generated_text)
     html_path = os.path.splitext(args.video_path)[0] + ".html"
-    with open(html_path, 'w', encoding='utf-8') as f:
+    with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"Generated HTML report: {html_path}")
+
 
 if __name__ == "__main__":
     main()

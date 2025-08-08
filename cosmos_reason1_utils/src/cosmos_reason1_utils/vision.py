@@ -161,7 +161,7 @@ def overlay_text(
     images: list[Image.Image],
     *,
     fps: float | None = None,
-    config: OverlayConfig = OverlayConfig(),
+    config: OverlayConfig = OverlayConfig(),  # noqa: B008
 ) -> list[Image.Image]:
     """Overlay text on a list of PIL images with black border.
 
@@ -233,7 +233,9 @@ def overlay_text(
 
 
 def overlay_text_on_tensor(
-    tensor: torch.Tensor, fps: float, config: OverlayConfig = OverlayConfig()
+    tensor: torch.Tensor,
+    fps: float,
+    config: OverlayConfig = OverlayConfig(),  # noqa: B008
 ) -> torch.Tensor:
     """Overlay text on a tensor.
 

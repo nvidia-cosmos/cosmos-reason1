@@ -34,14 +34,15 @@ from cosmos_reason1_utils.script import init_script
 
 init_script()
 
+import json
+import logging as log
 import os
 import time
-import logging as log
 from argparse import ArgumentParser
-from typing import List, Tuple, Optional, Dict, Any
-import json
-from PIL import Image
+from typing import Any
+
 import yaml
+from PIL import Image
 
 # Increase maximum allowed pixels for Pillow images to handle large inputs
 Image.MAX_IMAGE_PIXELS = 933120000
@@ -49,33 +50,39 @@ Image.MAX_IMAGE_PIXELS = 933120000
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 # Configure basic logging
-log.basicConfig(level=log.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+log.basicConfig(level=log.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 # Check if debug model is enabled via environment variable
 DEBUG_MODEL: bool = os.getenv("DEBUG_MODEL", "0") == "1"
 
 # Import model and tokenizer based on DEBUG_MODEL flag
 if DEBUG_MODEL:
-    from tools.eval_utils.dummy_model import (DummyModel, DummyTokenizer,
-                                              SamplingParams)
+    from tools.eval_utils.dummy_model import DummyModel, DummyTokenizer, SamplingParams
+
     # Define type aliases for clarity when using the dummy model
     LLM = DummyModel
     Processor = DummyTokenizer
 else:
-    from vllm import LLM, SamplingParams
     from transformers import AutoProcessor
+    from vllm import LLM, SamplingParams
+
     # Define type alias for clarity when using the real processor
     Processor = AutoProcessor
 
 # Import custom evaluation utilities
-from tools.eval.utils.input import (InputStructure,
-                                    load_videos_and_prompts_parallel,
-                                    prepare_model_inputs_parallel,
-                                    skip_saved_results)
-from tools.eval.utils.model_download import download_tokenizer, download_checkpoint
-from tools.eval.utils.output import (OutputStructure, parse_letter_response,
-                                     parse_reasoning_response,
-                                     save_results_parallel)
+from tools.eval.utils.input import (
+    InputStructure,
+    load_videos_and_prompts_parallel,
+    prepare_model_inputs_parallel,
+    skip_saved_results,
+)
+from tools.eval.utils.model_download import download_checkpoint, download_tokenizer
+from tools.eval.utils.output import (
+    OutputStructure,
+    parse_letter_response,
+    parse_reasoning_response,
+    save_results_parallel,
+)
 
 
 # === Model Definition Functions ===
@@ -83,9 +90,9 @@ def define_model(
     tokenizer_model_name: str,
     model_name: str,
     dtype: str,
-    tp_size: Optional[int],
+    tp_size: int | None,
     max_length: int = 12800,
-) -> Tuple[LLM, Processor]:
+) -> tuple[LLM, Processor]:
     """
     Defines and loads the language model and its processor.
 
@@ -100,7 +107,9 @@ def define_model(
         A tuple containing the loaded model and its processor.
     """
 
-    hf_cache_dir = os.environ.get("HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub"))
+    hf_cache_dir = os.environ.get(
+        "HF_HOME", os.path.join(os.path.expanduser("~"), ".cache", "huggingface", "hub")
+    )
     checkpoint_output_dir = os.path.join(hf_cache_dir, model_name)
 
     # Ensure the checkpoint directory exists
@@ -139,9 +148,13 @@ def define_model(
 
 # === Task Generation Functions ===
 
+
 def make_tasks_from_single_video(
-    output_json_fname: str, qa_pairs: List[Dict[str, Any]], video_id: str, datasource_name: str
-) -> Tuple[List[InputStructure], List[OutputStructure]]:
+    output_json_fname: str,
+    qa_pairs: list[dict[str, Any]],
+    video_id: str,
+    datasource_name: str,
+) -> tuple[list[InputStructure], list[OutputStructure]]:
     """
     Creates InputStructure and OutputStructure objects for all questions related to a single video.
 
@@ -156,12 +169,14 @@ def make_tasks_from_single_video(
         - A list of InputStructure objects for questions needing evaluation.
         - A list of OutputStructure objects to store evaluation results.
     """
-    input_questions: List[InputStructure] = []
-    output_results: List[OutputStructure] = []
+    input_questions: list[InputStructure] = []
+    output_results: list[OutputStructure] = []
 
     for idx, qa in enumerate(qa_pairs):
         # Create InputStructure for the current question
-        input_questions.append(InputStructure.from_dict(datasource_name, video_id, qa, idx))
+        input_questions.append(
+            InputStructure.from_dict(datasource_name, video_id, qa, idx)
+        )
         # Create corresponding OutputStructure to store results
         output_results.append(
             OutputStructure(
@@ -170,7 +185,7 @@ def make_tasks_from_single_video(
                 # Get the correct answer (handles variations in dict key)
                 correct_answer=qa.get("correct_answer", qa.get("answer", "")),
                 output_json_fname=output_json_fname,
-                prompt="" # This will be filled later
+                prompt="",  # This will be filled later
             )
         )
 
@@ -182,7 +197,7 @@ def make_all_tasks(
     results_output_folder: str,
     data_dir: str,
     limit: int = -1,
-) -> Tuple[List[InputStructure], List[OutputStructure]]:
+) -> tuple[list[InputStructure], list[OutputStructure]]:
     """
     Gathers all evaluation tasks from the specified datasources. Supports loading from
     a list of datasource names (for S3 paths) or a Hugging Face dataset.
@@ -198,15 +213,15 @@ def make_all_tasks(
         - A list of all corresponding OutputStructure objects.
     """
 
-    input_tasks: List[InputStructure] = []  # Stores all input tasks
-    output_results: List[OutputStructure] = []  # Stores all output result objects
+    input_tasks: list[InputStructure] = []  # Stores all input tasks
+    output_results: list[OutputStructure] = []  # Stores all output result objects
 
     # Process each datasource
     for datasource_name in datasource_list:
         log.info(f"Gathering tasks from dataset: {datasource_name}")
 
-        curr_tasks: List[InputStructure] = []
-        curr_results: List[OutputStructure] = []
+        curr_tasks: list[InputStructure] = []
+        curr_results: list[OutputStructure] = []
 
         # Construct the video path properly
         video_path = os.path.join(data_dir, datasource_name, "clips")
@@ -218,24 +233,30 @@ def make_all_tasks(
 
         # Get video files
         try:
-            video_files = [f for f in os.listdir(video_path) if os.path.isfile(os.path.join(video_path, f))]
+            video_files = [
+                f
+                for f in os.listdir(video_path)
+                if os.path.isfile(os.path.join(video_path, f))
+            ]
         except OSError as e:
             log.error(f"Error reading video directory {video_path}: {e}")
             continue
 
         # Load QA pairs properly
         try:
-            qa_pairs_path = os.path.join(data_dir, datasource_name, f"{datasource_name}_benchmark_qa_pairs.json")  # Assuming JSON file name
-            with open(qa_pairs_path, 'r') as f:
+            qa_pairs_path = os.path.join(
+                data_dir, datasource_name, f"{datasource_name}_benchmark_qa_pairs.json"
+            )  # Assuming JSON file name
+            with open(qa_pairs_path) as f:
                 qa_pairs = json.load(f)
 
             # Convert qa_pairs list to a dictionary
             qa_pairs_dict = {}
             for item in qa_pairs:
-                video_path = item.get('video', '')
-                if video_path.startswith('clips/') and '.' in video_path:
-                    video_id = video_path.split('/')[-1].rsplit('.', 1)[0]
-                    qa_data = item.get('qa_pairs')
+                video_path = item.get("video", "")
+                if video_path.startswith("clips/") and "." in video_path:
+                    video_id = video_path.split("/")[-1].rsplit(".", 1)[0]
+                    qa_data = item.get("qa_pairs")
                     if isinstance(qa_data, list):
                         qa_pairs_dict[video_id] = qa_data
                     elif isinstance(qa_data, dict):
@@ -248,7 +269,9 @@ def make_all_tasks(
         # Process each item (video) in the dataset split
         for video_file in sorted(video_files):
             # Verify video file extension
-            if not video_file.endswith(('.mp4', '.avi', '.mov')):  # Add relevant video extensions
+            if not video_file.endswith(
+                (".mp4", ".avi", ".mov")
+            ):  # Add relevant video extensions
                 continue
 
             video_id = video_file.rsplit(".", 1)[0]
@@ -288,7 +311,9 @@ def make_all_tasks(
 
             # Check if the task limit has been reached for this datasource
             if limit > 0 and len(curr_tasks) >= limit:
-                log.info(f"Limit ({limit}) reached for datasource '{datasource_name}'. Stopping.")
+                log.info(
+                    f"Limit ({limit}) reached for datasource '{datasource_name}'. Stopping."
+                )
                 break  # Stop processing videos for this datasource
 
         # Add tasks and results from the current datasource to the overall lists
@@ -300,11 +325,12 @@ def make_all_tasks(
 
 # === Model Execution Functions ===
 
+
 def run_model(
     model: LLM,
-    inputs: List[str], # VLLM generate takes list of prompts
-    input_tasks: List[InputStructure],
-    output_results: List[OutputStructure],
+    inputs: list[str],  # VLLM generate takes list of prompts
+    input_tasks: list[InputStructure],
+    output_results: list[OutputStructure],
     stop_token_id: int,
     answer_type: str,
     max_retries: int = 3,
@@ -339,17 +365,17 @@ def run_model(
         # Use greedy decoding (temperature=0, top_k=1) for letter answers
         sampling_params = SamplingParams(
             temperature=0.0,
-            max_tokens=10, # Generate only a few tokens for a letter answer
+            max_tokens=10,  # Generate only a few tokens for a letter answer
             stop_token_ids=[stop_token_id],
             top_k=1,
             seed=seed,
         )
-    else: # answer_type == "reasoning"
+    else:  # answer_type == "reasoning"
         # Use specified sampling parameters for reasoning answers
         sampling_params = SamplingParams(
             max_tokens=max_tokens,
             temperature=temperature,
-            top_p=0.95, # Use top_p sampling
+            top_p=0.95,  # Use top_p sampling
             stop_token_ids=[stop_token_id],
             repetition_penalty=repetition_penalty,
             presence_penalty=presence_penalty,
@@ -360,15 +386,19 @@ def run_model(
     log.info(f"Generating outputs for {len(inputs)} tasks using VLLM...")
     # Generate outputs for all inputs in a single batch
     list_of_requestoutput = model.generate(inputs, sampling_params)
-    log.info(f"Finished VLLM generation. Received {len(list_of_requestoutput)} outputs.")
+    log.info(
+        f"Finished VLLM generation. Received {len(list_of_requestoutput)} outputs."
+    )
 
-    empty_answer_indices: List[int] = [] # Keep track of indices for tasks with empty answers
+    empty_answer_indices: list[
+        int
+    ] = []  # Keep track of indices for tasks with empty answers
 
     # Process the initial generation outputs
     for i, (requestoutput, video_input_task, video_output_result) in enumerate(
-        zip(list_of_requestoutput, input_tasks, output_results)
+        zip(list_of_requestoutput, input_tasks, output_results, strict=False)
     ):
-        output_text = requestoutput.outputs[0].text # Get the generated text
+        output_text = requestoutput.outputs[0].text  # Get the generated text
         # Parse the generated text based on the expected answer type
         if answer_type == "letter":
             answer, reasoning = parse_letter_response(output_text)
@@ -376,7 +406,9 @@ def run_model(
             answer, reasoning = parse_reasoning_response(output_text)
 
         # Store the generated results in the OutputStructure object
-        video_output_result.prompt = video_input_task.prompt # Store the original prompt
+        video_output_result.prompt = (
+            video_input_task.prompt
+        )  # Store the original prompt
         video_output_result.reasoning = reasoning
         video_output_result.answer = answer
         video_output_result.full_response = output_text
@@ -390,32 +422,38 @@ def run_model(
             empty_answer_indices.append(i)
 
     # --- Retry logic for empty answers ---
-    current_empty_indices = empty_answer_indices # Initialize retry list
+    current_empty_indices = empty_answer_indices  # Initialize retry list
     for retry_count in range(max_retries):
         if not current_empty_indices:
             log.info("No more empty answers. Retries finished.")
-            break # Exit retry loop if no empty answers remain
+            break  # Exit retry loop if no empty answers remain
 
         log.info(
             f"Found {len(current_empty_indices)} empty answers. Retrying batch ({retry_count + 1}/{max_retries})..."
         )
 
         # Prepare inputs specifically for the tasks that had empty answers
-        retry_inputs: List[str] = [inputs[i] for i in current_empty_indices]
+        retry_inputs: list[str] = [inputs[i] for i in current_empty_indices]
 
         # Adjust sampling parameters for retries (increase max tokens and temperature)
         # This encourages the model to generate different responses
         sampling_params.max_tokens = max_tokens + 256 * (retry_count + 1)
         sampling_params.temperature = min(temperature + (0.05 * (retry_count + 1)), 0.9)
-        log.info(f"  Retry {retry_count + 1} sampling params: max_tokens={sampling_params.max_tokens}, temperature={sampling_params.temperature}")
+        log.info(
+            f"  Retry {retry_count + 1} sampling params: max_tokens={sampling_params.max_tokens}, temperature={sampling_params.temperature}"
+        )
 
         # Generate outputs for the retry batch
         retry_outputs = model.generate(retry_inputs, sampling_params)
 
-        still_empty_indices: List[int] = [] # List to hold indices that are still empty after this retry
+        still_empty_indices: list[
+            int
+        ] = []  # List to hold indices that are still empty after this retry
         # Process the retry outputs
         for batch_idx, original_idx in enumerate(current_empty_indices):
-            retry_text = retry_outputs[batch_idx].outputs[0].text # Get the generated text from retry
+            retry_text = (
+                retry_outputs[batch_idx].outputs[0].text
+            )  # Get the generated text from retry
             # Parse the generated text
             if answer_type == "letter":
                 answer, reasoning = parse_letter_response(retry_text)
@@ -449,6 +487,7 @@ def run_model(
                 f"  - Task from video '{input_tasks[original_idx].video_id}' in datasource '{input_tasks[original_idx].datasource}' could not generate a valid answer."
             )
 
+
 # === Main Function and Script Entry Point ===
 def main():
     """
@@ -460,7 +499,7 @@ def main():
         "--config_file",
         type=str,
         required=True,
-        help="Path to YAML configuration file with model and evaluation parameters."
+        help="Path to YAML configuration file with model and evaluation parameters.",
     )
 
     # These arguments will remain as direct command-line options
@@ -498,19 +537,19 @@ def main():
 
     # Load configuration from YAML file
     try:
-        with open(args.config_file, 'r') as f:
+        with open(args.config_file) as f:
             config = yaml.safe_load(f)
     except Exception as e:
         log.error(f"Error loading config file: {e}")
         return
 
     # Extract configuration sections
-    model_config = config.get('model', {})
-    eval_config = config.get('evaluation', {})
-    gen_config = config.get('generation', {})
+    model_config = config.get("model", {})
+    eval_config = config.get("evaluation", {})
+    gen_config = config.get("generation", {})
 
     # Retrieve datasets from config
-    datasets = config.get('datasets')
+    datasets = config.get("datasets")
     if not datasets:
         log.error("No datasets provided in config file")
         return
@@ -524,25 +563,25 @@ def main():
         return
 
     # --- Model Configuration ---
-    model_name = args.model_name or model_config.get('model_name', None)
-    tokenizer_model_name = model_config.get('tokenizer_model_name', "qwen2.5-vl-7b")
-    dtype = model_config.get('dtype', "bfloat16")
-    tp_size = model_config.get('tp_size', 1)
-    max_length = model_config.get('max_length', 128000)
+    model_name = args.model_name or model_config.get("model_name", None)
+    tokenizer_model_name = model_config.get("tokenizer_model_name", "qwen2.5-vl-7b")
+    dtype = model_config.get("dtype", "bfloat16")
+    tp_size = model_config.get("tp_size", 1)
+    max_length = model_config.get("max_length", 128000)
 
     # --- Evaluation Parameters ---
-    answer_type = eval_config.get('answer_type', "reasoning")
-    num_processes = eval_config.get('num_processes', 80)
-    fps = eval_config.get('fps', 4)
-    seed = eval_config.get('seed', 1)
+    answer_type = eval_config.get("answer_type", "reasoning")
+    num_processes = eval_config.get("num_processes", 80)
+    fps = eval_config.get("fps", 4)
+    seed = eval_config.get("seed", 1)
 
     # --- Generation Parameters ---
-    max_retries = gen_config.get('max_retries', 10)
-    max_tokens = gen_config.get('max_tokens', 1024)
-    temperature = gen_config.get('temperature', 0.6)
-    repetition_penalty = gen_config.get('repetition_penalty', 1.0)
-    presence_penalty = gen_config.get('presence_penalty', 0.0)
-    frequency_penalty = gen_config.get('frequency_penalty', 0.0)
+    max_retries = gen_config.get("max_retries", 10)
+    max_tokens = gen_config.get("max_tokens", 1024)
+    temperature = gen_config.get("temperature", 0.6)
+    repetition_penalty = gen_config.get("repetition_penalty", 1.0)
+    presence_penalty = gen_config.get("presence_penalty", 0.0)
+    frequency_penalty = gen_config.get("frequency_penalty", 0.0)
 
     # Append dtype and seed to results directory for better organization
     results_output_base = f"{args.results_dir}"
@@ -589,7 +628,7 @@ def main():
     # make_all_tasks now takes datasets directly
     input_tasks, output_results = make_all_tasks(
         datasets,  # Use the datasets list directly instead of a file
-        results_output_dir, # Pass the full results directory
+        results_output_dir,  # Pass the full results directory
         args.data_dir,
         args.limit,
     )
@@ -605,17 +644,16 @@ def main():
         # If no tasks remain after skipping, exit gracefully
         if not input_tasks:
             log.info("All results are already saved or no tasks to evaluate. Exiting.")
-            return # Exit the main function
+            return  # Exit the main function
     log.info(f"Total tasks to evaluate after filtering: {len(input_tasks)}")
     log.info(f"Time taken to gather tasks: {time.time() - start_time:.2f} seconds")
-
 
     # === Step 2: Load videos and generate prompts in parallel ===
     log.info("Loading videos and generating prompts in parallel...")
     start_time = time.time()
     input_tasks = load_videos_and_prompts_parallel(
         input_tasks,
-        data_dir=args.data_dir, # Base directory for video data
+        data_dir=args.data_dir,  # Base directory for video data
         answer_type=answer_type,
         num_processes=num_processes,
     )
@@ -641,7 +679,6 @@ def main():
         )
     log.info(f"Time taken to load model: {time.time() - start_time:.2f} seconds")
 
-
     # === Step 4: Prepare model inputs ===
     log.info("Preparing model inputs in parallel...")
     start_time = time.time()
@@ -651,7 +688,7 @@ def main():
         input_tasks,
         processor,
         num_processes,
-        fps # Pass FPS as it might be needed for input preparation
+        fps,  # Pass FPS as it might be needed for input preparation
     )
     log.info(f"Prepared inputs for {len(inputs)} tasks.")
     log.info(
@@ -666,10 +703,10 @@ def main():
     # Need the EOS token ID from the processor's tokenizer for VLLM stopping
     run_model(
         model,
-        inputs, # VLLM expects list of strings (prompts) directly
+        inputs,  # VLLM expects list of strings (prompts) directly
         input_tasks,
         output_results,
-        processor.tokenizer.eos_token_id, # Pass EOS token ID for VLLM stopping
+        processor.tokenizer.eos_token_id,  # Pass EOS token ID for VLLM stopping
         answer_type,
         max_retries,
         max_tokens,
@@ -679,7 +716,9 @@ def main():
         frequency_penalty,
         seed,
     )
-    log.info(f"Time taken for model generation and output processing: {time.time() - start_time:.2f} seconds")
+    log.info(
+        f"Time taken for model generation and output processing: {time.time() - start_time:.2f} seconds"
+    )
 
     # === Step 6: Save results in parallel ===
     log.info("Saving results in parallel...")

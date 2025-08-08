@@ -75,7 +75,7 @@ class CosmosSFTDataset(Dataset):
                 f"Dataset directory {video_clips_path} does not exist. Please check the dataset path."
             )
         mm_files_paths = {}
-        for root, dirs, files in os.walk(video_clips_path):
+        for root, dirs, files in os.walk(video_clips_path):  # noqa: B007
             for file in files:
                 if file.endswith((".mp4", ".avi", ".mov")):  # Common video extensions
                     mm_files_paths[file] = os.path.join(root, file)
@@ -116,14 +116,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_known_args()[0]
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config = toml.load(f)
     config = Config.from_dict(config)
 
     # Each worker needs to prepare the data independently
-    util.prepare_cosmos_data(
-        dataset=config.train.train_policy.dataset
-    )
+    util.prepare_cosmos_data(dataset=config.train.train_policy.dataset)
 
     def get_dataset(config: CosmosConfig) -> Dataset:
         dataset = load_dataset(

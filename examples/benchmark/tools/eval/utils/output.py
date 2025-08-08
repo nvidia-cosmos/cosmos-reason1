@@ -21,6 +21,7 @@ import re
 
 import attrs
 
+
 #  ------------- output structure -------------
 @attrs.define
 class OutputStructure:
@@ -28,6 +29,7 @@ class OutputStructure:
     Represents the structure for storing input, model output, and evaluation results
     for a single item. Designed to be easily serialized to JSON.
     """
+
     # Input fields derived from the dataset
     datasource: str
     video_id: str
@@ -35,15 +37,15 @@ class OutputStructure:
 
     # Input fields related to the prompt/task
     prompt: str = ""
-    correct_answer: str = "" # The ground truth correct answer for evaluation
+    correct_answer: str = ""  # The ground truth correct answer for evaluation
 
     # Fields for model output
-    reasoning: str = "" # The reasoning provided by the model
-    answer: str = "" # The final answer extracted from the model's response
-    full_response: str = "" # The complete raw response from the model
+    reasoning: str = ""  # The reasoning provided by the model
+    answer: str = ""  # The final answer extracted from the model's response
+    full_response: str = ""  # The complete raw response from the model
 
     # Evaluation field
-    is_correct: bool = False # Boolean indicating if the extracted answer is correct
+    is_correct: bool = False  # Boolean indicating if the extracted answer is correct
 
     @classmethod
     def from_dict(cls, data: dict) -> "OutputStructure":
@@ -65,7 +67,9 @@ class OutputStructure:
             answer=data.get("answer", ""),
             full_response=data.get("full_response", ""),
             is_correct=data.get("is_correct", False),
-            output_json_fname=data.get("output_json_fname"), # Note: output_json_fname is used internally but not saved in the final JSON
+            output_json_fname=data.get(
+                "output_json_fname"
+            ),  # Note: output_json_fname is used internally but not saved in the final JSON
         )
 
 
@@ -127,7 +131,7 @@ def parse_letter_response(output_text: str) -> tuple[str, str]:
         Returns empty strings if no uppercase letter is found.
     """
     answer = ""
-    reasoning = "" # This parser does not extract reasoning
+    reasoning = ""  # This parser does not extract reasoning
 
     # Look for the first single uppercase letter in the text
     letter_match = SINGLE_LETTER_PATTERN.search(output_text)
@@ -157,7 +161,7 @@ def save_single_file(args: tuple[str, list[OutputStructure]]):
 
     # Ensure the output directory exists
     output_dir = os.path.dirname(output_json_fname)
-    if output_dir: # Only try to create directory if path is not just a filename
+    if output_dir:  # Only try to create directory if path is not just a filename
         os.makedirs(output_dir, exist_ok=True)
 
     try:
@@ -165,10 +169,14 @@ def save_single_file(args: tuple[str, list[OutputStructure]]):
             json.dump(results_dicts, f, indent=4)
         log.info(f"Successfully wrote {len(results)} results to '{output_json_fname}'")
     except Exception as e:
-        log.error(f"An error occurred while writing to JSON file '{output_json_fname}': {e}")
+        log.error(
+            f"An error occurred while writing to JSON file '{output_json_fname}': {e}"
+        )
 
 
-def save_results_parallel(output_results: list[OutputStructure], num_processes: int = 4):
+def save_results_parallel(
+    output_results: list[OutputStructure], num_processes: int = 4
+):
     """
     Saves a list of OutputStructure objects to their respective output files
     using multiprocessing for parallel processing.
@@ -207,8 +215,10 @@ def save_results_parallel(output_results: list[OutputStructure], num_processes: 
         for future in concurrent.futures.as_completed(futures):
             arg = futures[future]
             try:
-                future.result() # Retrieve result (or exception)
+                future.result()  # Retrieve result (or exception)
             except Exception as e:
-                log.error(f"Error occurred during parallel saving for file {arg[0]}: {e}")
+                log.error(
+                    f"Error occurred during parallel saving for file {arg[0]}: {e}"
+                )
 
     log.info("Parallel saving process completed.")
