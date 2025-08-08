@@ -30,3 +30,13 @@ dependencies = [
     "torch",
     "torchvision",
 ]
+
+[depdendency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv.build-backend]
+source-exclude = [
+    "*_test.py",
+]

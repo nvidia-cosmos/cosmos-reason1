@@ -15,7 +15,7 @@
 
 import functools
 import os
-import pathlib
+from pathlib import Path
 
 import matplotlib.font_manager as fm
 import numpy as np
@@ -30,10 +30,17 @@ from pydantic import Field
 
 
 class VisionConfig(pydantic.BaseModel):
-    """Config for vision processing."""
+    """Config for vision processing.
 
-    min_pixels: int | None = Field(default=None, description="Min frame pixels of the image/video")
-    max_pixels: int | None = Field(default=None, description="Max frame pixels of the image/video")
+    Source: https://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py
+    """
+
+    min_pixels: int | None = Field(
+        default=None, description="Min frame pixels of the image/video"
+    )
+    max_pixels: int | None = Field(
+        default=None, description="Max frame pixels of the image/video"
+    )
     total_pixels: int | None = Field(
         default=None, description="Max total pixels of the image/video"
     )
@@ -58,20 +65,22 @@ class VisionConfig(pydantic.BaseModel):
     min_frames: int | None = Field(default=None, description="Min frames of the video")
     max_frames: int | None = Field(default=None, description="Max frames of the video")
 
-    
-
 
 def _tensor_to_pil_images(tensor: torch.Tensor) -> list[Image.Image]:
     """Convert a tensor to a list of PIL images.
 
     Args:
-        tensor: Tensor with shape (C, T, H, W) or (T, C, H, W)
+        tensor: Tensor with shape (C, H, W), (C, T, H, W) or (T, C, H, W)
 
     Returns:
         List of PIL images
     """
     # Check tensor shape and convert if needed
-    if tensor.shape[0] == 3 and tensor.shape[1] > 3:  # (C, T, H, W)
+    if tensor.ndim == 3:
+        tensor = tensor.unsqueeze(0)
+    elif tensor.shape[0] == 3:  # (C, T, H, W)
+        if tensor.shape[1] == 3:
+            raise ValueError(f"Ambiguous shape: {tensor.shape}")
         # Convert to (T, C, H, W)
         tensor = tensor.permute(1, 0, 2, 3)
 
@@ -79,38 +88,37 @@ def _tensor_to_pil_images(tensor: torch.Tensor) -> list[Image.Image]:
     frames = tensor.permute(0, 2, 3, 1).cpu().numpy()
 
     # Ensure values are in the right range for PIL (0-255, uint8)
-    if frames.dtype == np.float32 or frames.dtype == np.float64:
+    if np.issubdtype(frames.dtype, np.floating):
         if frames.max() <= 1.0:
             frames = (frames * 255).astype(np.uint8)
         else:
             frames = frames.astype(np.uint8)
 
-    # Convert each frame to a PIL image
-    pil_images = [Image.fromarray(frame) for frame in frames]
-
-    return pil_images
+    return [Image.fromarray(frame) for frame in frames]
 
 
 def _pil_images_to_tensor(images: list[Image.Image]) -> torch.Tensor:
     """Convert a list of PIL images to a tensor.
 
     Args:
-        pil_images: List of PIL images
+        images: List of PIL images
 
     Returns:
-        Tensor with shape (T, C, H, W)
+        Tensor with shape (C, H, W) or (T, C, H, W)
     """
-    return torch.stack(
+    tensor = torch.stack(
         [torchvision.transforms.functional.pil_to_tensor(image) for image in images],
         dim=0,
     )
-    
+    tensor.squeeze_(0)
+    return tensor
 
-def save_tensor(tensor: torch.Tensor, path: str) -> None:
-    """Save a tensor to a directory.
+
+def save_tensor(tensor: torch.Tensor, path: str | Path) -> None:
+    """Save a tensor as images to a directory.
 
     Args:
-        tensor: Tensor with shape (T, C, H, W)
+        tensor: Tensor with shape (C, H, W) or (T, C, H, W)
         path: Directory to save the images
     """
     os.makedirs(path, exist_ok=True)
@@ -122,14 +130,14 @@ def save_tensor(tensor: torch.Tensor, path: str) -> None:
 @functools.cache
 def _get_overlay_font_path() -> str:
     """Return the path to the font for overlaying text on images."""
-    # Use DejaVu Sans Mono font for better readability
+    # Use 'DejaVu Sans Mono' font for better readability
     return fm.findfont(fm.FontProperties(family="DejaVu Sans Mono", style="normal"))
 
 
 def overlay_text(
     images: list[Image.Image],
     *,
-    fps: float,
+    fps: float | None = None,
     border_height: int = 28,  # this is due to patch size of 28
     temporal_path_size: int = 2,  # Number of positions to cycle through
     font_size: int = 20,
@@ -151,6 +159,10 @@ def overlay_text(
         List of PIL images with text overlay
         List of timestamps
     """
+    if len(images) == 0:
+        fps = 1
+    elif fps is None:
+        raise ValueError("FPS is required")
 
     font = ImageFont.truetype(_get_overlay_font_path(), font_size)
 
@@ -207,16 +219,14 @@ def overlay_text(
     return processed_images, [i / fps for i in range(len(images))]
 
 
-def overlay_text_on_tensor(
-    tensor: torch.Tensor, **kwargs
-) -> torch.Tensor:
+def overlay_text_on_tensor(tensor: torch.Tensor, **kwargs) -> torch.Tensor:
     """Overlay text on a tensor.
 
     Args:
-        tensor: Tensor with shape (C, T, H, W) or (T, C, H, W)
+        tensor: Tensor with shape (C, H, W) or (T, C, H, W)
 
     Returns:
-        Tensor with shape (T, C, H, W)
+        Tensor with shape (C, H, W) or (T, C, H, W)
     """
     return _pil_images_to_tensor(
         overlay_text(_tensor_to_pil_images(tensor), **kwargs)[0]
