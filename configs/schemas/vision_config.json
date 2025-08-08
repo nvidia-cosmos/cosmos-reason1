@@ -1,32 +1,6 @@
 {
-  "description": "Config for image/video processing.",
+  "description": "Config for vision processing.\n\nSource:\nhttps://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py\n\nAttributes are sorted by priority. Higher priority attributes override lower\npriority attributes.",
   "properties": {
-    "min_pixels": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Min pixels of the image",
-      "title": "Min Pixels"
-    },
-    "max_pixels": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Max pixels of the image",
-      "title": "Max Pixels"
-    },
     "resized_height": {
       "anyOf": [
         {
@@ -37,7 +11,7 @@
         }
       ],
       "default": null,
-      "description": "Max height of the image",
+      "description": "Max height of the image/video",
       "title": "Resized Height"
     },
     "resized_width": {
@@ -50,8 +24,47 @@
         }
       ],
       "default": null,
-      "description": "Max width of the image",
+      "description": "Max width of the image/video",
       "title": "Resized Width"
+    },
+    "min_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Min frame pixels of the image/video",
+      "title": "Min Pixels"
+    },
+    "max_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max frame pixels of the image/video",
+      "title": "Max Pixels"
+    },
+    "total_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max total pixels of the image/video",
+      "title": "Total Pixels"
     },
     "video_start": {
       "anyOf": [
@@ -130,19 +143,6 @@
       "default": null,
       "description": "Max frames of the video",
       "title": "Max Frames"
-    },
-    "total_pixels": {
-      "anyOf": [
-        {
-          "type": "integer"
-        },
-        {
-          "type": "null"
-        }
-      ],
-      "default": null,
-      "description": "Max pixels of the video",
-      "title": "Total Pixels"
     }
   },
   "title": "VisionConfig",

@@ -144,7 +144,7 @@ def main():
     prompt_kwargs = yaml.safe_load(open(args.prompt, "rb"))
     prompt_config = PromptConfig.model_validate(prompt_kwargs)
     vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
-    VisionConfig.model_validate(vision_kwargs)
+    _vision_config =VisionConfig.model_validate(vision_kwargs)
     sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
     sampling_params = vllm.SamplingParams(**sampling_kwargs)
     if args.verbose:

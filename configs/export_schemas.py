@@ -37,7 +37,7 @@ import pathlib
 import msgspec
 import vllm
 
-from cosmos_reason1_utils.vision import VideoConfig
+from cosmos_reason1_utils.vision import VisionConfig
 
 SCRIPT = pathlib.Path(__file__).resolve()
 
@@ -56,7 +56,7 @@ def main():
     output_dir = pathlib.Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    vision_schema = VideoConfig.model_json_schema()
+    vision_schema = VisionConfig.model_json_schema()
     (output_dir / "vision_config.json").write_text(json.dumps(vision_schema, indent=2))
 
     sampling_params = msgspec.json.schema(vllm.SamplingParams)
