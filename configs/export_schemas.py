@@ -18,11 +18,8 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
+#   "cosmos-reason1-utils",
 #   "msgspec",
-#   "pydantic",
-#   "qwen-vl-utils",
-#   "torch",
-#   "torchvision",
 #   "vllm",
 # ]
 # [tool.uv]
@@ -36,11 +33,11 @@
 import argparse
 import json
 import pathlib
-import pydantic
-import qwen_vl_utils
+
 import msgspec
 import vllm
-from cosmos_reason1_utils.vision_process import VisionConfig
+
+from cosmos_reason1_utils.vision import VisionConfig
 
 SCRIPT = pathlib.Path(__file__).resolve()
 

@@ -1,5 +1,5 @@
 {
-  "description": "Config for video processing.\n\nAttributes:\n    video_start: Start time of the video\n    video_end: End time of the video\n    nframes: Number of frames of the video\n    fps: FPS of the video\n    min_frames: Min frames of the video\n    max_frames: Max frames of the video",
+  "description": "Config for image/video processing.",
   "properties": {
     "min_pixels": {
       "anyOf": [
@@ -10,6 +10,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Min pixels of the image",
       "title": "Min Pixels"
     },
     "max_pixels": {
@@ -21,6 +23,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Max pixels of the image",
       "title": "Max Pixels"
     },
     "resized_height": {
@@ -32,6 +36,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Max height of the image",
       "title": "Resized Height"
     },
     "resized_width": {
@@ -43,6 +49,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Max width of the image",
       "title": "Resized Width"
     },
     "video_start": {
@@ -54,6 +62,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Start time of the video (seconds)",
       "title": "Video Start"
     },
     "video_end": {
@@ -65,6 +75,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "End time of the video (seconds)",
       "title": "Video End"
     },
     "nframes": {
@@ -76,6 +88,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Number of frames of the video",
       "title": "Nframes"
     },
     "fps": {
@@ -87,6 +101,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "FPS of the video",
       "title": "Fps"
     },
     "min_frames": {
@@ -98,6 +114,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Min frames of the video",
       "title": "Min Frames"
     },
     "max_frames": {
@@ -109,6 +127,8 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Max frames of the video",
       "title": "Max Frames"
     },
     "total_pixels": {
@@ -120,9 +140,11 @@
           "type": "null"
         }
       ],
+      "default": null,
+      "description": "Max pixels of the video",
       "title": "Total Pixels"
     }
   },
-  "title": "VideoConfig",
+  "title": "VisionConfig",
   "type": "object"
 }

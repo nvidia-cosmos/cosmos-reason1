@@ -1,5 +1,19 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import functools
-from typing import TypedDict
 
 import matplotlib.font_manager as fm
 import numpy as np
@@ -8,6 +22,7 @@ import torch
 import torchvision
 import torchvision.transforms.functional
 from PIL import Image, ImageDraw, ImageFont
+from pydantic import Field
 
 """Vision processing utilities."""
 
@@ -15,45 +30,35 @@ from PIL import Image, ImageDraw, ImageFont
 class ImageConfig(pydantic.BaseModel):
     """Config for image processing."""
 
-    min_pixels: int | None = pydantic.Field(
-        description="Min pixels of the image"
-    )
-    max_pixels: int | None = pydantic.Field(
-        description="Max pixels of the image"
-    )
+    min_pixels: int | None = Field(default=None, description="Min pixels of the image")
+    max_pixels: int | None = Field(default=None, description="Max pixels of the image")
 
-    resized_height: int | None = pydantic.Field(
-        description="Max height of the image"
+    resized_height: int | None = Field(
+        default=None, description="Max height of the image"
     )
-    resized_width: int | None = pydantic.Field(
-        description="Max width of the image"
+    resized_width: int | None = Field(
+        default=None, description="Max width of the image"
     )
 
 
 class VisionConfig(ImageConfig):
     """Config for image/video processing."""
 
-    video_start: float | None = pydantic.Field(
-        description="Start time of the video (seconds)"
+    video_start: float | None = Field(
+        None, description="Start time of the video (seconds)"
     )
-    video_end: float | None = pydantic.Field(
-        description="End time of the video (seconds)"
+    video_end: float | None = Field(None, description="End time of the video (seconds)")
+
+    nframes: int | None = Field(
+        default=None, description="Number of frames of the video"
     )
 
-    nframes: int | None = pydantic.Field(
-        description="Number of frames of the video"
-    )
+    fps: float | None = Field(default=None, description="FPS of the video")
+    min_frames: int | None = Field(default=None, description="Min frames of the video")
+    max_frames: int | None = Field(default=None, description="Max frames of the video")
 
-    fps: float | None = pydantic.Field(description="FPS of the video")
-    min_frames: int | None = pydantic.Field(
-        description="Min frames of the video"
-    )
-    max_frames: int | None = pydantic.Field(
-        description="Max frames of the video"
-    )
-
-    total_pixels: int | None = pydantic.Field(
-        description="Max pixels of the video"
+    total_pixels: int | None = Field(
+        default=None, description="Max pixels of the video"
     )
 
 

@@ -20,7 +20,6 @@
 # dependencies = [
 #   "accelerate",
 #   "cosmos-reason1-utils",
-#   "pydantic",
 #   "pyyaml",
 #   "qwen-vl-utils",
 #   "rich",
@@ -42,6 +41,7 @@ Example:
 ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
 ```
 """
+# ruff: noqa: E402
 
 import os
 import resource
@@ -59,7 +59,6 @@ import collections
 import pathlib
 import textwrap
 
-import pydantic
 import qwen_vl_utils
 import transformers
 import vllm

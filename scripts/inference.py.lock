@@ -14,7 +14,6 @@ exclude-newer = "2025-08-05T00:00:00Z"
 requirements = [
     { name = "accelerate" },
     { name = "cosmos-reason1-utils", editable = "../cosmos_reason1_utils" },
-    { name = "pydantic" },
     { name = "pyyaml" },
     { name = "qwen-vl-utils" },
     { name = "rich" },
