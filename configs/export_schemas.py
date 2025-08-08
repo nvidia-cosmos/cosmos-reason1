@@ -28,7 +28,7 @@
 # [tool.uv]
 # exclude-newer = "2025-07-31T00:00:00Z"
 # [tool.uv.sources]
-# qwen-vl-utils = {git = "https://github.com/spectralflight/Qwen2.5-VL.git", branch = "cosmos", subdirectory = "qwen-vl-utils"}
+# cosmos-reason1-utils = {path = "../cosmos_reason1_utils", editable = true}
 # ///
 
 """Export config schemas."""
@@ -40,6 +40,7 @@ import pydantic
 import qwen_vl_utils
 import msgspec
 import vllm
+from cosmos_reason1_utils.vision_process import VisionConfig
 
 SCRIPT = pathlib.Path(__file__).resolve()
 
@@ -58,7 +59,7 @@ def main():
     output_dir = pathlib.Path(args.output).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    vision_schema = pydantic.TypeAdapter(qwen_vl_utils.VideoConfig).json_schema()
+    vision_schema = pydantic.TypeAdapter(VisionConfig).json_schema()
     (output_dir / "vision_config.json").write_text(json.dumps(vision_schema, indent=2))
 
     sampling_params = msgspec.json.schema(vllm.SamplingParams)

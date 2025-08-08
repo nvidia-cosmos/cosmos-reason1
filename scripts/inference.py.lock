@@ -13,15 +13,12 @@ exclude-newer = "2025-08-05T00:00:00Z"
 [manifest]
 requirements = [
     { name = "accelerate" },
-    { name = "matplotlib" },
-    { name = "pillow" },
+    { name = "cosmos-reason1-utils", editable = "../cosmos_reason1_utils" },
     { name = "pydantic" },
     { name = "pyyaml" },
-    { name = "qwen-vl-utils", git = "https://github.com/spectralflight/Qwen2.5-VL.git?subdirectory=qwen-vl-utils&branch=cosmos" },
+    { name = "qwen-vl-utils" },
     { name = "rich" },
-    { name = "torch" },
     { name = "torchcodec" },
-    { name = "torchvision" },
     { name = "transformers", specifier = ">=4.51.3" },
     { name = "vllm" },
 ]
@@ -686,6 +683,29 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0a/59/ebfb8c677c75605cc27f7122c90313fd2f375ff3c8d19a1694bda74aaa63/contourpy-1.3.3-pp311-pypy311_pp73-manylinux_2_26_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:70f9aad7de812d6541d29d2bbf8feb22ff7e1c299523db288004e3157ff4674e", size = 302202, upload-time = "2025-07-26T12:02:55.947Z" },
     { url = "https://files.pythonhosted.org/packages/3c/37/21972a15834d90bfbfb009b9d004779bd5a07a0ec0234e5ba8f64d5736f4/contourpy-1.3.3-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:5ed3657edf08512fc3fe81b510e35c2012fbd3081d2e26160f27ca28affec989", size = 329207, upload-time = "2025-07-26T12:02:57.468Z" },
     { url = "https://files.pythonhosted.org/packages/0c/58/bd257695f39d05594ca4ad60df5bcb7e32247f9951fd09a9b8edb82d1daa/contourpy-1.3.3-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:3d1a3799d62d45c18bafd41c5fa05120b96a28079f2393af559b843d1a966a77", size = 225315, upload-time = "2025-07-26T12:02:58.801Z" },
+]
+
+[[package]]
+name = "cosmos-reason1-utils"
+version = "0.1.0"
+source = { editable = "../cosmos_reason1_utils" }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "torch" },
+    { name = "torchvision" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "pydantic" },
+    { name = "torch" },
+    { name = "torchvision" },
 ]
 
 [[package]]
@@ -2990,12 +3010,16 @@ wheels = [
 [[package]]
 name = "qwen-vl-utils"
 version = "0.0.11"
-source = { git = "https://github.com/spectralflight/Qwen2.5-VL.git?subdirectory=qwen-vl-utils&branch=cosmos#eadb502c11596ac4a56872ba858a99aa49e07188" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "av" },
     { name = "packaging" },
     { name = "pillow" },
     { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/42/9f/1229a40ebd49f689a0252144126f3865f31bb4151e942cf781a2936f0c4d/qwen_vl_utils-0.0.11.tar.gz", hash = "sha256:083ba1e5cfa5002165b1e3bddd4d6d26d1d6d34473884033ef12ae3fe8496cd5", size = 7924, upload-time = "2025-04-21T10:38:47.461Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0a/c2/ad7f93e1eea4ea0aefd1cc6fbe7a7095fd2f03a4d8fe2c3707e612b0866e/qwen_vl_utils-0.0.11-py3-none-any.whl", hash = "sha256:7fd5287ac04d6c1f01b93bf053b0be236a35149e414c9e864e3cc5bf2fe8cb7b", size = 7584, upload-time = "2025-04-21T10:38:45.595Z" },
 ]
 
 [[package]]
