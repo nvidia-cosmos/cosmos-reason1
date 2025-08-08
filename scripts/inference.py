@@ -59,7 +59,11 @@ import yaml
 from rich import print
 from rich.pretty import pprint
 
-from cosmos_reason1_utils.text import PromptConfig, create_conversation, extract_structured_text
+from cosmos_reason1_utils.text import (
+    PromptConfig,
+    create_conversation,
+    extract_structured_text,
+)
 from cosmos_reason1_utils.vision import (
     VisionConfig,
     overlay_text_on_tensor,
@@ -144,7 +148,7 @@ def main():
     prompt_kwargs = yaml.safe_load(open(args.prompt, "rb"))
     prompt_config = PromptConfig.model_validate(prompt_kwargs)
     vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
-    _vision_config =VisionConfig.model_validate(vision_kwargs)
+    _vision_config = VisionConfig.model_validate(vision_kwargs)
     sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
     sampling_params = vllm.SamplingParams(**sampling_kwargs)
     if args.verbose:
@@ -152,13 +156,15 @@ def main():
         pprint_dict(sampling_kwargs, "SamplingParams")
 
     # Create conversation
-    system_prompts = [open(f"{ROOT}/prompts/addons/english.txt", "r").read()]
+    system_prompts = [open(f"{ROOT}/prompts/addons/english.txt").read()]
     if prompt_config.system_prompt:
         system_prompts.append(prompt_config.system_prompt)
     if args.reasoning and "<think>" not in prompt_config.system_prompt:
         if extract_structured_text(prompt_config.system_prompt)[0]:
-            raise ValueError("Prompt already contains output format. Cannot add reasoning.")
-        system_prompts.append(open(f"{ROOT}/prompts/addons/reasoning.txt", "r").read())
+            raise ValueError(
+                "Prompt already contains output format. Cannot add reasoning."
+            )
+        system_prompts.append(open(f"{ROOT}/prompts/addons/reasoning.txt").read())
     system_prompt = "\n\n".join(map(str.rstrip, system_prompts))
     if args.question:
         user_prompt = args.question

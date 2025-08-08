@@ -23,7 +23,7 @@ init_script()
 import argparse
 import os
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import cosmos_rl.utils.util as util
 import toml
@@ -185,7 +185,7 @@ class CosmosGRPOValDataset(CosmosGRPODataset):
 
 
 def custom_reward_fn(
-    to_be_evaluated: str, reference: Optional[str] = None, *args, **kwargs
+    to_be_evaluated: str, reference: str | None = None, *args, **kwargs
 ) -> float:
     return sum(
         [
@@ -223,7 +223,7 @@ class DemoDataPacker(DataPacker):
         """
         return self.underlying_data_packer.get_rollout_input(item)
 
-    def rollout_collate_fn(self, items: List[Any]) -> Any:
+    def rollout_collate_fn(self, items: list[Any]) -> Any:
         """
         Collate the rollout inputs into a mini-batch for rollout engine
         """
@@ -239,15 +239,15 @@ class DemoDataPacker(DataPacker):
             item, rollout_output, n_ignore_prefix_tokens
         )
 
-    def policy_compute_max_len(self, processed_samples: List[Any]) -> int:
+    def policy_compute_max_len(self, processed_samples: list[Any]) -> int:
         """
         Compute the maximum sequence length of the mini-batch
         """
         return self.underlying_data_packer.policy_compute_max_len(processed_samples)
 
     def policy_collate_fn(
-        self, processed_samples: List[Any], computed_max_len: int
-    ) -> Dict[str, Any]:
+        self, processed_samples: list[Any], computed_max_len: int
+    ) -> dict[str, Any]:
         """
         Collate the mini-batch into the kwargs required by the policy model
         """
@@ -263,17 +263,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, required=True)
     args = parser.parse_known_args()[0]
-    with open(args.config, "r") as f:
+    with open(args.config) as f:
         config = toml.load(f)
     config = Config.from_dict(config)
 
-    util.prepare_cosmos_data(
-        dataset=config.train.train_policy.dataset
-    )
+    util.prepare_cosmos_data(dataset=config.train.train_policy.dataset)
     if config.train.enable_validation:
-        util.prepare_cosmos_data(
-            dataset=config.validation.dataset
-    )
+        util.prepare_cosmos_data(dataset=config.validation.dataset)
 
     # It is best practice to pass the dataset and val_dataset as factory functions
     # so that the dataset and val_dataset can be loaded on demand. (Not all workers need them)

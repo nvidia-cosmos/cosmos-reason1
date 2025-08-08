@@ -14,10 +14,11 @@
 # limitations under the License.
 
 import collections
+import re
 from typing import Any
+
 import pydantic
 from pydantic import Field
-import re
 
 """Text processing utilities."""
 
@@ -111,7 +112,7 @@ def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]
         if match is None:
             remaining.append(text[start:])
             break
-        remaining.append(text[start:match.start()])
+        remaining.append(text[start : match.start()])
         start = match.end()
         key = match.group(1)
 

@@ -38,11 +38,13 @@ Example:
 """
 
 from pathlib import Path
-import transformers
+
 import qwen_vl_utils
+import transformers
 
 ROOT = Path(__file__).parents[1]
 SEPARATOR = "-" * 20
+
 
 def main():
     # Load model
@@ -88,14 +90,18 @@ def main():
     # Run inference
     generated_ids = model.generate(**inputs, max_new_tokens=4096)
     generated_ids_trimmed = [
-        out_ids[len(in_ids) :] for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
+        out_ids[len(in_ids) :]
+        for in_ids, out_ids in zip(inputs.input_ids, generated_ids, strict=False)
     ]
     output_text = processor.batch_decode(
-        generated_ids_trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        generated_ids_trimmed,
+        skip_special_tokens=True,
+        clean_up_tokenization_spaces=False,
     )
     print(SEPARATOR)
     print(output_text[0])
     print(SEPARATOR)
+
 
 if __name__ == "__main__":
     main()

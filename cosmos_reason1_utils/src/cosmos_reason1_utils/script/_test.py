@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cosmos_reason1_utils.script import init_script
 import pytest
+
+from cosmos_reason1_utils.script import init_script
 
 
 @pytest.mark.parametrize("verbose", [True, False])

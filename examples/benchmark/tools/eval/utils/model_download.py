@@ -15,13 +15,12 @@
 
 import logging as log
 import os
-from typing import Dict, List
 
-from huggingface_hub import list_repo_files, hf_hub_download
+from huggingface_hub import hf_hub_download, list_repo_files
 
 # Define a dictionary mapping model names to Hugging Face repository IDs.
 # This helps manage repository mappings centrally.
-MODEL_REPO_MAP: Dict[str, str] = {
+MODEL_REPO_MAP: dict[str, str] = {
     "qwen2.5-vl-7b": "Qwen/Qwen2.5-VL-7B-Instruct",
     "qwen2-vl-2b": "Qwen/Qwen2-VL-2B-Instruct",
     "qwen2.5-vl-32b": "Qwen/Qwen2.5-VL-32B-Instruct",
@@ -29,7 +28,7 @@ MODEL_REPO_MAP: Dict[str, str] = {
 }
 
 # Define a list of standard tokenizer filenames to download.
-TOKENIZER_FILENAMES: List[str] = [
+TOKENIZER_FILENAMES: list[str] = [
     "config.json",
     "tokenizer.json",
     "tokenizer_config.json",
@@ -81,14 +80,16 @@ def check_model_shards_complete(model_dir: str) -> bool:
             try:
                 # Extract the total count from the second part before the extension.
                 total_shards = int(parts[1].split(".")[0])
-                break # Found the total count, no need to check other files.
+                break  # Found the total count, no need to check other files.
             except ValueError:
                 # Ignore files that match the pattern but have non-integer shard counts.
                 continue
 
     # If total_shards could not be determined from any file, the check fails.
     if total_shards <= 0:
-        log.error(f"Could not determine the total number of shards from files in {model_dir}")
+        log.error(
+            f"Could not determine the total number of shards from files in {model_dir}"
+        )
         return False
 
     # Generate the set of all expected shard filenames based on the determined total.
@@ -106,11 +107,12 @@ def check_model_shards_complete(model_dir: str) -> bool:
         log.info(f"All {total_shards} model shards found in {model_dir}")
     else:
         missing_shards = expected_shards - actual_shards
-        log.warning(f"Missing {len(missing_shards)}/{total_shards} model shards in {model_dir}.")
+        log.warning(
+            f"Missing {len(missing_shards)}/{total_shards} model shards in {model_dir}."
+        )
         # Optionally log missing files, be cautious with large numbers.
         if len(missing_shards) < 10:
-             log.warning(f"Missing files: {missing_shards}")
-
+            log.warning(f"Missing files: {missing_shards}")
 
     return is_complete
 
@@ -132,7 +134,9 @@ def download_checkpoint(repo_id: str, checkpoint_output_dir: str) -> None:
     if check_model_shards_complete(checkpoint_output_dir):
         return
 
-    log.info(f"Attempting to download all checkpoint files for {repo_id} to {checkpoint_output_dir}")
+    log.info(
+        f"Attempting to download all checkpoint files for {repo_id} to {checkpoint_output_dir}"
+    )
 
     os.makedirs(checkpoint_output_dir, exist_ok=True)
 
@@ -159,9 +163,9 @@ def download_checkpoint(repo_id: str, checkpoint_output_dir: str) -> None:
         except Exception as e:
             log.error(f"Failed to download file {filename} from {repo_id}: {e}")
 
-    log.info(f"Finished downloading all checkpoint files for {repo_id} to {checkpoint_output_dir}")
-
-
+    log.info(
+        f"Finished downloading all checkpoint files for {repo_id} to {checkpoint_output_dir}"
+    )
 
 
 def download_tokenizer(model: str, checkpoint_output_dir: str) -> None:
@@ -179,7 +183,9 @@ def download_tokenizer(model: str, checkpoint_output_dir: str) -> None:
     Raises:
         ValueError: If the provided model name is not recognized.
     """
-    log.info(f"Attempting to download tokenizer files for {model} to {checkpoint_output_dir}")
+    log.info(
+        f"Attempting to download tokenizer files for {model} to {checkpoint_output_dir}"
+    )
 
     # Look up the Hugging Face repository ID based on the model name.
     repo_id = MODEL_REPO_MAP.get(model)
@@ -200,7 +206,7 @@ def download_tokenizer(model: str, checkpoint_output_dir: str) -> None:
         # Check if the file already exists to avoid unnecessary re-downloads.
         if os.path.exists(file_path):
             log.debug(f"Tokenizer file already exists: {filename}")
-            continue # Skip download if file is present.
+            continue  # Skip download if file is present.
 
         log.info(f"Downloading tokenizer file: {filename}")
         try:
@@ -209,10 +215,12 @@ def download_tokenizer(model: str, checkpoint_output_dir: str) -> None:
                 repo_id=repo_id,
                 filename=filename,
                 local_dir=checkpoint_output_dir,
-                local_dir_use_symlinks=False, # Use False for direct file download
+                local_dir_use_symlinks=False,  # Use False for direct file download
             )
         except Exception as e:
-            log.error(f"Failed to download tokenizer file {filename} from {repo_id}: {e}")
+            log.error(
+                f"Failed to download tokenizer file {filename} from {repo_id}: {e}"
+            )
             # Depending on requirements, you might want to raise the exception
             # or continue attempting to download other files. Continuing here.
 

@@ -44,7 +44,7 @@ if __name__ == "__main__":
         "--result_dir",
         type=str,
         required=True,
-        help="Directory containing JSON evaluation files to be processed"
+        help="Directory containing JSON evaluation files to be processed",
     )
     args = parser.parse_args()
 
@@ -67,17 +67,22 @@ if __name__ == "__main__":
 
     # Process each JSON file found in the directory.
     for json_file in json_files:
-        print(f"Processing file: {json_file}")  # Provide feedback on which file is being processed
+        print(
+            f"Processing file: {json_file}"
+        )  # Provide feedback on which file is being processed
 
         # --- File Processing & Error Handling ---
         try:
             # Open and load data from the current JSON file. Using UTF-8 encoding is standard practice.
-            with open(json_file, "r", encoding='utf-8') as f:
+            with open(json_file, encoding="utf-8") as f:
                 data = json.load(f)
 
                 # Validate that the loaded data is a list, as expected for iteration.
                 if not isinstance(data, list):
-                    print(f"Warning: Skipping file '{json_file}'. Expected the top level to be a list of items, but found {type(data).__name__}.", file=sys.stderr)
+                    print(
+                        f"Warning: Skipping file '{json_file}'. Expected the top level to be a list of items, but found {type(data).__name__}.",
+                        file=sys.stderr,
+                    )
                     continue  # Skip this file and move to the next one
 
                 # Iterate through each item (expected to be an evaluation result) in the loaded list.
@@ -94,20 +99,31 @@ if __name__ == "__main__":
 
         # Handle specific errors that might occur during file operations or JSON parsing.
         except FileNotFoundError:
-            print(f"Error: File not found while attempting to process '{json_file}'.", file=sys.stderr)
+            print(
+                f"Error: File not found while attempting to process '{json_file}'.",
+                file=sys.stderr,
+            )
         except json.JSONDecodeError:
-            print(f"Error: Could not decode JSON from file '{json_file}'. Please ensure the file is valid JSON.", file=sys.stderr)
+            print(
+                f"Error: Could not decode JSON from file '{json_file}'. Please ensure the file is valid JSON.",
+                file=sys.stderr,
+            )
         except Exception as e:
             # Catch any other unexpected errors during the processing of a file.
-            print(f"An unexpected error occurred while processing '{json_file}': {e}", file=sys.stderr)
+            print(
+                f"An unexpected error occurred while processing '{json_file}': {e}",
+                file=sys.stderr,
+            )
 
     # --- Results Calculation & Output ---
     # Calculate the mean accuracy. Use a float division. If no samples were processed, accuracy is 0.0.
     accuracy = float(total_correct) / total_samples if total_samples > 0 else 0.0
 
     # Print the final aggregated results collected from all processed files.
-    print("\n--- Aggregated Results ---")  # Add a header for clarity of the final output
+    print(
+        "\n--- Aggregated Results ---"
+    )  # Add a header for clarity of the final output
     print(f"Total samples processed across all files: {total_samples}")
     print(f"Total samples counted as correct: {total_correct}")
     # Print the mean accuracy formatted to 4 decimal places and as a percentage to 2 decimal places.
-    print(f"Mean accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+    print(f"Mean accuracy: {accuracy:.4f} ({accuracy * 100:.2f}%)")

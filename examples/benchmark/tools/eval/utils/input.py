@@ -17,10 +17,9 @@ import concurrent.futures
 import logging as log
 import os
 from functools import partial
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import attrs
-
 from qwen_vl_utils import process_vision_info
 
 from tools.eval.utils.output import OutputStructure
@@ -46,15 +45,15 @@ class InputStructure:
     datasource: str
     video_id: str
     question: str
-    index2ans: Dict[str, str]
+    index2ans: dict[str, str]
     question_idx: int
     correct_answer: str
-    video_cache_path: Optional[str] = None
-    prompt: Optional[Union[str, List[Dict[str, Any]]]] = None
+    video_cache_path: str | None = None
+    prompt: str | list[dict[str, Any]] | None = None
 
     @classmethod
     def from_dict(
-        cls, datasource: str, video_id: str, data: Dict[str, Any], idx: int
+        cls, datasource: str, video_id: str, data: dict[str, Any], idx: int
     ) -> "InputStructure":
         """
         Create an InputStructure instance from a dictionary containing question data.
@@ -80,7 +79,7 @@ class InputStructure:
         )
 
 
-def load_datasource_list(datasource_file: str) -> List[str]:
+def load_datasource_list(datasource_file: str) -> list[str]:
     """
     Loads a list of datasource names from a text file.
 
@@ -94,9 +93,9 @@ def load_datasource_list(datasource_file: str) -> List[str]:
         A list of datasource names. Returns an empty list if the file is not found
         or an error occurs during reading.
     """
-    datasource_list: List[str] = []
+    datasource_list: list[str] = []
     try:
-        with open(datasource_file, "r") as f:
+        with open(datasource_file) as f:
             # Read lines, remove whitespace, and filter out empty lines
             datasource_list = [line.strip() for line in f if line.strip()]
     except FileNotFoundError:
@@ -145,7 +144,7 @@ def get_video_path(datasource: str, video_id: str, data_dir: str) -> str:
 
 def get_prompt(
     input_question: InputStructure, answer_type: str
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     Generates the chat prompt structure for the model based on the question and answer type.
 
@@ -174,7 +173,7 @@ def get_prompt(
         prompt_text += "\nPlease answer the question in the following format: <think> your reasoning </think> <answer> your single letter answer </answer>."
 
     # Structure the prompt as a chat history
-    prompt: List[Dict[str, Any]] = [
+    prompt: list[dict[str, Any]] = [
         {
             "role": "system",
             "content": system_prompt,
@@ -229,11 +228,11 @@ def get_video_path_and_prompt(
 
 
 def load_videos_and_prompts_parallel(
-    input_tasks: List[InputStructure],
+    input_tasks: list[InputStructure],
     data_dir: str,
     answer_type: str,
     num_processes: int,
-) -> List[InputStructure]:
+) -> list[InputStructure]:
     """
     Loads video paths and generates prompts for a list of input tasks in parallel.
 
@@ -253,7 +252,7 @@ def load_videos_and_prompts_parallel(
         `prompt` fields populated. The order of tasks in the output list
         corresponds to the order in the input list.
     """
-    updated_input_tasks: List[InputStructure] = []
+    updated_input_tasks: list[InputStructure] = []
     num_workers = min(num_processes, len(input_tasks))
 
     if num_workers > 0 and len(input_tasks) > 0:
@@ -271,7 +270,7 @@ def load_videos_and_prompts_parallel(
 
         # Use ProcessPoolExecutor for CPU-bound tasks (file system operations)
         # Store results with their original index to sort later
-        results_with_index: List[Tuple[int, InputStructure]] = []
+        results_with_index: list[tuple[int, InputStructure]] = []
         with concurrent.futures.ProcessPoolExecutor(
             max_workers=num_workers
         ) as executor:
@@ -305,7 +304,9 @@ def load_videos_and_prompts_parallel(
         for task in input_tasks:
             try:
                 updated_task = get_video_path_and_prompt(
-                    task, data_dir, answer_type,
+                    task,
+                    data_dir,
+                    answer_type,
                 )
                 updated_input_tasks.append(updated_task)
             except Exception as e:
@@ -314,8 +315,7 @@ def load_videos_and_prompts_parallel(
                     f"Skipping task: video_id={task.video_id}, question_idx={task.question_idx}"
                 )
                 # Optionally, you might append the original task or None here depending on desired behavior on error
-                pass # Currently, errors in sequential mode cause the task to be skipped from the output list
-
+                pass  # Currently, errors in sequential mode cause the task to be skipped from the output list
 
     return updated_input_tasks
 
@@ -342,10 +342,10 @@ def check_file_exists(output_result: OutputStructure) -> bool:
 
 
 def skip_saved_results(
-    input_tasks: List[InputStructure],
-    output_results: List[OutputStructure],
+    input_tasks: list[InputStructure],
+    output_results: list[OutputStructure],
     num_processes: int = 40,
-) -> Tuple[List[InputStructure], List[OutputStructure]]:
+) -> tuple[list[InputStructure], list[OutputStructure]]:
     """
     Filters out tasks for which a corresponding output file already exists.
 
@@ -373,7 +373,7 @@ def skip_saved_results(
             f"Mismatch between number of input tasks ({len(input_tasks)}) "
             f"and output results ({len(output_results)}). Skipping all tasks."
         )
-        return [], [] # Return empty lists if there's a mismatch
+        return [], []  # Return empty lists if there's a mismatch
 
     log.info(
         f"Checking for existing results for {len(input_tasks)} tasks "
@@ -381,7 +381,7 @@ def skip_saved_results(
     )
 
     # Use ProcessPoolExecutor for parallel file existence checks (I/O bound)
-    exists_by_idx: Dict[int, bool] = {}
+    exists_by_idx: dict[int, bool] = {}
     with concurrent.futures.ProcessPoolExecutor(max_workers=num_processes) as executor:
         # Submit checks and map futures to their original index
         future_to_idx = {
@@ -404,8 +404,8 @@ def skip_saved_results(
                 exists_by_idx[idx] = False
 
     # Filter tasks based on the existence check results, maintaining order
-    new_input_tasks: List[InputStructure] = []
-    new_output_results: List[OutputStructure] = []
+    new_input_tasks: list[InputStructure] = []
+    new_output_results: list[OutputStructure] = []
     skipped_count = 0
     for i in range(len(input_tasks)):
         if not exists_by_idx.get(i, False):  # Default to False if index is missing
@@ -422,7 +422,7 @@ def skip_saved_results(
 
 def prepare_single_model_input(
     input_task: InputStructure, processor: Any, fps: int
-) -> Optional[Any]:
+) -> Any | None:
     """
     Worker function to prepare the input data for a single model inference task.
 
@@ -465,12 +465,15 @@ def prepare_single_model_input(
             and input_task.prompt[1]["role"] == "user"
             and isinstance(input_task.prompt[1]["content"], list)
         ):
-             # If content is already a list, prepend video info
-             input_task.prompt[1]["content"].insert(0, {"type": "video", "video": input_task.video_cache_path, "fps": fps})
+            # If content is already a list, prepend video info
+            input_task.prompt[1]["content"].insert(
+                0, {"type": "video", "video": input_task.video_cache_path, "fps": fps}
+            )
         else:
-             log.error(f"Could not add video info to prompt for task: video_id={input_task.video_id}, question_idx={input_task.question_idx}. Unexpected prompt structure.")
-             return None
-
+            log.error(
+                f"Could not add video info to prompt for task: video_id={input_task.video_id}, question_idx={input_task.question_idx}. Unexpected prompt structure."
+            )
+            return None
 
         # Apply the model's chat template to get the final text prompt
         # Use add_generation_prompt=True to include the prompt part that signals
@@ -487,12 +490,16 @@ def prepare_single_model_input(
         # Format for a potential custom model structure
         # Assuming video_inputs contains a list and we need the first item
         if not video_inputs:
-                log.error(f"No video inputs found for task: video_id={input_task.video_id}, question_idx={input_task.question_idx}. Cannot prepare model input.")
-                return None
+            log.error(
+                f"No video inputs found for task: video_id={input_task.video_id}, question_idx={input_task.question_idx}. Cannot prepare model input."
+            )
+            return None
 
         model_input = {
             "prompt": processed_text_prompt,
-            "multi_modal_data": {"video": [video_inputs[0]]}, # Assuming first video input is relevant
+            "multi_modal_data": {
+                "video": [video_inputs[0]]
+            },  # Assuming first video input is relevant
         }
 
         log.debug(
@@ -505,15 +512,15 @@ def prepare_single_model_input(
             f"Error preparing model input for task: video_id={input_task.video_id}, "
             f"question_idx={input_task.question_idx}: {e}"
         )
-        return None # Return None to indicate failure
+        return None  # Return None to indicate failure
 
 
 def prepare_model_inputs_parallel(
-    input_tasks: List[InputStructure],
+    input_tasks: list[InputStructure],
     processor: Any,
     num_processes: int = 40,
     fps: int = 4,
-) -> List[Any]:
+) -> list[Any]:
     """
     Prepares model inputs for a list of input tasks in parallel using threads.
 
@@ -552,7 +559,7 @@ def prepare_model_inputs_parallel(
         fps=fps,
     )
 
-    processed_inputs_with_index: List[Tuple[int, Any]] = []
+    processed_inputs_with_index: list[tuple[int, Any]] = []
 
     # Use ThreadPoolExecutor for potentially I/O-bound model input preparation
     with concurrent.futures.ThreadPoolExecutor(max_workers=num_workers) as executor:
@@ -566,7 +573,7 @@ def prepare_model_inputs_parallel(
             idx = future_to_idx[future]
             try:
                 model_input = future.result()
-                if model_input is not None: # Only append successful results
+                if model_input is not None:  # Only append successful results
                     processed_inputs_with_index.append((idx, model_input))
             except Exception as e:
                 # This catch might be redundant if prepare_single_model_input handles errors,
@@ -574,8 +581,7 @@ def prepare_model_inputs_parallel(
                 log.error(
                     f"Unexpected error preparing model input for task {idx}: {e}. Skipping task."
                 )
-                pass # Skip this task if an unexpected error occurs
-
+                pass  # Skip this task if an unexpected error occurs
 
     # Sort successful results by original index and extract the inputs
     processed_inputs_with_index.sort(key=lambda x: x[0])
