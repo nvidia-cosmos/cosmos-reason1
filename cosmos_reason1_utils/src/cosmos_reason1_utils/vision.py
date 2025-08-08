@@ -3,6 +3,7 @@ from typing import TypedDict
 
 import matplotlib.font_manager as fm
 import numpy as np
+import pydantic
 import torch
 import torchvision
 import torchvision.transforms.functional
@@ -11,46 +12,49 @@ from PIL import Image, ImageDraw, ImageFont
 """Vision processing utilities."""
 
 
-class ImageConfig(TypedDict, total=False):
-    """Config for image processing.
+class ImageConfig(pydantic.BaseModel):
+    """Config for image processing."""
 
-    Attributes:
-        min_pixels: Min pixels of the image
-        max_pixels: Max pixels of the image
-        resized_height: Max height of the image
-        resized_width: Max width of the image
-    """
+    min_pixels: int | None = pydantic.Field(
+        description="Min pixels of the image"
+    )
+    max_pixels: int | None = pydantic.Field(
+        description="Max pixels of the image"
+    )
 
-    min_pixels: int | None
-    max_pixels: int | None
+    resized_height: int | None = pydantic.Field(
+        description="Max height of the image"
+    )
+    resized_width: int | None = pydantic.Field(
+        description="Max width of the image"
+    )
 
-    resized_height: int | None
-    resized_width: int | None
 
+class VisionConfig(ImageConfig):
+    """Config for image/video processing."""
 
-class VisionConfig(ImageConfig, total=False):
-    """Config for image/video processing.
+    video_start: float | None = pydantic.Field(
+        description="Start time of the video (seconds)"
+    )
+    video_end: float | None = pydantic.Field(
+        description="End time of the video (seconds)"
+    )
 
-    Attributes:
-        video_start: Start time of the video (seconds)
-        video_end: End time of the video (seconds)
-        nframes: Number of frames of the video
-        fps: FPS of the video
-        min_frames: Min frames of the video
-        max_frames: Max frames of the video
-        total_pixels: Max pixels of the video
-    """
+    nframes: int | None = pydantic.Field(
+        description="Number of frames of the video"
+    )
 
-    video_start: float | None
-    video_end: float | None
+    fps: float | None = pydantic.Field(description="FPS of the video")
+    min_frames: int | None = pydantic.Field(
+        description="Min frames of the video"
+    )
+    max_frames: int | None = pydantic.Field(
+        description="Max frames of the video"
+    )
 
-    nframes: int | None
-
-    fps: float | None
-    min_frames: int | None
-    max_frames: int | None
-
-    total_pixels: int | None
+    total_pixels: int | None = pydantic.Field(
+        description="Max pixels of the video"
+    )
 
 
 def _tensor_to_pil_images(video_tensor: torch.Tensor) -> list[Image.Image]:

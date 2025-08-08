@@ -141,9 +141,8 @@ def main():
     reasoning_config = PromptConfig.model_validate(
         yaml.safe_load(open(f"{ROOT}/prompts/reasoning.yaml", "rb"))
     )
-    vision_kwargs = pydantic.TypeAdapter(VisionConfig).validate_python(
-        yaml.safe_load(open(args.vision_config, "rb"))
-    )
+    vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
+    VisionConfig.model_validate(vision_kwargs)
     sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
     sampling_params = vllm.SamplingParams(**sampling_kwargs)
     if args.verbose:
