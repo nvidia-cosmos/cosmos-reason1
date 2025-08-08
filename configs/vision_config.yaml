@@ -22,9 +22,6 @@
 
 # Video frame rate
 fps: 4
-# Maximum number of pixels per image
-# 6422528 = 8192 * 28**2 = num_tokens * (2*spatial_patch_size)^2
-max_pixels: 6422528
 # Maximum number of pixels per video
 # 12845056 = 8192 * 28**2 * 2 = num_tokens * (2*spatial_patch_size)^2 * temporal_patch_size
 total_pixels: 12845056

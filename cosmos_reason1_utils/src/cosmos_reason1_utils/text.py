@@ -15,6 +15,7 @@
 
 import pydantic
 from pydantic import Field
+import re
 
 """Text processing utilities."""
 
@@ -26,3 +27,20 @@ class PromptConfig(pydantic.BaseModel):
 
     system_prompt: str = Field(default="", description="System prompt")
     user_prompt: str = Field(default="", description="User prompt")
+
+
+def extract_text(text: str, key: str) -> str | None:
+    """Extract text between <key> and </key>.
+
+    Args:
+        text: Text to extract from
+        key: Key to extract
+
+    Returns:
+        Extracted text or None if zero or multiple matches found.
+    """
+    pattern = f"<{key}>" + r"(.*?)" + f"</{key}>"
+    matches = re.findall(pattern, text)
+    if len(matches) != 1:
+        return None
+    return matches[0]

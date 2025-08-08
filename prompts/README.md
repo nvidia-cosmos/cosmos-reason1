@@ -23,9 +23,10 @@ We provide a set of task-specific prompt templates that are known to work well w
 
 ## Addons
 
-These are appended to the prompt to provide additional instructions:
+These are added to the system prompt to provide additional instructions:
 
-* [Reasoning](reasoning.yaml)
+* [Reasoning](addons/reasoning.txt)
+* [English](addons/english.txt)
 
 ## Questions
 

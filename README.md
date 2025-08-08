@@ -57,19 +57,19 @@ Cosmos-Reason1 is included in [Hugging Face Transformers](https://huggingface.co
 
 Examples:
 
-* Caption:
+* Caption the video:
 
   ```shell
   ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
   ```
 
-* Question with reasoning:
+* Ask a question about the video with reasoning:
 
   ```shell
   ./scripts/inference.py --prompt prompts/question.yaml --question 'What are the potential safety hazards?' --reasoning --videos assets/sample.mp4 -v
   ```
 
-* Temporal caption:
+* Temporally caption the video and save the input frames to `outputs/inference` for debugging:
 
   ```shell
   ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v -o outputs/inference

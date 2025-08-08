@@ -85,7 +85,7 @@ def main():
     parser.add_argument(
         "--timestamp",
         action="store_true",
-        help="Overlay timestamps on videos",
+        help="Overlay timestamp on video frames",
     )
     parser.add_argument(
         "--prompt",
@@ -142,10 +142,9 @@ def main():
 
     images: list[str] = args.images or []
     videos: list[str] = args.videos or []
+
+    # Load configs
     prompt_config = PromptConfig.model_validate(yaml.safe_load(open(args.prompt, "rb")))
-    reasoning_config = PromptConfig.model_validate(
-        yaml.safe_load(open(f"{ROOT}/prompts/reasoning.yaml", "rb"))
-    )
     vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
     VisionConfig.model_validate(vision_kwargs)
     sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
@@ -154,16 +153,23 @@ def main():
         pprint_dict(vision_kwargs, "VisionConfig")
         pprint_dict(sampling_kwargs, "SamplingParams")
 
-    # Create messages
-    system_prompt = prompt_config.system_prompt
+    # Create conversation
+    system_prompts = [
+        open(f"{ROOT}/prompts/addons/english.txt", "r").read()
+    ]
+    if prompt_config.system_prompt:
+        system_prompts.append(prompt_config.system_prompt)
     if args.reasoning:
-        system_prompt = f"{system_prompt}\n{reasoning_config.system_prompt}"
+        system_prompts.append(
+            open(f"{ROOT}/prompts/addons/reasoning.txt", "r").read()
+        )
+    system_prompt = "\n\n".join(system_prompts)
     if args.question:
         user_prompt = args.question
     else:
         user_prompt = prompt_config.user_prompt
     if not user_prompt:
-        raise ValueError("No user prompt provided")
+        raise ValueError("No question provided.")
     user_content = []
     for image in images:
         user_content.append({"type": "image", "image": image} | vision_kwargs)
@@ -178,10 +184,13 @@ def main():
     if args.verbose:
         pprint(conversation, expand_all=True)
     print(SEPARATOR)
-    print("System:", textwrap.indent(system_prompt, "  "), sep="\n")
-    print("User:", textwrap.indent(user_prompt, "  "), sep="\n")
+    print("System:")
+    print(textwrap.indent(system_prompt.rstrip(), "  "))
+    print("User:")
+    print(textwrap.indent(user_prompt.rstrip(), "  "))
     print(SEPARATOR)
 
+    # Create model
     llm = vllm.LLM(
         model=args.model,
         revision=args.revision,
@@ -189,7 +198,7 @@ def main():
         enforce_eager=True,
     )
 
-    # Process messages
+    # Process inputs
     processor: transformers.Qwen2_5_VLProcessor = (
         transformers.AutoProcessor.from_pretrained(args.model)
     )
@@ -205,10 +214,12 @@ def main():
                 video, fps=video_kwargs["fps"][i]
             )
     if args.output:
-        for i, image in enumerate(image_inputs):
-            save_tensor(image, f"{args.output}/image_{i}.png")
-        for i, video in enumerate(video_inputs):
-            save_tensor(video, f"{args.output}/video_{i}")
+        if image_inputs is not None:
+            for i, image in enumerate(image_inputs):
+                save_tensor(image, f"{args.output}/image_{i}")
+        if video_inputs is not None:
+            for i, video in enumerate(video_inputs):
+                save_tensor(video, f"{args.output}/video_{i}")
 
     # Run inference
     mm_data = {}
@@ -225,7 +236,8 @@ def main():
     print(SEPARATOR)
     for output in outputs[0].outputs:
         output_text = output.text
-        print("Assistant:", textwrap.indent(output_text, "  "), sep="\n")
+        print("Assistant:")
+        print(textwrap.indent(output_text.rstrip(), "  "))
     print(SEPARATOR)
 
 
