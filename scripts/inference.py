@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#
+# https://docs.astral.sh/uv/guides/scripts/#using-a-shebang-to-create-an-executable-file
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
@@ -33,12 +33,12 @@
 # cosmos-reason1-utils = {path = "../cosmos_reason1_utils", editable = true}
 # ///
 
-"""Run inference on a model with a given prompt.
+"""Full example of inference with Cosmos-Reason1.
 
 Example:
 
 ```shell
-./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4
+./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
 ```
 """
 # ruff: noqa: E402
