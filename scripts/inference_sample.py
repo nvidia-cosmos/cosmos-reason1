@@ -63,8 +63,8 @@ def main():
                     "type": "video",
                     "video": f"{ROOT}/assets/sample.mp4",
                     "fps": 4,
-                    # 12845056 = 8192 * 28**2 * 2 = num_tokens * (2*spatial_patch_size)^2 * temporal_patch_size
-                    "total_pixels": 12845056,
+                    # 6422528 = 8192 * 28**2 = vision_tokens * (2*spatial_patch_size)^2
+                    "total_pixels": 6422528,
                 },
                 {"type": "text", "text": "Describe this video."},
             ],
