@@ -29,18 +29,15 @@ class PromptConfig(pydantic.BaseModel):
     user_prompt: str = Field(default="", description="User prompt")
 
 
-def extract_text(text: str, key: str) -> str | None:
-    """Extract text between <key> and </key>.
+def extract_text(text: str, key: str) -> list[str]:
+    """Extract text between <key> and </key> tags.
 
     Args:
         text: Text to extract from
         key: Key to extract
 
     Returns:
-        Extracted text or None if zero or multiple matches found.
+        List of extracted texts.
     """
     pattern = f"<{key}>" + r"(.*?)" + f"</{key}>"
-    matches = re.findall(pattern, text)
-    if len(matches) != 1:
-        return None
-    return matches[0]
+    return re.findall(pattern, text)

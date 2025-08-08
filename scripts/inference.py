@@ -67,7 +67,11 @@ from rich import print
 from rich.pretty import pprint
 
 from cosmos_reason1_utils.text import PromptConfig
-from cosmos_reason1_utils.vision import VisionConfig, overlay_text_on_tensor, save_tensor
+from cosmos_reason1_utils.vision import (
+    VisionConfig,
+    overlay_text_on_tensor,
+    save_tensor,
+)
 
 ROOT = pathlib.Path(__file__).parents[1].resolve()
 SEPARATOR = "-" * 20
@@ -76,6 +80,32 @@ SEPARATOR = "-" * 20
 def pprint_dict(d: dict, name: str):
     """Pretty print a dictionary."""
     pprint(collections.namedtuple(name, d.keys())(**d), expand_all=True)
+
+
+def create_conversation(
+    *,
+    system_prompt: str = "",
+    user_prompt: str = "",
+    images: list[str] | None = None,
+    videos: list[str] | None = None,
+    vision_config: VisionConfig,
+) -> list[dict]:
+    vision_kwargs = vision_config.model_dump(exclude_unset=True)
+
+    user_content = []
+    if images is not None:
+        for image in images:
+            user_content.append({"type": "image", "image": image} | vision_kwargs)
+    if videos is not None:
+        for video in videos:
+            user_content.append({"type": "video", "video": video} | vision_kwargs)
+    if user_prompt:
+        user_content.append({"type": "text", "text": user_prompt})
+    conversation = []
+    if system_prompt:
+        conversation.append({"role": "system", "content": system_prompt})
+    conversation.append({"role": "user", "content": user_content})
+    return conversation
 
 
 def main():
@@ -146,7 +176,7 @@ def main():
     # Load configs
     prompt_config = PromptConfig.model_validate(yaml.safe_load(open(args.prompt, "rb")))
     vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
-    VisionConfig.model_validate(vision_kwargs)
+    vision_config = VisionConfig.model_validate(vision_kwargs)
     sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
     sampling_params = vllm.SamplingParams(**sampling_kwargs)
     if args.verbose:
@@ -154,15 +184,11 @@ def main():
         pprint_dict(sampling_kwargs, "SamplingParams")
 
     # Create conversation
-    system_prompts = [
-        open(f"{ROOT}/prompts/addons/english.txt", "r").read()
-    ]
+    system_prompts = [open(f"{ROOT}/prompts/addons/english.txt", "r").read()]
     if prompt_config.system_prompt:
         system_prompts.append(prompt_config.system_prompt)
-    if args.reasoning:
-        system_prompts.append(
-            open(f"{ROOT}/prompts/addons/reasoning.txt", "r").read()
-        )
+    if args.reasoning and "<think>" not in prompt_config.system_prompt:
+        system_prompts.append(open(f"{ROOT}/prompts/addons/reasoning.txt", "r").read())
     system_prompt = "\n\n".join(system_prompts)
     if args.question:
         user_prompt = args.question
@@ -170,17 +196,13 @@ def main():
         user_prompt = prompt_config.user_prompt
     if not user_prompt:
         raise ValueError("No question provided.")
-    user_content = []
-    for image in images:
-        user_content.append({"type": "image", "image": image} | vision_kwargs)
-    for video in videos:
-        user_content.append({"type": "video", "video": video} | vision_kwargs)
-    if user_prompt:
-        user_content.append({"type": "text", "text": user_prompt})
-    conversation = []
-    if system_prompt:
-        conversation.append({"role": "system", "content": system_prompt})
-    conversation.append({"role": "user", "content": user_content})
+    conversation = create_conversation(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        images=images,
+        videos=videos,
+        vision_config=vision_config,
+    )
     if args.verbose:
         pprint(conversation, expand_all=True)
     print(SEPARATOR)
@@ -210,9 +232,7 @@ def main():
     )
     if args.timestamp:
         for i, video in enumerate(video_inputs):
-            video_inputs[i] = overlay_text_on_tensor(
-                video, fps=video_kwargs["fps"][i]
-            )
+            video_inputs[i] = overlay_text_on_tensor(video, fps=video_kwargs["fps"][i])
     if args.output:
         if image_inputs is not None:
             for i, image in enumerate(image_inputs):
