@@ -92,7 +92,9 @@ We provide example inference scripts:
 ## Tutorials
 
 * [Video Critic](examples/video_critic/README.md)
-* [Post-Training](examples/post_training/README.md)
+* Post-Training
+  * [Minimal example](examples/post_training_hf/README.md)
+  * [Full example](examples/post_training/README.md)
 * [Benchmark](examples/benchmark/README.md)
 
 ## Post-Training

@@ -38,7 +38,7 @@ def create_conversation(
     user_prompt: str = "",
     images: list[Any] | None = None,
     videos: list[Any] | None = None,
-    vision_kwargs: dict,
+    vision_kwargs: dict | None = None,
 ) -> list[dict]:
     """Create chat conversation.
 
@@ -52,6 +52,9 @@ def create_conversation(
     Returns:
         conversation: Chat conversation.
     """
+    if vision_kwargs is None:
+        vision_kwargs = {}
+
     user_content = []
     if images is not None:
         for image in images:

@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [project]
-name = "cosmos-reason1-sft-dataset"
+name = "cosmos-reason1-post-training"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10, <3.13"
