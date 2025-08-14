@@ -93,8 +93,8 @@ We provide example inference scripts:
 
 * [Video Critic](examples/video_critic/README.md)
 * Post-Training
-  * [Minimal example](examples/post_training_hf/README.md)
   * [Full example](examples/post_training/README.md)
+  * [Minimal Hugging Face example](examples/post_training_hf/README.md)
 * [Benchmark](examples/benchmark/README.md)
 
 ## Post-Training

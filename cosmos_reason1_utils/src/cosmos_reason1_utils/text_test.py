@@ -13,7 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cosmos_reason1_utils.text import create_conversation, extract_structured_text
+from cosmos_reason1_utils.text import (
+    create_conversation,
+    extract_structured_text,
+    set_vision_kwargs,
+)
 
 
 def test_create_conversation():
@@ -27,8 +31,8 @@ def test_create_conversation():
         user_prompt=user_prompt,
         images=images,
         videos=videos,
-        vision_kwargs=vision_kwargs,
     )
+    set_vision_kwargs(conversation, vision_kwargs)
     assert conversation == [
         {"role": "system", "content": system_prompt},
         {

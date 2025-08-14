@@ -568,7 +568,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cosmos-reason1-sft-dataset"
+name = "cosmos-reason1-post-training"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -1,6 +1,6 @@
-# Cosmos-Reason1 Post-Training Minimal Example
+# Cosmos-Reason1 Post-Training Hugging Face Example
 
-This package provides a minimal Cosmos-Reason1 post-training example. For a full post-training example, see [Cosmos-Reason1 Post-Training Full](../post_training/README.md).
+This package provides a minimal Cosmos-Reason1 post-training example using the [Hugging Face datasets](https://huggingface.co/docs/datasets/en/index) format. You should first read the full post-training example, see [Cosmos-Reason1 Post-Training Full](../post_training/README.md).
 
 ## Setup
 
@@ -23,7 +23,7 @@ source .venv/bin/activate
 Download the [Nexar collision prediction](https://huggingface.co/datasets/nexar-ai/nexar_collision_prediction) dataset:
 
 ```shell
-./scripts/download_nexar_collision_prediction.py data/sft
+./scripts/download_nexar_collision_prediction.py data/sft --split "train[:10]"
 ```
 
 Run SFT:
@@ -33,5 +33,3 @@ cosmos-rl --config configs/sft.toml scripts/sft.py
 ```
 
 The full config is saved to `outputs/sft/config.toml`.
-
-**TODO**: Add RL

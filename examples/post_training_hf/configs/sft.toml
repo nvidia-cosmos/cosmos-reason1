@@ -20,6 +20,7 @@ path = "data/sft"
 
 [train]
 output_dir = "outputs/sft"
+compile = false
 train_batch_per_replica = 32
 
 [policy]
@@ -29,7 +30,7 @@ model_max_length = 4096
 [logging]
 logger = ['console', 'wandb']
 project_name = "cosmos_reason1"
-experiment_name = "post_training_hf_sft"
+experiment_name = "post_training_hf/sft"
 
 [train.train_policy]
 type = "sft"
