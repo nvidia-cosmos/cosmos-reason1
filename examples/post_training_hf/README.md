@@ -29,7 +29,7 @@ Download the [Nexar collision prediction](https://huggingface.co/datasets/nexar-
 Run SFT:
 
 ```shell
-cosmos-rl --config configs/sft.toml scripts/sft.py
+cosmos-rl --config configs/sft.toml scripts/custom_sft.py
 ```
 
 The full config is saved to `outputs/sft/config.toml`.

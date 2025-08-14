@@ -15,7 +15,7 @@
 
 from cosmos_reason1_utils.text import (
     create_conversation,
-    extract_structured_text,
+    extract_tagged_text,
     set_vision_kwargs,
 )
 
@@ -48,7 +48,7 @@ def test_create_conversation():
     ]
 
 
-def test_extract_structured_text():
+def test_extract_tagged_text():
     text = """Intro text
 <question>
 What is the capital of France?
@@ -59,7 +59,7 @@ Paris
 </answer>
 End text
 """
-    result, remaining = extract_structured_text(text)
+    result, remaining = extract_tagged_text(text)
     assert result == {
         "question": ["\nWhat is the capital of France?\n"],
         "answer": ["\nParis\n"],

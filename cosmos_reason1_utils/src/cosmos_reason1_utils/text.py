@@ -93,10 +93,12 @@ def set_vision_kwargs(conversation: list[dict], vision_kwargs: dict):
                 msg |= vision_kwargs
 
 
-def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]:
-    """Extract structured text between <key> and </key> tags.
+def extract_tagged_text(text: str) -> tuple[dict[str, list[str]], list[str]]:
+    """Extract text between <key> and </key> tags.
 
     Ignores unclosed tags and tries to extract as much text as possible.
+
+    For more complex output formats (e.g. json), use [structured outputs](https://docs.vllm.ai/en/stable/features/structured_outputs.html).
 
     Example:
 
@@ -111,7 +113,7 @@ def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]
     </answer>
     End text
     '''
-    result, remaining = extract_structured_text(text)
+    result, remaining = extract_tagged_text(text)
     assert result == {
         "question": ["\nWhat is the capital of France?\n"],
         "answer": ["\nParis\n"]
