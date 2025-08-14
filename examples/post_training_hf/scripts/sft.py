@@ -17,6 +17,8 @@
 
 import argparse
 import json
+import os
+from pathlib import Path
 
 import cosmos_rl.launcher.worker_entry
 import cosmos_rl.policy.config
@@ -24,6 +26,7 @@ import datasets
 import pydantic
 import toml
 import torch.utils.data
+from cosmos_rl.utils.logging import logger
 from cosmos_reason1_utils.text import set_vision_kwargs
 from cosmos_reason1_utils.vision import VisionConfig
 
@@ -69,27 +72,43 @@ class CustomDataset(torch.utils.data.Dataset):
         set_vision_kwargs(conversations, self.vision_kwargs)
         return conversations
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", type=str, required=True, help="Path to config file.")
+    parser.add_argument(
+        "--config", type=str, required=True, help="Path to config file."
+    )
     args = parser.parse_known_args()[0]
 
+    # Load config
     with open(args.config, "r") as f:
-        config = cosmos_rl.policy.config.Config.from_dict(toml.load(f))
+        config_kwargs = toml.load(f)
+    config = cosmos_rl.policy.config.Config.from_dict(config_kwargs)
+    custom_config = CustomConfig.model_validate(config_kwargs["custom"])
 
-    def get_dataset(config: cosmos_rl.policy.config.Config) -> torch.utils.data.Dataset:
-        custom_config = CustomConfig.model_validate(config.custom)
-        dataset = datasets.load_from_disk(
-            custom_config.dataset.path,
-        )
-        return CustomDataset(dataset, config=config, custom_config=custom_config)
+    # Log
+    role = os.environ.get("COSMOS_ROLE")
+    is_controller = role == "Controller"
+    if is_controller:
+        output_dir = Path(config.train.output_dir).resolve().parent
+        output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Save config
+        config_kwargs = config.model_dump()
+        config_kwargs["custom"] = custom_config.model_dump()
+        config_path = output_dir / "config.toml"
+        config_path.write_text(toml.dumps(config_kwargs))
+        logger.info(f"Saved config to {config_path}")
+
+    # Load dataset
+    dataset = CustomDataset(
+        datasets.load_from_disk(custom_config.dataset.path),
+        config=config,
+        custom_config=custom_config,
+    )
     # Check dataset
-    dataset = get_dataset(config)
     dataset[0]
 
     # Launch worker
     cosmos_rl.launcher.worker_entry.main(
-        dataset=get_dataset,
+        dataset=dataset,
     )

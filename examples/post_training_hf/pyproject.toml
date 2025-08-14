@@ -5,7 +5,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "cosmos-reason1-utils",
-    "cosmos-rl==0.2.6.post1.dev2+g0bb46d1", # HACK
+    "cosmos-rl",
     "datasets",
     "pydantic",
     "rich",
