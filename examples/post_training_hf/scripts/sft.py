@@ -24,7 +24,8 @@ import datasets
 import pydantic
 import toml
 import torch.utils.data
-from cosmos_reason1_utils.vision import VisionConfig, set_vision_kwargs
+from cosmos_reason1_utils.text import set_vision_kwargs
+from cosmos_reason1_utils.vision import VisionConfig
 
 
 class CustomDatasetConfig(pydantic.BaseModel):

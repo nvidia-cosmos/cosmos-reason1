@@ -50,7 +50,7 @@ model_gradient_checkpointing = true
 [logging]
 logger = ['console', 'wandb']
 project_name = "cosmos_reason1"
-experiment_name = "cosmos-reason1-sft"
+experiment_name = "post_training_hf_sft"
 
 [train.train_policy]
 type = "sft"
