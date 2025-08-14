@@ -24,7 +24,7 @@ import datasets
 import pydantic
 import toml
 import torch.utils.data
-from cosmos_reason1_utils.vision import VisionConfig
+from cosmos_reason1_utils.vision import VisionConfig, set_vision_kwargs
 
 
 class CustomDatasetConfig(pydantic.BaseModel):
@@ -65,14 +65,7 @@ class CustomDataset(torch.utils.data.Dataset):
         conversations = json.loads(
             sample[self.config.train.train_policy.conversation_column_name]
         )
-        # Set vision kwargs
-        for conv in conversations:
-            content = conv["content"]
-            if isinstance(content, str):
-                content = [content]
-            for msg in content:
-                if isinstance(msg, dict) and msg["type"] in ["image", "video"]:
-                    msg |= self.vision_kwargs
+        set_vision_kwargs(conversations, self.vision_kwargs)
         return conversations
 
 

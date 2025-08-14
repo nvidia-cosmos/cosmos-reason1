@@ -36,6 +36,7 @@ def create_conversation(
     *,
     system_prompt: str = "",
     user_prompt: str = "",
+    response: str = "",
     images: list[Any] | None = None,
     videos: list[Any] | None = None,
     vision_kwargs: dict | None = None,
@@ -68,7 +69,25 @@ def create_conversation(
     if system_prompt:
         conversation.append({"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": user_content})
+    if response:
+        conversation.append({"role": "assistant", "content": response})
     return conversation
+
+
+def set_vision_kwargs(conversation: list[dict], vision_kwargs: dict):
+    """Set vision kwargs for all media messages in conversation.
+    
+    Args:
+        conversation: Conversation (see `create_conversation`).
+        vision_kwargs: Keyword arguments for vision processor (see `cosmos_reason1_utils.vision.VisionConfig`).
+    """
+    for msg in conversation:
+        content = msg["content"]
+        if isinstance(content, str):
+            content = [content]
+        for content in content:
+            if isinstance(content, dict) and content.get("type", None) in ["image", "video"]:
+                content |= vision_kwargs
 
 
 def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]:

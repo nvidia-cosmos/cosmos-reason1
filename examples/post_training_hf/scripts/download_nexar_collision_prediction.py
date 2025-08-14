@@ -65,6 +65,7 @@ def main():
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             videos=[video_path],
+            response=str(sample["weather"]),
         )
         return {
             # Store conversation as string
