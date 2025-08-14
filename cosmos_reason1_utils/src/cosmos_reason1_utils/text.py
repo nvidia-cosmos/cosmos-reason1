@@ -54,16 +54,13 @@ def create_conversation(
     Returns:
         conversation: Chat conversation.
     """
-    if vision_kwargs is None:
-        vision_kwargs = {}
-
     user_content = []
     if images is not None:
         for image in images:
-            user_content.append({"type": "image", "image": image} | vision_kwargs)
+            user_content.append({"type": "image", "image": image})
     if videos is not None:
         for video in videos:
-            user_content.append({"type": "video", "video": video} | vision_kwargs)
+            user_content.append({"type": "video", "video": video})
     if user_prompt:
         user_content.append({"type": "text", "text": user_prompt})
     conversation = []
@@ -72,6 +69,8 @@ def create_conversation(
     conversation.append({"role": "user", "content": user_content})
     if response:
         conversation.append({"role": "assistant", "content": response})
+    if vision_kwargs:
+        set_vision_kwargs(conversation, vision_kwargs)
     return conversation
 
 
