@@ -1,6 +1,6 @@
 # Cosmos-Reason1 Post-Training Example
 
-This guide provides instructions for post-training Cosmos-Reason1 on the [SFT](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-SFT-Dataset)/[RL](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-RL-Dataset) datasets using [cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl) .
+This guide provides instructions for post-training Cosmos-Reason1 on the [SFT](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-SFT-Dataset)/[RL](https://huggingface.co/datasets/nvidia/Cosmos-Reason1-RL-Dataset) datasets using [cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl).
 
 - [cosmos-rl documentation](https://nvidia-cosmos.github.io/cosmos-rl/).
 

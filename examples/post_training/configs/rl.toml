@@ -53,7 +53,7 @@ model_gradient_checkpointing = true
 [logging]
 logger = ['console', 'wandb']
 project_name = "cosmos_reason1"
-experiment_name = "cosmos-reason1-rl"
+experiment_name = "post_training/rl"
 
 [train.train_policy]
 type = "grpo"

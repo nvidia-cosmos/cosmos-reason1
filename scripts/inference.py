@@ -62,7 +62,7 @@ from rich.pretty import pprint
 from cosmos_reason1_utils.text import (
     PromptConfig,
     create_conversation,
-    extract_structured_text,
+    extract_tagged_text,
 )
 from cosmos_reason1_utils.vision import (
     VisionConfig,
@@ -160,7 +160,7 @@ def main():
     if prompt_config.system_prompt:
         system_prompts.append(prompt_config.system_prompt)
     if args.reasoning and "<think>" not in prompt_config.system_prompt:
-        if extract_structured_text(prompt_config.system_prompt)[0]:
+        if extract_tagged_text(prompt_config.system_prompt)[0]:
             raise ValueError(
                 "Prompt already contains output format. Cannot add reasoning."
             )
@@ -237,8 +237,8 @@ def main():
         print(textwrap.indent(output_text.rstrip(), "  "))
     print(SEPARATOR)
 
-    result, _ = extract_structured_text(output_text)
-    if args.verbose:
+    result, _ = extract_tagged_text(output_text)
+    if args.verbose and result:
         pprint_dict(result, "Result")
 
 

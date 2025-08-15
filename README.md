@@ -9,6 +9,7 @@ Cosmos Reason excels at navigating the long tail of diverse scenarios of the phy
 
 ## News
 
+* 2025-08-08: We added the [`cosmos-reason1-utils`](cosmos_reason1_utils/README.md) inference utilities package. Adds spatial-temporal reasoning inference. See [Inference](#inference) for example usage.
 * 2025-08-1: We added support for spatial-temporal reasoning for city and industrial operations. See latest checkpoint [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B).
 * 2025-06-11: We enhance the model’s capability on judging the physical plausibility of a video. See [this tutorial](examples/video_critic/README.md) for details.
 * 2025-05-17: We release model weights and training data under [Hugging Face](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7).
@@ -93,12 +94,22 @@ We provide example inference scripts:
 ## Tutorials
 
 * [Video Critic](examples/video_critic/README.md)
-* [Post-Training](examples/post_training/README.md)
+* Post-Training
+  * [Full example](examples/post_training/README.md)
+  * [Minimal Hugging Face example](examples/post_training_hf/README.md)
 * [Benchmark](examples/benchmark/README.md)
 
 ## Post-Training
 
 The [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl) repository is an async post-training framework specialized for Supervised Fine-Tuning (SFT) and Reinforcement Learning with Human Feedback (RLHF). It prioritizes performance, scalability, and fault tolerance.
+
+To support a custom dataset format, use the [minimal Hugging Face example](examples/post_training_hf/README.md) as a template.
+
+## Additional Resources
+
+The Cosmos-Reason1 model is based on the Qwen2.5-VL model architecture. Useful resources:
+
+* [Repository](https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md)
 
 ## License and Contact
 
