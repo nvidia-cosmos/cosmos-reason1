@@ -14,11 +14,10 @@
 # limitations under the License.
 
 # Misc
-/data/
-outputs/
-results/
-checkpoints/*
-!checkpoints/README.md
+**/data
+**/outputs
+**/results
+**/checkpoints
 
 # Data types
 *.jit

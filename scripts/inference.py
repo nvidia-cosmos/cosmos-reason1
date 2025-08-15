@@ -14,126 +14,232 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#
+# https://docs.astral.sh/uv/guides/scripts/#using-a-shebang-to-create-an-executable-file
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
 #   "accelerate",
+#   "cosmos-reason1-utils",
+#   "pyyaml",
 #   "qwen-vl-utils",
 #   "rich",
-#   "torch",
 #   "torchcodec",
-#   "torchvision",
 #   "transformers>=4.51.3",
+#   "vllm",
 # ]
 # [tool.uv]
-# exclude-newer = "2025-07-31T00:00:00Z"
+# exclude-newer = "2025-08-05T00:00:00Z"
+# [tool.uv.sources]
+# cosmos-reason1-utils = {path = "../cosmos_reason1_utils", editable = true}
 # ///
 
-"""Run inference on a model with a given prompt.
+"""Full example of inference with Cosmos-Reason1.
 
 Example:
 
 ```shell
-./inference.py --prompt 'Please describe the video.' --videos video.mp4
+./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
 ```
 """
+# ruff: noqa: E402
+
+from cosmos_reason1_utils.script import init_script
+
+init_script()
 
 import argparse
+import collections
+import pathlib
+import textwrap
 
 import qwen_vl_utils
 import transformers
+import vllm
+import yaml
 from rich import print
+from rich.pretty import pprint
+
+from cosmos_reason1_utils.text import (
+    PromptConfig,
+    create_conversation,
+    extract_structured_text,
+)
+from cosmos_reason1_utils.vision import (
+    VisionConfig,
+    overlay_text_on_tensor,
+    save_tensor,
+)
+
+ROOT = pathlib.Path(__file__).parents[1].resolve()
+SEPARATOR = "-" * 20
+
+
+def pprint_dict(d: dict, name: str):
+    """Pretty print a dictionary."""
+    pprint(collections.namedtuple(name, d.keys())(**d), expand_all=True)
 
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--prompt", type=str, help="User prompt message")
-    parser.add_argument(
-        "--system_prompt",
-        type=str,
-        default="You are a helpful assistant. Answer the question in the following format: <think>\nyour reasoning\n</think>\n\n<answer>\nyour answer\n</answer>.",
-        help="System prompt message",
-    )
     parser.add_argument("--images", type=str, nargs="*", help="Image paths")
     parser.add_argument("--videos", type=str, nargs="*", help="Video paths")
+    parser.add_argument(
+        "--timestamp",
+        action="store_true",
+        help="Overlay timestamp on video frames",
+    )
+    parser.add_argument(
+        "--prompt",
+        type=str,
+        required=True,
+        help="Path to prompt yaml file",
+    )
+    parser.add_argument(
+        "--question",
+        type=str,
+        help="Question to ask the model (user prompt)",
+    )
+    parser.add_argument(
+        "--reasoning",
+        action="store_true",
+        help="Enable reasoning trace",
+    )
+    parser.add_argument(
+        "--vision-config",
+        type=str,
+        default=f"{ROOT}/configs/vision_config.yaml",
+        help="Path to vision config json file",
+    )
+    parser.add_argument(
+        "--sampling-params",
+        type=str,
+        default=f"{ROOT}/configs/sampling_params.yaml",
+        help="Path to sampling parameters yaml file",
+    )
     parser.add_argument(
         "--model",
         type=str,
         default="nvidia/Cosmos-Reason1-7B",
-        help="Model name (https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)",
+        help="Model name or path (Cosmos-Reason1: https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)",
     )
     parser.add_argument(
-        "--fps", type=int, default=1, help="Downsample video frame rate"
+        "--revision",
+        type=str,
+        help="Model revision (branch name, tag name, or commit id)",
     )
     parser.add_argument(
-        "--max-pixels", type=int, default=81920, help="Downsample media max pixels"
+        "-v",
+        "--verbose",
+        action="store_true",
+        help="Verbose output",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        help="Output directory for debugging",
     )
     args = parser.parse_args()
 
-    user_content = []
-    for image in args.images or []:
-        user_content.append(
-            {"type": "image", "image": image, "max_pixels": args.max_pixels}
-        )
-    for video in args.videos or []:
-        user_content.append(
-            {
-                "type": "video",
-                "video": video,
-                "fps": args.fps,
-                "max_pixels": args.max_pixels,
-            }
-        )
-    user_content.append({"type": "text", "text": args.prompt})
-    messages = []
-    if args.system_prompt:
-        messages.append({"role": "system", "content": args.system_prompt})
-    messages.append({"role": "user", "content": user_content})
-    print("Messages:", messages)
+    images: list[str] = args.images or []
+    videos: list[str] = args.videos or []
 
-    # Load the model
-    model = transformers.Qwen2_5_VLForConditionalGeneration.from_pretrained(
-        args.model, torch_dtype="auto", device_map="auto"
+    # Load configs
+    prompt_kwargs = yaml.safe_load(open(args.prompt, "rb"))
+    prompt_config = PromptConfig.model_validate(prompt_kwargs)
+    vision_kwargs = yaml.safe_load(open(args.vision_config, "rb"))
+    _vision_config = VisionConfig.model_validate(vision_kwargs)
+    sampling_kwargs = yaml.safe_load(open(args.sampling_params, "rb"))
+    sampling_params = vllm.SamplingParams(**sampling_kwargs)
+    if args.verbose:
+        pprint_dict(vision_kwargs, "VisionConfig")
+        pprint_dict(sampling_kwargs, "SamplingParams")
+
+    # Create conversation
+    system_prompts = [open(f"{ROOT}/prompts/addons/english.txt").read()]
+    if prompt_config.system_prompt:
+        system_prompts.append(prompt_config.system_prompt)
+    if args.reasoning and "<think>" not in prompt_config.system_prompt:
+        if extract_structured_text(prompt_config.system_prompt)[0]:
+            raise ValueError(
+                "Prompt already contains output format. Cannot add reasoning."
+            )
+        system_prompts.append(open(f"{ROOT}/prompts/addons/reasoning.txt").read())
+    system_prompt = "\n\n".join(map(str.rstrip, system_prompts))
+    if args.question:
+        user_prompt = args.question
+    else:
+        user_prompt = prompt_config.user_prompt
+    if not user_prompt:
+        raise ValueError("No user prompt provided.")
+    user_prompt = user_prompt.rstrip()
+    conversation = create_conversation(
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        images=images,
+        videos=videos,
+        vision_kwargs=vision_kwargs,
     )
+    if args.verbose:
+        pprint(conversation, expand_all=True)
+    print(SEPARATOR)
+    print("System:")
+    print(textwrap.indent(system_prompt.rstrip(), "  "))
+    print("User:")
+    print(textwrap.indent(user_prompt.rstrip(), "  "))
+    print(SEPARATOR)
+
+    # Create model
+    llm = vllm.LLM(
+        model=args.model,
+        revision=args.revision,
+        limit_mm_per_prompt={"image": len(images), "video": len(videos)},
+        enforce_eager=True,
+    )
+
+    # Process inputs
     processor: transformers.Qwen2_5_VLProcessor = (
-        transformers.AutoProcessor.from_pretrained(args.model, use_fast=True)
+        transformers.AutoProcessor.from_pretrained(args.model)
     )
-
-    generation_config = transformers.GenerationConfig(
-        do_sample=True,
-        max_new_tokens=4096,
-        repetition_penalty=1.05,
-        temperature=0.6,
-        top_p=0.95,
+    prompt = processor.apply_chat_template(
+        conversation, tokenize=False, add_generation_prompt=True
     )
-
-    # Process the messages
-    text = processor.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
+    image_inputs, video_inputs, video_kwargs = qwen_vl_utils.process_vision_info(
+        conversation, return_video_kwargs=True
     )
-    image_inputs, video_inputs = qwen_vl_utils.process_vision_info(messages)
-    inputs = processor(
-        text=[text],
-        images=image_inputs,
-        videos=video_inputs,
-        padding=True,
-        return_tensors="pt",
-    )
-    inputs = inputs.to(model.device)
+    if args.timestamp:
+        for i, video in enumerate(video_inputs):
+            video_inputs[i] = overlay_text_on_tensor(video, fps=video_kwargs["fps"][i])
+    if args.output:
+        if image_inputs is not None:
+            for i, image in enumerate(image_inputs):
+                save_tensor(image, f"{args.output}/image_{i}")
+        if video_inputs is not None:
+            for i, video in enumerate(video_inputs):
+                save_tensor(video, f"{args.output}/video_{i}")
 
     # Run inference
-    generated_ids = model.generate(**inputs, generation_config=generation_config)
-    generated_ids_trimmed = [
-        out_ids[len(in_ids) :]
-        for in_ids, out_ids in zip(inputs.input_ids, generated_ids)
-    ]
-    output_text = processor.batch_decode(
-        generated_ids_trimmed,
-        skip_special_tokens=True,
-        clean_up_tokenization_spaces=False,
-    )
-    print(f"\n\n{output_text[0]}")
+    mm_data = {}
+    if image_inputs is not None:
+        mm_data["image"] = image_inputs
+    if video_inputs is not None:
+        mm_data["video"] = video_inputs
+    llm_inputs = {
+        "prompt": prompt,
+        "multi_modal_data": mm_data,
+        "mm_processor_kwargs": video_kwargs,
+    }
+    outputs = llm.generate([llm_inputs], sampling_params=sampling_params)
+    print(SEPARATOR)
+    for output in outputs[0].outputs:
+        output_text = output.text
+        print("Assistant:")
+        print(textwrap.indent(output_text.rstrip(), "  "))
+    print(SEPARATOR)
+
+    result, _ = extract_structured_text(output_text)
+    if args.verbose:
+        pprint_dict(result, "Result")
 
 
 if __name__ == "__main__":

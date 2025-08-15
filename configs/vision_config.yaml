@@ -13,17 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Pre-commit
-on:
-  pull_request:
-  push:
-    branches: [main]
-jobs:
-  pre-commit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - uses: astral-sh/setup-uv@v6
-      - run: uvx pre-commit run -c .pre-commit-config-base.yaml --all-files
-      - uses: pre-commit/action@v3.0.1
+# Vision processor config for image/video downsampling.
+# Increasing these numbers will improve quality and increase the number of tokens.
+# Source: https://github.com/nvidia-cosmos/cosmos-reason1/blob/main/cosmos_reason1_utils/src/cosmos_reason1_utils/vision.py
+
+# To enable syntax highlighting: https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml
+# yaml-language-server: $schema=schemas/vision_config.json
+
+# Video frame rate
+fps: 4
+# Maximum number of pixels per video
+# 6422528 = 8192 * 28**2 = vision_tokens * (2*spatial_patch_size)^2
+total_pixels: 6422528

@@ -13,17 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Pre-commit
-on:
-  pull_request:
-  push:
-    branches: [main]
-jobs:
-  pre-commit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - uses: astral-sh/setup-uv@v6
-      - run: uvx pre-commit run -c .pre-commit-config-base.yaml --all-files
-      - uses: pre-commit/action@v3.0.1
+import os
+import resource
+import warnings
+
+
+def init_script(verbose: bool = False):
+    """Initialize inference script."""
+    # Suppress core dumps
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+
+    # Tokenizers parallelism doesn't work with vllm
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+    if not verbose:
+        warnings.filterwarnings("ignore")
+        os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+        os.environ.setdefault("VLLM_LOGGING_LEVEL", "ERROR")

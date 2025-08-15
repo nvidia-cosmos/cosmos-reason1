@@ -13,17 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: Pre-commit
-on:
-  pull_request:
-  push:
-    branches: [main]
-jobs:
-  pre-commit:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-      - uses: astral-sh/setup-uv@v6
-      - run: uvx pre-commit run -c .pre-commit-config-base.yaml --all-files
-      - uses: pre-commit/action@v3.0.1
+import pytest
+
+from cosmos_reason1_utils.script import init_script
+
+
+@pytest.mark.parametrize("verbose", [True, False])
+def test_init_script(verbose: bool):
+    init_script(verbose=verbose)

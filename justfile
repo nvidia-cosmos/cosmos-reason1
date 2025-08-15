@@ -12,3 +12,4 @@ lint: setup
 
 # Run tests
 test: lint
+  cd cosmos_reason1_utils && uv run pytest

@@ -19,6 +19,9 @@
 # requires-python = ">=3.10"
 # dependencies = [
 #   "accelerate",
+#   "cosmos-reason1-utils",
+#   "pydantic",
+#   "pyyaml",
 #   "qwen-vl-utils",
 #   "rich",
 #   "torch",
@@ -29,59 +32,46 @@
 # ]
 # [tool.uv]
 # exclude-newer = "2025-07-31T00:00:00Z"
+# [tool.uv.sources]
+# cosmos-reason1-utils = { path = "../../cosmos_reason1_utils", editable = true }
 # ///
 
-"""Example script for using Cosmos Reason1 as a video critic.
+"""Example script for using Cosmos-Reason1 as a video critic.
 
 Example:
 
 ```shell
-./examples/video_critic/video_critic.py
+./examples/video_critic/video_critic.py --video_path assets/sample.mp4
 ```
 """
+# ruff: noqa: E402
 
+from cosmos_reason1_utils.script import init_script
+
+init_script()
 
 import argparse
-import os
 import base64
+import os
+import pathlib
 import xml.etree.ElementTree as ET
 
+import pydantic
+import yaml
+from qwen_vl_utils import process_vision_info
 from transformers import AutoProcessor
 from vllm import LLM, SamplingParams
-from qwen_vl_utils import process_vision_info
 
-SYSTEM_PROMPT_CRITIC = """You are a helpful video analyzer. The goal is to identify artifacts and anomalies in the video.
-Analyze the video carefully and answer the question according to the following template:
+ROOT = pathlib.Path(__file__).parents[2].resolve()
 
-<think>
-<overview>
-[Brief description of the video.]
-</overview>
 
-<component name="Component 1 Name">
-<analysis>
-[Analysis or reasoning about this component.]
-</analysis>
-<anomaly>Yes | No</anomaly>
-</component>
+class Prompt(pydantic.BaseModel):
+    """Config for prompt."""
 
-<component name="Component 2 Name">
-<analysis>
-[Analysis or reasoning about this component.]
-</analysis>
-<anomaly>Yes | No</anomaly>
-</component>
+    model_config = pydantic.ConfigDict(extra="forbid")
 
-<!-- Add more components as needed -->
-</think>
-
-<answer>
-[Whether the video contains anomalies or artifacts. Answer "Yes" or "No".]
-</answer>"""
-
-USER_PROMPT_CRITIC = "Does the video contain any anomalies or artifacts?"
-
-MODEL_PATH = "nvidia/Cosmos-Reason1-7B"
+    system_prompt: str = pydantic.Field(default="", description="System prompt")
+    user_prompt: str = pydantic.Field(default="", description="User prompt")
 
 
 def parse_response(response):
@@ -96,7 +86,9 @@ def parse_response(response):
         if think_element is not None:
             # Parse overview
             overview = think_element.find("overview")
-            result["think"]["overview"] = overview.text.strip() if overview is not None and overview.text else ""
+            result["think"]["overview"] = (
+                overview.text.strip() if overview is not None and overview.text else ""
+            )
 
             # Parse components
             result["think"]["components"] = []
@@ -104,16 +96,26 @@ def parse_response(response):
                 component_data = {"name": comp.get("name", "")}
 
                 analysis = comp.find("analysis")
-                component_data["analysis"] = analysis.text.strip() if analysis is not None and analysis.text else ""
+                component_data["analysis"] = (
+                    analysis.text.strip()
+                    if analysis is not None and analysis.text
+                    else ""
+                )
 
                 anomaly = comp.find("anomaly")
-                component_data["anomaly"] = anomaly.text.strip() if anomaly is not None and anomaly.text else ""
+                component_data["anomaly"] = (
+                    anomaly.text.strip() if anomaly is not None and anomaly.text else ""
+                )
 
                 result["think"]["components"].append(component_data)
 
         # Parse <answer> section
         answer_element = root.find("answer")
-        result["answer"] = answer_element.text.strip() if answer_element is not None and answer_element.text else ""
+        result["answer"] = (
+            answer_element.text.strip()
+            if answer_element is not None and answer_element.text
+            else ""
+        )
 
         return result
     except Exception:
@@ -181,7 +183,9 @@ def build_html_report(video_path, responses):
     <h2>Detailed Analysis ({len(responses)} trials)</h2>
 """
 
-    for i, (response, parsed) in enumerate(zip(responses, parsed_responses), 1):
+    for i, (response, parsed) in enumerate(
+        zip(responses, parsed_responses, strict=False), 1
+    ):
         if parsed is None:
             html += f"""
     <div class="trial">
@@ -211,8 +215,8 @@ def build_html_report(video_path, responses):
                     comp_class = "red" if anomaly == "yes" else "green"
                     html += f"""
         <div class="{comp_class}">
-            <strong>{comp.get('name', 'Unknown Component')} - {comp.get('anomaly', '')}</strong>
-            <p>{comp.get('analysis', 'No analysis provided')}</p>
+            <strong>{comp.get("name", "Unknown Component")} - {comp.get("anomaly", "")}</strong>
+            <p>{comp.get("analysis", "No analysis provided")}</p>
         </div>
 """
 
@@ -230,12 +234,10 @@ def build_html_report(video_path, responses):
 
     return html
 
-def run_critic(args):
-    llm = LLM(
-        model=MODEL_PATH,
-        limit_mm_per_prompt={"image": 0, "video": 1},
-        enforce_eager=True,
-    )
+
+def run_critic(llm, args):
+    prompt_path = f"{ROOT}/prompts/video_critic.yaml"
+    prompt_config = Prompt.model_validate(yaml.safe_load(open(prompt_path, "rb")))
 
     sampling_params = SamplingParams(
         n=args.num_trials,
@@ -244,11 +246,14 @@ def run_critic(args):
         top_p=0.95,
         repetition_penalty=1.05,
         max_tokens=4096,
+        seed=1,  # for reproducibility
     )
 
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT_CRITIC},
-        {"role": "user", "content": [
+        {"role": "system", "content": prompt_config.system_prompt},
+        {
+            "role": "user",
+            "content": [
                 {
                     "type": "video",
                     "video": args.video_path,
@@ -256,17 +261,19 @@ def run_critic(args):
                     "fps": 16,
                     "total_pixels": 8192 * 28 * 28,
                 },
-                {"type": "text", "text": USER_PROMPT_CRITIC},
-            ]
+                {"type": "text", "text": prompt_config.user_prompt},
+            ],
         },
     ]
-    processor = AutoProcessor.from_pretrained(MODEL_PATH)
+    processor = AutoProcessor.from_pretrained(args.model)
     prompt = processor.apply_chat_template(
         messages,
         tokenize=False,
         add_generation_prompt=True,
     )
-    image_inputs, video_inputs, video_kwargs = process_vision_info(messages, return_video_kwargs=True)
+    image_inputs, video_inputs, video_kwargs = process_vision_info(
+        messages, return_video_kwargs=True
+    )
 
     mm_data = {}
     if image_inputs is not None:
@@ -285,23 +292,45 @@ def run_critic(args):
 
     return generated_text
 
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Run video critic inference and save html reports")
+    parser = argparse.ArgumentParser(
+        description="Run video critic inference and save html reports"
+    )
     parser.add_argument(
         "--video_path",
         type=str,
-        default="assets/sample.mp4",
+        required=True,
         help="Path to input video for critic",
     )
-    # Rejection sampling settings
-    parser.add_argument("--num_trials", type=int, default=4, help="Number of critic trials for each video")
+    parser.add_argument(
+        "--num_trials",
+        type=int,
+        default=4,
+        help="Number of critic trials for each video",
+    )
+    parser.add_argument(
+        "--model", type=str, default="nvidia/Cosmos-Reason1-7B", help="Model path"
+    )
     return parser.parse_args()
 
-if __name__ == "__main__":
+
+def main():
     args = parse_args()
-    generated_text = run_critic(args)
+
+    llm = LLM(
+        model=args.model,
+        limit_mm_per_prompt={"image": 0, "video": 1},
+        enforce_eager=True,
+    )
+
+    generated_text = run_critic(llm, args)
     html_content = build_html_report(args.video_path, generated_text)
     html_path = os.path.splitext(args.video_path)[0] + ".html"
-    with open(html_path, 'w', encoding='utf-8') as f:
+    with open(html_path, "w", encoding="utf-8") as f:
         f.write(html_content)
     print(f"Generated HTML report: {html_path}")
+
+
+if __name__ == "__main__":
+    main()

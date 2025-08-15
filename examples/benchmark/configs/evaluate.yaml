@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Datasets to evaluate on: 'robovqa', 'av', 'agibot', 'bridgev2', 'holoassist'
+datasets:
+  - robovqa
+  - av
+  # - agibot
+  # - bridgev2
+  # - holoassist
+
+# Model parameters
+model:
+  # Model name or path to safetensors directory
+  model_name: nvidia/Cosmos-Reason1-7B
+  # Tokenizer model name: 'qwen2.5-vl-7b', 'qwen2-vl-2b', 'qwen2.5-vl-32b', 'qwen2.5-vl-72b'
+  tokenizer_model_name: qwen2.5-vl-7b
+  # Data type for model weights: 'bfloat16', 'float16'
+  dtype: bfloat16
+  # Tensor parallel size
+  tp_size: 1
+  # Maximum sequence length
+  max_length: 128000
+
+# Evaluation parameters
+evaluation:
+  # Answer type: 'letter', 'reasoning'
+  answer_type: reasoning
+  # Number of parallel workers
+  num_processes: 80
+  # Skip tasks for which results are already saved
+  skip_saved: false
+  # Downsample video frame rate
+  fps: 4
+  # Random seed for reproducibility
+  seed: 1
+
+# Generation parameters
+generation:
+  # Maximum number of retries for failed generations
+  max_retries: 10
+  # Maximum number of tokens in the generated response
+  max_tokens: 1024
+  # Temperature for sampling
+  temperature: 0.6
+  # Repetition penalty
+  repetition_penalty: 1.0
+  # Presence penalty
+  presence_penalty: 0.0
+  # Frequency penalty
+  frequency_penalty: 0.0

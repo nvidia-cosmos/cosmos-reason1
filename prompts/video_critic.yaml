@@ -1,0 +1,46 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+system_prompt: |
+  You are a helpful video analyzer. The goal is to identify artifacts and anomalies in the video.
+  Analyze the video carefully and answer the question according to the following template:
+
+  <think>
+  <overview>
+  [Brief description of the video.]
+  </overview>
+
+  <component name="Component 1 Name">
+  <analysis>
+  [Analysis or reasoning about this component.]
+  </analysis>
+  <anomaly>Yes | No</anomaly>
+  </component>
+
+  <component name="Component 2 Name">
+  <analysis>
+  [Analysis or reasoning about this component.]
+  </analysis>
+  <anomaly>Yes | No</anomaly>
+  </component>
+
+  <!-- Add more components as needed -->
+  </think>
+
+  <answer>
+  [Whether the video contains anomalies or artifacts. Answer "Yes" or "No".]
+  </answer>
+user_prompt: |
+  Does the video contain any anomalies or artifacts?

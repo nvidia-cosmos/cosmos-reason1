@@ -1,0 +1,150 @@
+{
+  "description": "Config for vision processing.\n\nSource:\nhttps://github.com/QwenLM/Qwen2.5-VL/blob/main/qwen-vl-utils/src/qwen_vl_utils/vision_process.py\n\nAttributes are sorted by priority. Higher priority attributes override lower\npriority attributes.",
+  "properties": {
+    "resized_height": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max height of the image/video",
+      "title": "Resized Height"
+    },
+    "resized_width": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max width of the image/video",
+      "title": "Resized Width"
+    },
+    "min_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Min frame pixels of the image/video",
+      "title": "Min Pixels"
+    },
+    "max_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max frame pixels of the image/video",
+      "title": "Max Pixels"
+    },
+    "total_pixels": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max total pixels of the image/video",
+      "title": "Total Pixels"
+    },
+    "video_start": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Start time of the video (seconds)",
+      "title": "Video Start"
+    },
+    "video_end": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "End time of the video (seconds)",
+      "title": "Video End"
+    },
+    "nframes": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Number of frames of the video",
+      "title": "Nframes"
+    },
+    "fps": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "FPS of the video",
+      "title": "Fps"
+    },
+    "min_frames": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Min frames of the video",
+      "title": "Min Frames"
+    },
+    "max_frames": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Max frames of the video",
+      "title": "Max Frames"
+    }
+  },
+  "title": "VisionConfig",
+  "type": "object"
+}
