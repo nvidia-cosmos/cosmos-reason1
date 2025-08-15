@@ -36,15 +36,17 @@ def create_conversation(
     *,
     system_prompt: str = "",
     user_prompt: str = "",
+    response: str = "",
     images: list[Any] | None = None,
     videos: list[Any] | None = None,
-    vision_kwargs: dict,
+    vision_kwargs: dict | None = None,
 ) -> list[dict]:
     """Create chat conversation.
 
     Args:
         system_prompt: System prompt.
         user_prompt: User prompt.
+        response: Assistant response.
         images: List of images.
         videos: List of videos.
         vision_kwargs: Keyword arguments for vision processor (see `cosmos_reason1_utils.vision.VisionConfig`).
@@ -55,23 +57,48 @@ def create_conversation(
     user_content = []
     if images is not None:
         for image in images:
-            user_content.append({"type": "image", "image": image} | vision_kwargs)
+            user_content.append({"type": "image", "image": image})
     if videos is not None:
         for video in videos:
-            user_content.append({"type": "video", "video": video} | vision_kwargs)
+            user_content.append({"type": "video", "video": video})
     if user_prompt:
         user_content.append({"type": "text", "text": user_prompt})
     conversation = []
     if system_prompt:
         conversation.append({"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": user_content})
+    if response:
+        conversation.append({"role": "assistant", "content": response})
+    if vision_kwargs:
+        set_vision_kwargs(conversation, vision_kwargs)
     return conversation
 
 
-def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]:
-    """Extract structured text between <key> and </key> tags.
+def set_vision_kwargs(conversation: list[dict], vision_kwargs: dict):
+    """Set vision kwargs for all media messages in conversation.
+
+    Args:
+        conversation: Conversation (see `create_conversation`).
+        vision_kwargs: Keyword arguments for vision processor (see `cosmos_reason1_utils.vision.VisionConfig`).
+    """
+    for msg in conversation:
+        content = msg["content"]
+        if isinstance(content, str):
+            content = [content]
+        for msg in content:
+            if isinstance(msg, dict) and msg.get("type", None) in [
+                "image",
+                "video",
+            ]:
+                msg |= vision_kwargs
+
+
+def extract_tagged_text(text: str) -> tuple[dict[str, list[str]], list[str]]:
+    """Extract text between <key> and </key> tags.
 
     Ignores unclosed tags and tries to extract as much text as possible.
+
+    For more complex output formats (e.g. json), use [structured outputs](https://docs.vllm.ai/en/stable/features/structured_outputs.html).
 
     Example:
 
@@ -86,7 +113,7 @@ def extract_structured_text(text: str) -> tuple[dict[str, list[str]], list[str]]
     </answer>
     End text
     '''
-    result, remaining = extract_structured_text(text)
+    result, remaining = extract_tagged_text(text)
     assert result == {
         "question": ["\nWhat is the capital of France?\n"],
         "answer": ["\nParis\n"]

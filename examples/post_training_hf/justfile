@@ -1,0 +1,6 @@
+default:
+    just --list
+
+install:
+    uv sync --only-group build --inexact
+    uv sync --all-extras --inexact

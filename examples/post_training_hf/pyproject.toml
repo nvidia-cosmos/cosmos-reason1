@@ -14,14 +14,16 @@
 # limitations under the License.
 
 [project]
-name = "cosmos-reason1-post-training"
+name = "cosmos-reason1-post-training-hf"
 version = "0.1.0"
 readme = "README.md"
-requires-python = ">=3.10, <3.13"
+requires-python = ">=3.10"
 dependencies = [
     "cosmos-reason1-utils",
     "cosmos-rl",
     "datasets",
+    "pydantic",
+    "rich",
     "toml",
     "torch",
     "torchcodec",
