@@ -14,10 +14,14 @@
 # limitations under the License.
 
 # Misc
-**/data
-**/outputs
-**/results
-**/checkpoints
+/data
+/outputs
+/results
+/checkpoints
+/examples/**/data
+/examples/**/outputs
+/examples/**/results
+/examples/**/checkpoints
 
 # Data types
 *.jit
