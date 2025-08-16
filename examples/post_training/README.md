@@ -6,23 +6,21 @@ This guide provides instructions for post-training Cosmos-Reason1 on the [SFT](h
 
 ## Setup
 
-### Install
+### Installation
 
-Prerequisites:
+1. Perform the [Setup](../../README.md#setup) steps outlined in the main README.
 
-- [Setup](../../README.md#setup)
+2. Install system dependencies:
 
-Install system dependencies:
+   - [redis](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)
 
-- [redis](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)
+     ```shell
+     pkgm install redis-server
+     # or
+     conda install -c conda-forge redis-server
+     ```
 
-  ```shell
-  pkgm install redis-server
-  # or
-  conda install -c conda-forge redis-server
-  ```
-
-Install the package:
+3. Install the package:
 
 ```shell
 cd examples/post_training
@@ -30,19 +28,20 @@ just install
 source .venv/bin/activate
 ```
 
-### Monitor
+### Monitoring
 
-[Optional] We recommend that you to use [wandb](https://wandb.ai/) for training monitoring.
+We recommend using [wandb](https://wandb.ai/) to monitor training.
 
 1. Acquire your [WANDB_API_KEY](https://wandb.ai/authorize).
-1. Login:
+
+2. Log in to wandb:
 
   ```bash
   uv tool install -U wandb
   wandb login
   ```
 
-When you run training, you will see the `wandb` link in the logging:
+Now, when you run training, you will observe the `wandb` link in the logging:
 
 ```bash
 wandb: 🚀 View run at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.project_name}/runs/20250515101157
@@ -50,17 +49,19 @@ wandb: 🚀 View run at https://wandb.ai/${WANDB_USER_NAME}/${config.logging.pro
 
 ## Training
 
-> **_NOTE:_** Following the below training steps will trigger downloading around 200GB of model and dataset files from Hugging Face, please make sure your `~/.cache` directory (or set `HF_HOME` and `COSMOS_CACHE` environment variables to a directory that) has enough storage space.
+> **_NOTE:_** Following the below training steps will trigger downloading around 200GB of model and dataset files from Hugging Face. Ensure that your `~/.cache` directory has enough storage space or that the `HF_HOME` and `COSMOS_CACHE` environment variables are set to a directory with enough space.
 
 ### Supervised Fine-Tuning (SFT)
 
-The SFT training can improve the model's capability on certain tasks with a similar distribution of the training dataset. E.g., training with `robovqa` dataset can improve the model's performance on the robotics-focused visual question answering scenarios.
+SFT training can improve model capability on tasks that have a similar distribution to that of the training dataset: For example, training with the `robovqa` dataset can improve performance with robotics-focused visual question answering scenarios.
 
-Minimum Requirements:
+#### Minimum Requirements
 
 - 4 GPUs with 80GB of memory
 
-Configure settings by editing [configs/sft.toml](configs/sft.toml). Variants:
+#### Configuration
+
+Configure settings by editing [configs/sft.toml](configs/sft.toml). Variants include the following:
 
 - 8 GPU
 
@@ -69,7 +70,9 @@ Configure settings by editing [configs/sft.toml](configs/sft.toml). Variants:
   dp_shard_size = 8
   ```
 
-Run training:
+#### Training
+
+Run training as follows:
 
 ```shell
 cosmos-rl --config configs/sft.toml ./tools/dataset/cosmos_sft.py
@@ -83,13 +86,15 @@ After training finishes, the final output checkpoint can be found in the log:
 
 ### Reinforcement Learning (RL)
 
-The RL training can improve the model's reasoning capability on certain tasks with the reasoning training dataset.
+RL training can improve model reasoning capability on certain tasks with the reasoning training dataset.
 
-Minimum Requirements:
+#### Minimum Requirements
 
 - 4 GPUs with 80GB of memory
 
-Configure settings by editing [configs/rl.toml](configs/rl.toml). Variants:
+#### Configuration
+
+Configure settings by editing [configs/rl.toml](configs/rl.toml). Variants include the following:
 
 - 8 GPU
 
@@ -101,7 +106,9 @@ Configure settings by editing [configs/rl.toml](configs/rl.toml). Variants:
   dp_shard_size = 4
   ```
 
-Run training:
+#### Training
+
+Run training as follows:
 
 ```shell
 cosmos-rl --config configs/rl.toml tools/dataset/cosmos_grpo.py
