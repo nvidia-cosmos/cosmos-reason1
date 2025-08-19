@@ -18,6 +18,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 
 import cosmos_rl.launcher.worker_entry
@@ -29,6 +30,7 @@ from cosmos_rl.utils.logging import logger
 
 from cosmos_reason1_utils.text import create_conversation
 from cosmos_reason1_utils.vision import VisionConfig
+
 
 class CustomDatasetConfig(pydantic.BaseModel):
     annotation_path: str = pydantic.Field()
@@ -85,7 +87,6 @@ class CustomDataset(torch.utils.data.Dataset):
                 videos = [os.path.join(self.media_path, vid) for vid in videos]
 
         # Remove image and video tags from user prompt
-        import re
         user_prompt = re.sub(r"(\n)?</?(image|video)>(\n)?", "", user_prompt)
 
         conversations = create_conversation(
@@ -96,6 +97,7 @@ class CustomDataset(torch.utils.data.Dataset):
             vision_kwargs=self.vision_kwargs,
         )
         return conversations
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

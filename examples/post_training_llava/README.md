@@ -20,7 +20,7 @@ source .venv/bin/activate
 
 ## Example
 
-Please update the fields `annotation_path` and `media_path` in `configs/sft.toml` to your custom dataset. `media_path` can be left as empty (`""`) if the paths in your annotation are absolute paths. 
+Please update the fields `annotation_path` and `media_path` in `configs/sft.toml` to your custom dataset. `media_path` can be left as empty (`""`) if the paths in your annotation are absolute paths.
 
 Here is one example of downloading the [Llava-Instruct-150K] (https://huggingface.co/datasets/liuhaotian/LLaVA-Instruct-150K) dataset and [COCO] (https://cocodataset.org/#home) images:
 
