@@ -16,8 +16,8 @@
 redis = "12800"
 
 [custom.dataset]
-annotation_path = "/path/to/annotation.json"
-media_path = "/path/to/media/folder"
+annotation_path = "data/sft/annotations.json"
+media_path = "data/sft/train2017"
 
 [train]
 output_dir = "outputs/sft"
