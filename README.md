@@ -97,6 +97,7 @@ We provide example inference scripts:
 * Post-Training
   * [Full example](examples/post_training/README.md)
   * [Minimal Hugging Face example](examples/post_training_hf/README.md)
+  * [Minimal Llava example](examples/post_training_llava/README.md)
 * [Benchmark](examples/benchmark/README.md)
 
 ## Post-Training
