@@ -713,7 +713,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cosmos-reason1-post-training-hf"
+name = "cosmos-reason1-post-training-llava"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
