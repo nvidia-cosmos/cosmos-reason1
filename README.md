@@ -4,8 +4,9 @@
 
 ### [Paper](https://arxiv.org/abs/2503.15558) | [Website](https://research.nvidia.com/labs/dir/cosmos-reason1/) | [HuggingFace](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7)
 
-NVIDIA Cosmos Reason – an open, customizable, 7B-parameter reasoning vision language model (VLM) for physical AI and robotics - enables robots and vision AI agents to reason like humans, using prior knowledge, physics understanding and common sense to understand and act in the real world. This model understands space, time, and fundamental physics, and can serve as a planning model to reason what steps an embodied agent might take next.
-Cosmos Reason excels at navigating the long tail of diverse scenarios of the physical world with spatial-temporal understanding. Cosmos Reason is post-trained with physical common sense and embodied reasoning data with supervised fine-tuning and reinforcement learning. It uses chain-of-thought reasoning capabilities to understand world dynamics without human annotations.
+NVIDIA Cosmos-Reason1 is an [open](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license), customizable, 7B-parameter reasoning vision language model (VLM) for physical AI and robotics. It enables robots and vision AI agents to reason like humans, using prior knowledge, physics understanding, and common sense to understand and act in the real world. This model understands space, time, and fundamental physics, and can serve as a planning model to reason what steps an embodied agent might take next.
+
+Cosmos-Reason1 excels at navigating the long tail of diverse physical world scenarios with spatial-temporal understanding. The Cosmos-Reason1 model is post-trained with physical common sense and embodied reasoning data, including supervised fine-tuning and reinforcement learning. It uses chain-of-thought reasoning capabilities to understand world dynamics without human annotations.
 
 ## News
 
@@ -18,46 +19,49 @@ Cosmos Reason excels at navigating the long tail of diverse scenarios of the phy
 
 * [Cosmos-Reason1-7B](https://huggingface.co/nvidia/Cosmos-Reason1-7B)
 
+## Minimum Hardware Requirements
+
+* Inference: 1 GPU with 24GB memory
+
+* Post-training: 4 GPUs with 80GB of memory
+
 ## Setup
 
-Install system dependencies:
+1. Install system dependencies:
 
-* [pkgx](https://github.com/pkgxdev/pkgx?tab=readme-ov-file#quickstart)
+   * [pkgx](https://github.com/pkgxdev/pkgx?tab=readme-ov-file#quickstart)
 
-  ```shell
-  brew install pkgx || curl https://pkgx.sh | sh
-  ```
+     ```shell
+     brew install pkgx || curl https://pkgx.sh | sh
+     ```
 
-* [uv](https://docs.astral.sh/uv/getting-started/installation/)
+   * [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
-  ```shell
-  curl -LsSf https://astral.sh/uv/install.sh | sh
-  source $HOME/.local/bin/env
-  ```
+     ```shell
+     curl -LsSf https://astral.sh/uv/install.sh | sh
+     source $HOME/.local/bin/env
+     ```
 
-* [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
+   * [Hugging Face CLI](https://huggingface.co/docs/huggingface_hub/en/guides/cli)
 
-  ```shell
-  uv tool install -U "huggingface_hub[cli]"
-  hf auth login
-  ```
+     ```shell
+     uv tool install -U "huggingface_hub[cli]"
+     hf auth login
+     ```
 
-Clone the repository:
+2. Clone the repository:
 
-```shell
-git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
-cd cosmos-reason1
-```
+   ```shell
+   git clone https://github.com/nvidia-cosmos/cosmos-reason1.git
+   cd cosmos-reason1
+   ```
 
 ## Inference
 
-Minimum Requirements:
-
-* 1 GPU with 24GB memory
 
 Cosmos-Reason1 is included in [`transformers>=4.51.3`](https://huggingface.co/docs/transformers/en/index).
 
-We provide example inference scripts:
+Cosmos-Reason1 provides the following example inference scripts:
 
 * [Minimal example](scripts/inference_sample.py)
 
@@ -67,29 +71,29 @@ We provide example inference scripts:
 
 * [Full example](scripts/inference.py)
 
-  Caption the video:
+  Caption the sample video:
 
   ```shell
   ./scripts/inference.py --prompt prompts/caption.yaml --videos assets/sample.mp4 -v
   ```
 
-  Ask a question about the video with reasoning:
+  Ask a question about the sample video with reasoning:
 
   ```shell
   ./scripts/inference.py --prompt prompts/question.yaml --question 'What are the potential safety hazards?' --reasoning --videos assets/sample.mp4 -v
   ```
 
-  Temporally caption the video and save the input frames to `outputs/temporal_caption_text` for debugging:
+  Temporally caption the sample video and save the input frames to `outputs/temporal_caption_text` for debugging:
 
   ```shell
   ./scripts/inference.py --prompt prompts/temporal_caption_text.yaml --videos assets/sample.mp4 --timestamp -v -o outputs/temporal_caption_text
   ```
 
-  Configure inference by editing:
+You can configure inference by editing the prompt and configuration files:
 
-  * [Prompts](prompts/README.md)
-  * [Sampling Parameters](configs/sampling_params.yaml)
-  * [Vision Processor Config](configs/vision_config.yaml)
+* [Prompts](prompts/README.md)
+* [Sampling Parameters](configs/sampling_params.yaml)
+* [Vision Processor Config](configs/vision_config.yaml)
 
 ## Tutorials
 
@@ -102,7 +106,7 @@ We provide example inference scripts:
 
 ## Post-Training
 
-The [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl) repository is an async post-training framework specialized for Supervised Fine-Tuning (SFT) and Reinforcement Learning with Human Feedback (RLHF). It prioritizes performance, scalability, and fault tolerance.
+Cosmos-Reason1 uses the [nvidia-cosmos/cosmos-rl](https://github.com/nvidia-cosmos/cosmos-rl) repository for post-training. It is an async post-training framework specialized for Supervised Fine-Tuning (SFT) and Reinforcement Learning with Human Feedback (RLHF). It prioritizes performance, scalability, and fault tolerance.
 
 To support a custom dataset format, use the [minimal Hugging Face example](examples/post_training_hf/README.md) as a template.
 
