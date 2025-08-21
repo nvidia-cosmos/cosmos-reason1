@@ -499,8 +499,10 @@ def preprocess_clip(
                         ]
                         start_frame = clip_info["start_frame"]
                         end_frame = clip_info["end_frame"]
-                        images_clipped = images[start_frame:end_frame+1]  
-                        save_clip(images_clipped, data_dir, dataset, clip_info["clip_name"])
+                        images_clipped = images[start_frame : end_frame + 1]
+                        save_clip(
+                            images_clipped, data_dir, dataset, clip_info["clip_name"]
+                        )
         except Exception:
             log.warning("Clip processing error!")
 
