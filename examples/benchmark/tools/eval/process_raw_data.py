@@ -497,7 +497,12 @@ def preprocess_clip(
                             step["observation"]["image_0"].numpy()
                             for step in episode["steps"]
                         ]
-                        save_clip(images, data_dir, dataset, clip_info["clip_name"])
+                        start_frame = clip_info["start_frame"]
+                        end_frame = clip_info["end_frame"]
+                        images_clipped = images[start_frame : end_frame + 1]
+                        save_clip(
+                            images_clipped, data_dir, dataset, clip_info["clip_name"]
+                        )
         except Exception:
             log.warning("Clip processing error!")
 
