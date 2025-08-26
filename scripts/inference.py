@@ -18,19 +18,28 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "accelerate",
+#   "accelerate>=1.10.1",
 #   "cosmos-reason1-utils",
-#   "pyyaml",
-#   "qwen-vl-utils",
+#   "pyyaml>=6.0.2",
+#   "qwen-vl-utils>=0.0.11",
 #   "rich",
-#   "torchcodec",
+#   "torch>=2.7.1",
+#   "torchcodec>=0.6.0",
 #   "transformers>=4.51.3",
-#   "vllm",
+#   "vllm>=0.10.1.1",
 # ]
-# [tool.uv]
-# exclude-newer = "2025-08-05T00:00:00Z"
 # [tool.uv.sources]
 # cosmos-reason1-utils = {path = "../cosmos_reason1_utils", editable = true}
+# torch = [
+#   { index = "pytorch-cu128"},
+# ]
+# torchvision = [
+#   { index = "pytorch-cu128"},
+# ]
+# [[tool.uv.index]]
+# name = "pytorch-cu128"
+# url = "https://download.pytorch.org/whl/cu128"
+# explicit = true
 # ///
 
 """Full example of inference with Cosmos-Reason1.
