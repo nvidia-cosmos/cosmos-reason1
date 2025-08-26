@@ -18,14 +18,24 @@
 # /// script
 # requires-python = ">=3.10"
 # dependencies = [
-#   "accelerate",
-#   "qwen-vl-utils",
-#   "torchcodec",
+#   "accelerate>=1.10.1",
+#   "qwen-vl-utils>=0.0.11",
+#   "torchcodec>=0.6.0",
+#   "torch>=2.7.1",
 #   "transformers>=4.51.3",
-#   "vllm",
+#   "vllm>=0.10.1.1",
 # ]
-# [tool.uv]
-# exclude-newer = "2025-08-05T00:00:00Z"
+# [tool.uv.sources]
+# torch = [
+#   { index = "pytorch-cu128"},
+# ]
+# torchvision = [
+#   { index = "pytorch-cu128"},
+# ]
+# [[tool.uv.index]]
+# name = "pytorch-cu128"
+# url = "https://download.pytorch.org/whl/cu128"
+# explicit = true
 # ///
 
 """Minimal example of inference with Cosmos-Reason1.
