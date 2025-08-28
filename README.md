@@ -112,6 +112,16 @@ The Cosmos-Reason1 model is based on the Qwen2.5-VL model architecture. Useful r
 
 * [Repository](https://github.com/QwenLM/Qwen2.5-VL/blob/main/README.md)
 
+## Post-Training quantization
+
+To run PTQ `"vllm==0.9.2" "transformers>=4.53.1" "qwen-vl-utils[decord]" "llmcompressor>=0.6.0"` are required
+
+[Full example](scripts/quantize_fp8.py)
+
+```shell
+./scripts/quantize_fp8.py --model_id 'nvidia/Cosmos-Reason1-7B' --save_dir 'Cosmos-Reason1-7B-W8A8-FP8'
+```
+
 ## License and Contact
 
 This project will download and install additional third-party open source software projects. Review the license terms of these open source projects before use.
