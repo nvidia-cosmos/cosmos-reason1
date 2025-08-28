@@ -14,8 +14,10 @@
 # limitations under the License.
 
 import base64
+import shutil
 from argparse import ArgumentParser
 from io import BytesIO
+from pathlib import Path
 
 import requests
 import torch
@@ -103,7 +105,7 @@ if __name__ == "__main__":
     dataset_split = args.dataset_split
     num_calibration_samples = args.num_calibration_samples
     max_sequence_length = args.max_sequence_length
-    save_dir = args.save_dir
+    save_dir = Path(args.save_dir)
 
     # Load model - nvidia/Cosmos-Reason1-7B (based on Qwen2.5-VL architecture)
     print(f"Loading model: {model_id}")
@@ -203,14 +205,22 @@ if __name__ == "__main__":
     print(f"\nSaving quantized model to: {save_dir}")
 
     model.save_pretrained(save_dir)
-    # use snapshot_download to make sure correct files are being downloaded with the checkpoint
+    # use snapshot_download or copy files to make sure correct files are being stored with the checkpoint
     # processor files are incorrect after save_pretrained
-    # hardcoding model_id to base model to make sure correct files are being downloaded to the checkpoint directory
-    snapshot_download(
-        repo_id="nvidia/Cosmos-Reason1-7B",
-        ignore_patterns=["config.json", "*.safetensors*"],
-        local_dir=save_dir,
-    )
+    if not (model_path := Path(model_id)).exists():
+        snapshot_download(
+            repo_id=model_id,
+            ignore_patterns=["config.json", "*.safetensors*"],
+            local_dir=save_dir,
+        )
+    else:
+        files_to_copy = [
+            f
+            for f in model_path.glob("*")
+            if not (f.name == "config.json" and "safetensors" in f.name)
+        ]
+        for file in files_to_copy:
+            shutil.copy(file, save_dir / file.name)
 
     print(f"\nQuantization complete! Model saved to: {save_dir}")
     print("\nNote: W8A8 provides maximum compression and speed:")
