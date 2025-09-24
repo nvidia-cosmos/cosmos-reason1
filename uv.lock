@@ -158,7 +158,7 @@ wheels = [
 ]
 
 [[package]]
-name = "cosmos-reason1-inference"
+name = "cosmos-reason1"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

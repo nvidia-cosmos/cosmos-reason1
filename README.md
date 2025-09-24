@@ -20,7 +20,7 @@ Cosmos Reason excels at navigating the long tail of diverse scenarios of the phy
 
 ## Setup
 
-> **This repository only contains documentation/examples/utilities. You do not need it to run inference. See [Inference example](examples/inference/inference.py) for a standalone inference example. The following setup instructions are only needed to run the examples in this repository.**
+> **This repository only contains documentation/examples/utilities. You do not need it to run inference. See [Inference example](scripts/inference_sample.py) for a minimal inference example. The following setup instructions are only needed to run the examples in this repository.**
 
 Install system dependencies:
 
@@ -55,10 +55,10 @@ Cosmos-Reason1 is included in [`transformers>=4.51.3`](https://huggingface.co/do
 
 We provide example inference scripts:
 
-* [Minimal example](examples/inference/inference.py)
+* [Minimal example](scripts/inference_sample.py)
 
   ```shell
-  uv run --project examples/project examples/project/inference.py
+  uv run scripts/inference_sample.py
   ```
 
 * [Full example](scripts/inference.py)

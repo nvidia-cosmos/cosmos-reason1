@@ -14,7 +14,7 @@
 # limitations under the License.
 
 [project]
-name = "cosmos-reason1-inference"
+name = "cosmos-reason1"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [

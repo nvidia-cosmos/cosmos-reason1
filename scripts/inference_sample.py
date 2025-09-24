@@ -13,7 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Minimal example of inference with Cosmos-Reason1."""
+"""Minimal example of inference with Cosmos-Reason1.
+
+Example:
+
+```shell
+uv run scripts/inference_sample.py
+```
+"""
 
 from pathlib import Path
 
