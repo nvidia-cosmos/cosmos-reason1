@@ -59,10 +59,10 @@ Cosmos-Reason1 is included in [`transformers>=4.51.3`](https://huggingface.co/do
 
 We provide example inference scripts:
 
-* [Minimal example](scripts/inference_sample.py)
+* [Minimal example](examples/inference/inference.py)
 
   ```shell
-  ./scripts/inference_sample.py
+  uv run --project examples/project examples/project/inference.py
   ```
 
 * [Full example](scripts/inference.py)
