@@ -17,8 +17,6 @@ Install system dependencies:
 - [redis](https://redis.io/docs/latest/operate/oss_and_stack/install/archive/install-redis/)
 
   ```shell
-  pkgm install redis-server
-  # or
   conda install -c conda-forge redis-server
   ```
 
