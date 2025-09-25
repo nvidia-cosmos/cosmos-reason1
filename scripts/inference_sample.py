@@ -1,4 +1,3 @@
-#!/usr/bin/env -S uv run --script
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
@@ -14,36 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# https://docs.astral.sh/uv/guides/scripts/#using-a-shebang-to-create-an-executable-file
-# /// script
-# requires-python = ">=3.10"
-# dependencies = [
-#   "accelerate>=1.10.1",
-#   "qwen-vl-utils>=0.0.11",
-#   "torchcodec>=0.6.0",
-#   "torch>=2.7.1",
-#   "transformers>=4.51.3",
-#   "vllm>=0.10.1.1",
-# ]
-# [tool.uv.sources]
-# torch = [
-#   { index = "pytorch-cu128"},
-# ]
-# torchvision = [
-#   { index = "pytorch-cu128"},
-# ]
-# [[tool.uv.index]]
-# name = "pytorch-cu128"
-# url = "https://download.pytorch.org/whl/cu128"
-# explicit = true
-# ///
-
 """Minimal example of inference with Cosmos-Reason1.
 
 Example:
 
 ```shell
-./scripts/inference_sample.py
+uv run scripts/inference_sample.py
 ```
 """
 
@@ -52,7 +27,7 @@ from pathlib import Path
 import qwen_vl_utils
 import transformers
 
-ROOT = Path(__file__).parents[1]
+ROOT = Path(__file__).parents[2]
 SEPARATOR = "-" * 20
 
 

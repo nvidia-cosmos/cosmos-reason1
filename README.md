@@ -20,13 +20,9 @@ Cosmos Reason excels at navigating the long tail of diverse scenarios of the phy
 
 ## Setup
 
+> **This repository only contains documentation/examples/utilities. You do not need it to run inference. See [Inference example](scripts/inference_sample.py) for a minimal inference example. The following setup instructions are only needed to run the examples in this repository.**
+
 Install system dependencies:
-
-* [pkgx](https://github.com/pkgxdev/pkgx?tab=readme-ov-file#quickstart)
-
-  ```shell
-  brew install pkgx || curl https://pkgx.sh | sh
-  ```
 
 * [uv](https://docs.astral.sh/uv/getting-started/installation/)
 
@@ -62,7 +58,7 @@ We provide example inference scripts:
 * [Minimal example](scripts/inference_sample.py)
 
   ```shell
-  ./scripts/inference_sample.py
+  uv run scripts/inference_sample.py
   ```
 
 * [Full example](scripts/inference.py)
