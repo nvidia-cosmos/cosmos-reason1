@@ -37,6 +37,8 @@ class CustomDatasetConfig(pydantic.BaseModel):
     """Dataset annotation path."""
     media_path: str = pydantic.Field(default="")
     """Dataset media path."""
+    system_prompt: str = pydantic.Field(default="")
+    """System prompt for post-training."""
 
 
 class CustomConfig(pydantic.BaseModel):
@@ -60,6 +62,7 @@ class CustomDataset(torch.utils.data.Dataset):
     ):
         self.annotation = json.load(open(custom_config.dataset.annotation_path))
         self.media_path = custom_config.dataset.media_path
+        self.system_prompt = custom_config.dataset.system_prompt
         self.config = config
         self.custom_config = custom_config
         self.vision_kwargs = custom_config.vision.model_dump(exclude_none=True)
@@ -90,6 +93,7 @@ class CustomDataset(torch.utils.data.Dataset):
         user_prompt = re.sub(r"(\n)?</?(image|video)>(\n)?", "", user_prompt)
 
         conversations = create_conversation(
+            system_prompt=self.system_prompt,
             user_prompt=user_prompt,
             response=response,
             images=images,
