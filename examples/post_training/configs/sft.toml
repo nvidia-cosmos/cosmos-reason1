@@ -35,9 +35,11 @@ fsdp_offload = false
 fsdp_reshard_after_forward = "default"
 train_batch_per_replica = 32
 sync_weight_interval = 1
-enable_validation = true
-validation_step = 30
-validation_batch_per_replica = 2
+
+[validation]
+enable = true
+freq = 30
+batch_size = 2
 
 [policy]
 model_name_or_path = "nvidia/Cosmos-Reason1-7B"
