@@ -6,11 +6,18 @@ This guide provides the essential steps for post-training Cosmos-Reason1 on your
 
 - [Prerequisites](#prerequisites)
 - [Quick Start](#quick-start)
+- [Problem Statement & Evaluation Strategy](#problem-statement--evaluation-strategy)
 - [Supervised Fine-Tuning (SFT)](#supervised-fine-tuning-sft)
+  - [Setup Your Training Directory](#setup-your-training-directory)
+  - [Data Preparation](#data-preparation)
+  - [Step-by-Step SFT Training](#step-by-step-sft-training)
+  - [SFT Best Practices](#sft-best-practices)
 - [Reinforcement Learning (RL)](#reinforcement-learning-rl)
-- [Custom Dataset Setup](#custom-dataset-setup)
-- [Evaluation](#evaluation)
-- [Common Issues and Tips](#common-issues-and-tips)
+  - [Step-by-Step RL Training](#step-by-step-rl-training)
+  - [RL Best Practices](#rl-best-practices)
+- [Cookbook Recipes](#cookbook-recipes-in-cosmos-reason-post-training)
+- [Additional Resources](#additional-resources)
+- [License](#license)
 
 
 ## Prerequisites
@@ -155,22 +162,26 @@ Most production systems use both. Start with SFT to establish domain knowledge (
 
 ## Supervised Fine-Tuning (SFT)
 
-   First, create a new directory for your post-training example:
+SFT trains the model on labeled examples to improve performance on specific tasks. This section walks through setting up and running SFT training with custom datasets.
 
-   ```bash
-   # Create your custom post-training directory
-   mkdir -p examples/post_training_vqa
-   cd examples/post_training_vqa
-      
-   # Copy the base structure from the main post-training example
-   cp -r ../post_training/configs ./
-   cp -r ../post_training/tools ./
-   cp ../post_training/justfile ./
+### Setup Your Training Directory
+
+First, create a dedicated directory for your custom post-training:
+
+```bash
+# Create your custom post-training directory
+mkdir -p examples/post_training_vqa
+cd examples/post_training_vqa
    
-   # Install dependencies in your new directory (optional - you can reuse the original venv)
-   # just install
-   # source .venv/bin/activate
-   ```
+# Copy the base structure from the main post-training example
+cp -r ../post_training/configs ./
+cp -r ../post_training/tools ./
+cp ../post_training/justfile ./
+
+# Install dependencies (optional - you can reuse the original venv)
+# just install
+# source .venv/bin/activate
+```
 
 ### Data Preparation
 
@@ -495,17 +506,30 @@ RL training improves reasoning processes and decision-making through reward-base
 
 ### RL Best Practices
 
-- **Start from SFT checkpoint**: RL works best after SFT
-- **KL penalty**: Prevents model from deviating too far (default: 0.01)
-- **Reward function**: Carefully design task-specific rewards
-- **Balanced reward distribution**: Ensure training data has balanced samples across the reward model's output range.
+**Training Strategy:**
+- **Start from SFT checkpoint**: RL works best after SFT foundation
+- **Monitor KL divergence**: Keep below 0.1 to prevent model collapse
+- **Balanced reward distribution**: Ensure training data has balanced samples across the reward model's output range
 
+**Reward Function Design:**
+- **Clear objectives**: Define what constitutes "good" responses
+- **Careful design**: Create task-specific rewards that align with your goals
+- **Avoid extremes**: Balanced rewards prevent training instability
 
-## Cookbook recipes in CR post-trianing: 
+**Computational Considerations:**
+- **Memory intensive**: RL requires more VRAM than SFT due to multiple rollouts
+- **Longer training**: Expect 4-8 hours vs 1-2 hours for SFT
+- **Tensor parallelism**: Use `tp_size = 2` or `4` to fit rollouts in memory
 
-| **Description** | **Link** |
-|-----------------|----------|
-| Physical plausibility check for video quality assessment | [Video Rewards](recipes/post_training/reason1/physical-plausibility-check/post_training.md) |
-| Spatial AI understanding for warehouse environments | [Spatial AI Warehouse](recipes/post_training/reason1/spatial-ai-warehouse/post_training.md) |
-| Intelligent transportation scene understanding and analysis | [Intelligent Transportation](recipes/post_training/reason1/intelligent-transportation/post_training.md) |
-| AV video captioning and visual question answering for autonomous vehicles | [AV Video Caption VQA](recipes/post_training/reason1/av_video_caption_vqa/post_training.md) |
+---
+
+## Cookbook Recipes in Cosmos Reason Post-Training
+
+For detailed end-to-end examples of post-training Cosmos Reason on specific tasks, see these cookbook recipes:
+
+| **Use Case** | **Description** | **Link** |
+|--------------|-----------------|----------|
+| **Physical Plausibility** | Video quality assessment with plausibility checking | [Video Rewards Recipe](https://github.com/nvidia-cosmos/cosmos-cookbook/tree/main/docs/recipes/post_training/reason1/physical-plausibility-check) |
+| **Spatial AI Warehouse** | Understanding warehouse environments and spatial relationships | [Spatial AI Recipe](https://github.com/nvidia-cosmos/cosmos-cookbook/tree/main/docs/recipes/post_training/reason1/spatial-ai-warehouse) |
+| **Intelligent Transportation** | Traffic scene understanding and pedestrian safety analysis | [Transportation Recipe](https://github.com/nvidia-cosmos/cosmos-cookbook/tree/main/docs/recipes/post_training/reason1/intelligent-transportation) |
+| **AV Video Caption & VQA** | Autonomous vehicle video captioning and visual question answering | [AV VQA Recipe](https://github.com/nvidia-cosmos/cosmos-cookbook/tree/main/docs/recipes/post_training/reason1/av_video_caption_vqa) |
