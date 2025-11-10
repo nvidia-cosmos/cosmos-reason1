@@ -1,0 +1,6 @@
+{
+    "attention_mode": "sdpa",
+    "torch_dtype": "float16",
+    "device_map": "auto",
+    "trust_remote_code": true
+}
