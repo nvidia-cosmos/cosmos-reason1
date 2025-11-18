@@ -152,13 +152,13 @@ def main():
     parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
-        default=0.60,
+        default=None,
         help="Target fraction of GPU memory vLLM can use for model + KV cache",
     )
     parser.add_argument(
         "--max-model-len",
         type=int,
-        default=1024,
+        default=None,
         help="Maximum sequence length for sizing KV cache",
     )
 
@@ -265,10 +265,6 @@ def main():
         print("Assistant:")
         print(textwrap.indent(output_text.rstrip(), "  "))
     print(SEPARATOR)
-
-    # Debug: show raw length so we know if it’s really short
-    print(f"[DEBUG] Total outputs: {len(full_texts)}")
-    print(f"[DEBUG] Last output length: {len(full_texts[-1]) if full_texts else 0}")
 
     result, _ = extract_tagged_text(full_texts[-1])
 
