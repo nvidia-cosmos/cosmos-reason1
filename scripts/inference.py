@@ -148,7 +148,7 @@ def main():
         type=str,
         help="Output directory for debugging",
     )
-    #Adding the next two arguments to improve performance on the GPU
+    # Adding the next two arguments to improve performance on the GPU
     parser.add_argument(
         "--gpu-memory-utilization",
         type=float,
@@ -221,7 +221,6 @@ def main():
         gpu_memory_utilization=args.gpu_memory_utilization,
         max_model_len=args.max_model_len,
     )
-
 
     # Process inputs
     processor: transformers.Qwen2_5_VLProcessor = (
