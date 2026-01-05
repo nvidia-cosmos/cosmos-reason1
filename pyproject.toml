@@ -22,6 +22,7 @@ dependencies = [
   "qwen-vl-utils>=0.0.11",
   "torch>=2.7.1",
   "torchcodec>=0.6.0",
+  "torchvision>=0.23.0",
   "transformers>=4.51.3",
 ]
 [tool.uv.sources]
