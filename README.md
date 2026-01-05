@@ -4,13 +4,13 @@
 
 <h1 align="center">
 
-> 🚨 **Update Notice**  
+> 🚨 Update Notice
 >
 > The latest version of our Cosmos-Reason is now live!
 >
 > 👉 [**Cosmos-Reason2**](https://github.com/nvidia-cosmos/cosmos-reason2)
-
-We recommend all users migrate to the new version for improved performance, features, and continued support.
+> 
+> We recommend all users migrate to the new version for improved performance, features, and continued support.
 </h1>
 
 ### [Paper](https://arxiv.org/abs/2503.15558) | [Website](https://research.nvidia.com/labs/dir/cosmos-reason1/) | [HuggingFace](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7) | [Cosmos Cookbook](https://github.com/nvidia-cosmos/cosmos-cookbook)
