@@ -27,7 +27,7 @@ from pathlib import Path
 import qwen_vl_utils
 import transformers
 
-ROOT = Path(__file__).parents[2]
+ROOT = Path(__file__).parents[1]
 SEPARATOR = "-" * 20
 
 
