@@ -2,6 +2,17 @@
     <img src="assets/nvidia-cosmos-header.png" alt="NVIDIA Cosmos Header">
 </p>
 
+<h1 align="center">
+
+> 🚨 **Update Notice**  
+>
+> The latest version of our Cosmos-Reason is now live!
+>
+> 👉 [**Cosmos-Reason2**](https://github.com/nvidia-cosmos/cosmos-reason2)
+
+We recommend all users migrate to the new version for improved performance, features, and continued support.
+</h1>
+
 ### [Paper](https://arxiv.org/abs/2503.15558) | [Website](https://research.nvidia.com/labs/dir/cosmos-reason1/) | [HuggingFace](https://huggingface.co/collections/nvidia/cosmos-reason1-67c9e926206426008f1da1b7) | [Cosmos Cookbook](https://github.com/nvidia-cosmos/cosmos-cookbook)
 
 NVIDIA Cosmos Reason – an open, customizable, 7B-parameter reasoning vision language model (VLM) for physical AI and robotics - enables robots and vision AI agents to reason like humans, using prior knowledge, physics understanding and common sense to understand and act in the real world. This model understands space, time, and fundamental physics, and can serve as a planning model to reason what steps an embodied agent might take next.
