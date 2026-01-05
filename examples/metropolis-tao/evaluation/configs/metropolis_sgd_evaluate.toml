@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Metropolis SGD Evaluation Configuration
+# For spatial reasoning tasks (warehouse/spatial-ai)
+
+# Number of GPUs (automatically configures parallelism)
+num_gpus = 1
+
+# Task configuration
+[task]
+type = "metropolis_sgd"  # Task type identifier
+description = "Spatial reasoning evaluation for warehouse/metropolis scenarios"
+
+# Model configuration
+[model]
+model_name = "nvidia/Cosmos-1.0-Reason-4B"  # Or path to your model
+tokenizer_model_name = "qwen2.5-vl-7b"
+dtype = "bfloat16"
+tp_size = 1  # Tensor parallelism size
+max_length = 128000
+enable_lora = false
+# save_folder = "custom_output_folder"  # Optional: override default output folder
+
+# Dataset configuration
+[dataset]
+annotation_path = "/path/to/annotations.json"
+# Expected format:
+# [
+#   {
+#     "id": "sample_001",
+#     "conversations": [
+#       {"role": "user", "value": "How many objects are in the warehouse?"},
+#       {"role": "assistant", "value": "5"}
+#     ],
+#     "video": "warehouse_001.mp4"
+#   }
+# ]
+media_dir = "/path/to/media/directory"  # Optional: prepended to media paths
+system_prompt = "Answer the questions."
+
+# Evaluation configuration
+[evaluation]
+answer_type = "naive"  # "naive" or "reasoning"
+num_processes = 40  # Number of parallel processes for input preparation
+seed = 1
+
+# Soft accuracy configuration (optional)
+[evaluation.soft_accuracy]
+enabled = true
+f1_threshold = 0.8
+
+# Generation configuration
+[generation]
+max_tokens = 1024
+temperature = 0.0  # Use greedy decoding for deterministic results
+repetition_penalty = 1.0
+presence_penalty = 0.0
+frequency_penalty = 0.0
+
+# Vision configuration
+[vision]
+fps = 1
+max_pixels = 655360
+resized_height = 540
+resized_width = 960
+
+# Metrics configuration
+[metrics]
+# Custom weights for different question categories
+[metrics.weights]
+count = 0.25
+distance = 0.25
+left_right = 0.25
+mcq = 0.25
+
+# Results directory
+results_dir = "/results/metropolis_sgd"
+
+
