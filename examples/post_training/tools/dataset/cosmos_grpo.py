@@ -154,7 +154,8 @@ class CosmosGRPOValDataset(CosmosGRPODataset):
     """
 
     def setup(self, config: Config, tokenizer: AutoTokenizer, *args, **kwargs):
-        if not config.train.enable_validation:
+        enable_validation = getattr(config.train, "enable_validation", False)
+        if not enable_validation:
             logger.warning(
                 "Validation is not enabled in the config. Skipping setup for CosmosGRPOValDataset."
             )
@@ -268,7 +269,8 @@ if __name__ == "__main__":
     config = Config.from_dict(config)
 
     util.prepare_cosmos_data(dataset=config.train.train_policy.dataset)
-    if config.train.enable_validation:
+    enable_validation = getattr(config.train, "enable_validation", False)
+    if enable_validation:
         util.prepare_cosmos_data(dataset=config.validation.dataset)
 
     # It is best practice to pass the dataset and val_dataset as factory functions
@@ -277,7 +279,8 @@ if __name__ == "__main__":
         return CosmosGRPODataset()
 
     def get_val_dataset(config: CosmosConfig) -> Dataset:
-        return CosmosGRPOValDataset() if config.train.enable_validation else None
+        enable_validation = getattr(config.train, "enable_validation", False)
+        return CosmosGRPOValDataset() if enable_validation else None
 
     launch_worker(
         dataset=get_dataset,
