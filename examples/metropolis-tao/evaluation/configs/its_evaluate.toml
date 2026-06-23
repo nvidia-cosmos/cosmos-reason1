@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# ITS Evaluation Configuration for Cosmos-RL
+# This configuration combines inference and scoring into a single pipeline
+
+# Number of GPUs (automatically configures data or tensor parallelism)
+# num_gpus=8 with tp_size=1 (default) → launches 8 instances (data parallelism)
+# num_gpus=4 with tp_size=4 → launches 1 instance with model split (tensor parallelism)
+num_gpus = 1
+
+[dataset]
+annotation_path = "/cosmos-eval/examples/its/annotations.json"
+# media_dir = "/path/to/videos"  # Optional: specify if media files are in a different location
+system_prompt = "You are a helpful assistant that can answer questions about a street-view CCTV footage. The vehicles that need attention are marked with bounding boxes and IDs."
+
+[model]
+# Model name or path to safetensors directory
+model_name = "nvidia/Cosmos-Reason1-7B"
+# Folder name to save the output result
+save_folder = "cr1_1_zero_shot"
+# Tokenizer model name: 'qwen2.5-vl-7b', 'qwen2-vl-2b', 'qwen2.5-vl-32b', 'qwen2.5-vl-72b'
+tokenizer_model_name = "qwen2.5-vl-7b"
+# Data type for model weights: 'bfloat16', 'float16'
+dtype = "bfloat16"
+# Tensor parallel size
+tp_size = 1
+# Maximum sequence length
+max_length = 128000
+# Enable LoRA model merging (set to true for LoRA-trained models)
+enable_lora = false
+# Base model path for LoRA merging (used when enable_lora is true)
+base_model_path = "/lustre/fsw/portfolios/edgeai/users/parisz/cache/huggingface/models--nvidia--Cosmos-Reason1-7B-0801"
+
+[evaluation]
+# Answer type: 'letter', 'reasoning', 'freeform'
+answer_type = "freeform"
+# Number of parallel workers
+num_processes = 40
+# Skip tasks for which results are already saved
+skip_saved = false
+# Random seed for reproducibility
+seed = 1
+
+[vision]
+# Downsample video frame rate
+fps = 4
+# video or image resolution
+total_pixels = 3136000
+
+[generation]
+# Maximum number of retries for failed generations
+max_retries = 10
+# Maximum number of tokens in the generated response
+max_tokens = 1024
+# Temperature for sampling
+temperature = 0
+# Repetition penalty
+repetition_penalty = 1.0
+# Presence penalty
+presence_penalty = 0.0
+# Frequency penalty
+frequency_penalty = 0.0

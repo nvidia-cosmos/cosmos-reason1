@@ -1,0 +1,42 @@
+# Number of GPUs to use for evaluation (detected by TAO API as evaluate.num_gpus)
+num_gpus = 1
+
+[task]
+type = "captioning"  # or "text"
+
+[dataset]
+annotation_path = "/path/to/annotations.json"
+media_dir = "/path/to/media"  # optional
+system_prompt = "You are a helpful assistant."
+
+[model]
+model_name = "nvidia/Cosmos-Reason1-7B"
+tokenizer_model_name = "qwen2.5-vl-7b"
+dtype = "bfloat16"
+tp_size = 1
+max_length = 128000
+enable_lora = false
+base_model_path = ""
+
+[evaluation]
+answer_type = "freeform"
+num_processes = 8
+seed = 1
+
+[vision]
+fps = 4
+total_pixels = 3136000
+
+[generation]
+max_tokens = 128
+temperature = 0.0
+
+[metrics]
+names = ["bleu", "rouge", "bertscore"]
+# Optional for BERTScore:
+# bertscore_model = "microsoft/deberta-xlarge-mnli"  # or "roberta-large" etc.
+# bertscore_lang = "en"
+# Optional weighted composite score across BLEU, ROUGE_L and BERTScore_F1
+# weights = { BLEU = 0.3, ROUGE_L = 0.3, BERTScore_F1 = 0.4 }
+
+

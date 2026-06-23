@@ -1,0 +1,27 @@
+# Sample configuration for FP8 (W8A8) quantization with HuggingFace dataset
+# Usage: cosmos-rl-quantize --config cosmos_rl/quantization/configs/quantize_fp8.toml --results_dir /results
+
+[model]
+model_path = "nvidia/Cosmos-Reason1-7B"
+# LoRA configuration (optional)
+enable_lora = false
+# base_model_path = "/path/to/base/model"  # Required if enable_lora = true
+
+[calibration_dataset]
+# Option 1: Use HuggingFace dataset
+dataset_id = "lmms-lab/flickr30k"
+dataset_split = "test[:512]"
+
+# Option 2: Use custom local dataset (comment out dataset_id and uncomment below)
+# annotation_path = "/path/to/calibration/annotations.json"
+# media_dir = "/path/to/calibration/images"
+
+# Common parameters
+num_calibration_samples = 512
+max_sequence_length = 2048
+
+[quantization_method]
+quantization_scheme = "FP8_DYNAMIC"  # W8A8 - 8-bit weights and activations
+smoothing_strength = 0.8
+skip_test_generation = false
+
